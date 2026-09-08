@@ -1,0 +1,33 @@
+{
+  "name": "rpg-vtt",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
+    "setup": "npm install && npm run db:push",
+    "db:push": "npm run db:push -w server",
+    "db:studio": "npm run db:studio -w server",
+    "typecheck": "tsc -b --pretty",
+    "test:e2e": "node scripts/e2e-check.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

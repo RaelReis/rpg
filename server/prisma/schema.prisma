@@ -1,0 +1,111 @@
+// Persistencia da mesa. O estado autoritativo vive em memoria no servidor e e
+// gravado aqui de forma debounced (ver src/room.ts): movimentar um token nao
+// pode custar uma escrita em disco por frame de arraste.
+//
+// Campos "Json" sao strings de JSON serializado — SQLite nao tem tipo JSON
+// nativo no Prisma. Estruturas de alta cardinalidade e formato livre (grid,
+// fog, tokens, valores de ficha) ficam nesses blobs; o que precisa de indice
+// ou integridade referencial e coluna de verdade.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Table {
+  id             String   @id
+  code           String   @unique
+  name           String
+  gmPasswordHash String?
+  activeSceneId  String?
+  settings       String
+  sheetTemplate  String
+  initiative     String
+  chat           String   @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  scenes  Scene[]
+  players Player[]
+  sheets  Sheet[]
+  assets  Asset[]
+
+  @@map("tables")
+}
+
+model Scene {
+  id      String @id
+  tableId String
+  name    String
+  order   Int    @default(0)
+  /// Scene completa serializada: grid, fog, walls, tiles, tokens, effects.
+  data    String
+
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId])
+  @@map("scenes")
+}
+
+model Player {
+  id      String @id
+  tableId String
+  name    String
+  role    String
+  color   String
+
+  /// Hash do token de sessao. O token cru so existe no localStorage do cliente,
+  /// e e o que permite reconexao automatica sem cadastro.
+  tokenHash String   @unique
+  sheetId   String?
+  lastSeen  DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId])
+  @@map("players")
+}
+
+model Sheet {
+  id              String   @id
+  tableId         String
+  name            String
+  ownerPlayerId   String?
+  portraitAssetId String?
+  /// Record<fieldId, FieldValue> conforme o template vigente da mesa.
+  values          String
+  sharedWithParty Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId])
+  @@index([ownerPlayerId])
+  @@map("sheets")
+}
+
+model Asset {
+  id            String   @id
+  tableId       String
+  kind          String
+  filename      String
+  thumbFilename String?
+  originalName  String
+  mime          String
+  size          Int
+  width         Int
+  height        Int
+  uploadedBy    String?
+  createdAt     DateTime @default(now())
+
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId])
+  @@map("assets")
+}

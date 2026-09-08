@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local
+server/uploads/
+server/prisma/*.db
+server/prisma/*.db-journal
+.DS_Store
+*.tsbuildinfo
+dist-types/
+fog-preview.png
