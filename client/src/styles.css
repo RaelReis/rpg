@@ -520,6 +520,49 @@ textarea {
 .avatars .av.off {
   filter: grayscale(1) brightness(0.55);
 }
+.avatars .av.photo {
+  overflow: hidden;
+  padding: 0;
+}
+.avatars .av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+.avatars .av.more {
+  background: var(--raised);
+  color: var(--ink-2);
+  font-size: 9.5px;
+}
+
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.presence .avatars .av {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  margin-left: -4px;
+  border-width: 2px;
+}
+.presence .avatars .av:first-child {
+  margin-left: 0;
+}
+.presence-count {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.topbar-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+}
 
 .workspace {
   display: grid;
@@ -597,6 +640,29 @@ textarea {
   margin: 5px 0;
 }
 
+/* Ajuste do pincel de neblina: só aparece com o pincel em uso. */
+.rail-brush {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.rail-brush span {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.tool.sm {
+  width: 26px;
+  height: 22px;
+  font-size: 13px;
+}
+/* Estado que sela a neblina: vermelho, porque e a acao irreversivel do par. */
+.tool.active.danger {
+  background: rgba(207, 91, 82, 0.16);
+  border-color: #5c2f2b;
+  color: var(--danger);
+}
+
 /* Palco do mapa */
 .stage-wrap {
   position: relative;
@@ -649,6 +715,191 @@ textarea {
   color: var(--ink-3);
   backdrop-filter: blur(6px);
   pointer-events: auto;
+}
+
+/* Instrucao contextual sobre o mapa, para gestos de varias etapas. */
+.stage-tip {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: rgba(23, 26, 34, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 8;
+  animation: rise 200ms ease both;
+}
+.stage-tip strong {
+  color: var(--brass);
+  font-weight: 600;
+}
+
+/* Faixa da previa de visao: precisa ser impossivel de ignorar, senao o mestre
+   esquece que esta olhando por outra pessoa e estranha o mapa. */
+.preview-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px 7px 14px;
+  background: rgba(110, 168, 216, 0.16);
+  border: 1px solid var(--steel-dim);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  color: var(--ink);
+  z-index: 9;
+  animation: rise 200ms ease both;
+}
+.preview-banner strong {
+  color: var(--steel);
+}
+
+/* Peca fantasma de ficha ou imagem arrastada: ja encaixada na celula onde vai
+   cair, com a arte e o que vai acontecer ao soltar. Sem eventos de ponteiro,
+   para nao roubar o dragover do palco. */
+.drop-ghost {
+  position: absolute;
+  pointer-events: none;
+  z-index: 9;
+}
+.drop-ghost-piece {
+  border-radius: 50%;
+  border: 2px solid;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.78;
+  box-shadow: 0 0 0 4px var(--brass-glow), 0 8px 22px rgba(0, 0, 0, 0.55);
+  animation: ghost-pulse 1.1s ease-in-out infinite;
+}
+.drop-ghost-label {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  background: rgba(23, 26, 34, 0.94);
+  border: 1px solid var(--brass-dim);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brass);
+  white-space: nowrap;
+}
+@keyframes ghost-pulse {
+  50% {
+    box-shadow: 0 0 0 8px var(--brass-glow), 0 8px 22px rgba(0, 0, 0, 0.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drop-ghost-piece {
+    animation: none;
+  }
+}
+
+/* Menu de contexto do mapa (botao direito sobre uma parede). */
+.context-menu {
+  position: absolute;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 40;
+  animation: rise 120ms ease both;
+}
+.context-menu-title {
+  padding: 5px 9px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.context-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu button:hover,
+.context-menu button:focus-visible {
+  background: var(--raised);
+  outline: none;
+}
+.context-menu button.danger {
+  color: var(--danger);
+}
+.context-menu button.danger:hover {
+  background: rgba(207, 91, 82, 0.12);
+}
+.context-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--line-soft);
+}
+
+/* Aba de recolher o painel, presa a borda entre mapa e painel. */
+.side-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 25;
+  transition: color 120ms ease, width 120ms ease, background 120ms ease;
+}
+.side-toggle:hover,
+.side-toggle:focus-visible {
+  width: 20px;
+  color: var(--brass);
+  background: var(--panel-2);
+  outline: none;
+}
+
+/* Medidor de quadros, ligado pela tecla G. */
+.perf-readout {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 5px 9px;
+  background: rgba(18, 20, 26, 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--success);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 8;
 }
 
 .measure-readout {
@@ -744,6 +995,41 @@ textarea {
   background: var(--panel);
 }
 
+/* Atalhos dos Elementos do Outro Lado: a cor do botao ja diz qual e qual. */
+.btn.preset-blood { border-color: #6d2124; color: #ff6b6b; }
+.btn.preset-death { border-color: #4a4f55; color: #cfd3d6; }
+.btn.preset-knowledge { border-color: #6a5220; color: var(--brass); }
+.btn.preset-energy { border-color: #4b2e86; color: #a98bff; }
+.btn.preset-fear { border-color: #33333f; color: #9a9ab0; }
+.btn[class*='preset-']:hover:not(:disabled) { background: rgba(255, 255, 255, 0.05); }
+
+/* Contador de mensagens nao lidas na aba de chat. */
+.side-tabs button {
+  position: relative;
+}
+.badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  min-width: 16px;
+  border-radius: 999px;
+  background: var(--brass);
+  color: #1a1508;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  vertical-align: middle;
+}
+
+/* Texto do material: leitura corrida, com as quebras que o mestre escreveu. */
+.handout-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
 .side-body {
   overflow-y: auto;
   overflow-x: hidden;
@@ -823,6 +1109,30 @@ textarea {
   font-size: 10px;
   color: var(--ink-3);
 }
+.sheet-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sheet-roster .list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.sheet-chip {
+  cursor: grab;
+}
+.sheet-chip:active {
+  cursor: grabbing;
+}
+.sheet-chip .grip {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1;
+}
+.sheet-chip:hover .grip {
+  color: var(--brass);
+}
+
 .item .swatch {
   width: 24px;
   height: 24px;
@@ -941,6 +1251,43 @@ textarea {
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--ink-3);
+}
+.roll-label {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink);
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+
+/* Rotulo de campo com dado clicavel. */
+.label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+.roll-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  height: 19px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0.65;
+  transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.roll-btn:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--brass-dim);
+  background: var(--brass-glow);
+}
+.roll-btn:disabled {
+  opacity: 0.3;
+  cursor: wait;
 }
 .chat-input {
   padding: 10px;
@@ -1224,26 +1571,6 @@ textarea {
 }
 .field-row.gm {
   border-left: 3px solid var(--brass-dim);
-}
-
-/* Cursores de outros jogadores sobre o mapa */
-.peer-cursor {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  transform: translate(-2px, -2px);
-  pointer-events: none;
-  transition: left 90ms linear, top 90ms linear;
-  z-index: 6;
-}
-.peer-cursor .tip {
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #10131a;
-  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

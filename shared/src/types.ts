@@ -55,6 +55,11 @@ export interface Wall {
   /** Porta: quando aberta, deixa de bloquear a visao. */
   door: boolean;
   open: boolean;
+  /**
+   * Janela: barra a passagem, mas nao a visao. Exclusiva com `door` — uma
+   * janela nao abre, e uma porta fechada bloqueia as duas coisas.
+   */
+  window: boolean;
   /** Bloqueia visao mas nao e desenhada para o jogador. */
   hidden: boolean;
 }
@@ -98,6 +103,19 @@ export interface FogConfig {
 
 export type TokenVisibility = 'visible' | 'hidden' | 'dim';
 
+/**
+ * Como o token e desenhado no mapa.
+ *
+ * `circle` e a peca vista de cima: a arte e recortada num disco e cabe na
+ * celula. `art` mostra a ilustracao inteira, de pe sobre a celula, com a
+ * transparencia preservada — a figura sobe para fora do quadrado e a celula
+ * vira o chao onde ela pisa.
+ *
+ * A escolha e so visual: a area que o token ocupa para movimento, visao e
+ * alcance continua sendo `scale` celulas, independentemente da altura da arte.
+ */
+export type TokenShape = 'circle' | 'art';
+
 export interface TokenBar {
   /** Id do campo do template de ficha (tipo `resource`) exibido como barra. */
   fieldId: string;
@@ -117,6 +135,7 @@ export interface Token {
   scale: number;
   rotation: number;
   layer: Layer;
+  shape: TokenShape;
   visibility: TokenVisibility;
   opacity: number;
   /** Visivel apenas para o mestre, independente do fog. */
@@ -157,6 +176,24 @@ export interface Tile {
 export type EffectAnchorMode = 'grid' | 'token' | 'free';
 
 /**
+ * Como a area do efeito e pintada.
+ *
+ * A forma (`kind`) diz ONDE o efeito pega; o estilo diz com que cara ele
+ * aparece. Separar os dois deixa qualquer aparencia disponivel para qualquer
+ * forma — um cone de runas e um retangulo de neblina usam o mesmo caminho de
+ * recorte e trocam so o preenchimento.
+ */
+export type EffectStyle =
+  | 'flat'
+  | 'glow'
+  | 'pulse'
+  | 'runes'
+  | 'vortex'
+  | 'mist'
+  | 'embers'
+  | 'static';
+
+/**
  * Efeito de mapa: area de magia, marcador ou texto. Pode ser fixado a uma
  * celula da grid, preso a um token (acompanha o movimento) ou solto em
  * qualquer coordenada, sem snap.
@@ -189,6 +226,28 @@ export interface MapEffect {
   visibility: TokenVisibility;
   gmOnly: boolean;
   fontSize: number;
+  style: EffectStyle;
+  /** Cor secundaria; os estilos que a usam fazem degrade entre as duas. */
+  colorAlt: string;
+  /** Multiplicador de velocidade da animacao. 0 congela o efeito. */
+  speed: number;
+}
+
+export type WeatherKind = 'none' | 'rain' | 'snow' | 'fog' | 'ash';
+
+/**
+ * Clima da cena.
+ *
+ * E atmosfera, nao regra: nao afeta visao nem movimento. Desenhado em
+ * coordenadas de TELA, e nao do mapa — chuva cai na frente da camera, e nao
+ * fica presa a um canto do terreno quando a pessoa arrasta o mapa.
+ */
+export interface WeatherConfig {
+  kind: WeatherKind;
+  /** 0 a 1: densidade das particulas. */
+  intensity: number;
+  /** Inclinacao em graus; 0 e vertical. Vento. */
+  angle: number;
 }
 
 export interface Scene {
@@ -208,6 +267,7 @@ export interface Scene {
   effects: MapEffect[];
   /** 1 = dia claro; 0 = escuridao total, so a visao dos tokens ilumina. */
   globalLight: number;
+  weather: WeatherConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +307,15 @@ export interface SheetField {
   /** Largura no layout: 1 = 1/3, 2 = 2/3, 3 = linha inteira. */
   span: 1 | 2 | 3;
   defaultValue: FieldValue;
+  /**
+   * Formula de rolagem opcional, que torna o campo clicavel.
+   *
+   * Aceita referencias a outros campos da mesma ficha com `@id`, por exemplo
+   * `1d20+@destreza`. Vazio significa que o campo nao rola nada. Como o
+   * sistema de regras e do mestre, a formula tambem e — nao ha nada embutido
+   * aqui sobre como um teste funciona.
+   */
+  rollFormula: string;
 }
 
 export interface SheetSection {
@@ -310,6 +379,11 @@ export interface Player {
   lastSeen: number;
   /** Ficha principal do jogador. */
   sheetId: string | null;
+  /**
+   * Retrato da ficha principal, para a lista de presenca no cabecalho.
+   * Derivado no envio, nunca gravado: a fonte de verdade e a ficha.
+   */
+  portraitAssetId?: string | null;
 }
 
 export interface InitiativeEntry {
@@ -343,6 +417,13 @@ export interface TableSettings {
   showPartyBars: boolean;
   /** Servidor omite tokens fora da visao (mais seguro, custa CPU). */
   strictVision: boolean;
+  /**
+   * Paredes barram o movimento dos tokens, e nao apenas a visao.
+   *
+   * Vale so para os jogadores: o mestre precisa posicionar NPCs em qualquer
+   * lugar, inclusive dentro de uma parede enquanto monta a cena.
+   */
+  wallsBlockMovement: boolean;
   /** Jogadores podem criar anotacoes na camada 4. */
   playersCanAnnotate: boolean;
   diceEnabled: boolean;
@@ -378,9 +459,31 @@ export interface ChatMessage {
   authorColor: string;
   text: string;
   roll: DiceRoll | null;
+  /** Nome do que foi rolado (ex.: "Percepcao"), quando veio de uma ficha. */
+  rollLabel: string | null;
   /** Sussurro: apenas o mestre e o autor recebem. */
   whisper: boolean;
   createdAt: number;
+}
+
+/**
+ * Material entregue ao grupo: a carta encontrada, o retrato do NPC, o mapa
+ * da regiao.
+ *
+ * Fica guardado na mesa como preparacao do mestre e so aparece para quem ele
+ * escolher — por isso o compartilhamento e explicito, e nao um efeito de ter
+ * criado o material.
+ */
+export interface Handout {
+  id: string;
+  title: string;
+  text: string;
+  assetId: string | null;
+  /** Jogadores especificos com acesso. Ignorado quando `sharedWithAll`. */
+  sharedWith: string[];
+  sharedWithAll: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** Estado completo da mesa. O jogador recebe uma versao filtrada disto. */
@@ -396,6 +499,7 @@ export interface TableState {
   players: Player[];
   sheets: Sheet[];
   assets: Asset[];
+  handouts: Handout[];
   chat: ChatMessage[];
   createdAt: number;
   updatedAt: number;

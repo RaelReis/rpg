@@ -1,3 +1,7 @@
+import { useState } from 'react';
+import type { Sheet } from '@rpg/shared';
+
+import { exportTable } from '../../net/api';
 import { act } from '../../net/socket';
 import { isGm, useStore } from '../../state/store';
 import { Empty, Section, Toggle } from '../common';
@@ -9,6 +13,8 @@ export function PlayersPanel(): JSX.Element {
   const gm = useStore(isGm);
   const myId = useStore((s) => s.session?.playerId ?? null);
   const openSheet = useStore((s) => s.openSheetModal);
+  const previewPlayerId = useStore((s) => s.previewPlayerId);
+  const setPreviewPlayer = useStore((s) => s.setPreviewPlayer);
 
   void rev;
   if (!table) return <Empty>Sem mesa carregada.</Empty>;
@@ -43,9 +49,40 @@ export function PlayersPanel(): JSX.Element {
 
                 {player.role === 'GM' && <span className="tag gm">MJ</span>}
 
-                {sheet && (
+                {sheet ? (
                   <button className="btn ghost sm" onClick={() => openSheet(sheet.id)} title="Abrir ficha">
                     ▤
+                  </button>
+                ) : (
+                  gm && (
+                    // Criar e atribuir numa acao so: separado, o mestre teria
+                    // de ir ate a aba Fichas e voltar para escolher o dono.
+                    <button
+                      className="btn ghost sm"
+                      title={`Criar ficha para ${player.name}`}
+                      onClick={() =>
+                        void act<Sheet>('sheet:create', {
+                          name: player.name,
+                          ownerPlayerId: player.id,
+                        }).then((created) => {
+                          if (created) void act('sheet:assign', { sheetId: created.id, playerId: player.id });
+                        })
+                      }
+                    >
+                      + ▤
+                    </button>
+                  )
+                )}
+
+                {gm && player.role === 'PLAYER' && (
+                  <button
+                    className={`btn ghost sm${previewPlayerId === player.id ? ' active' : ''}`}
+                    title={`Ver o mapa pelos olhos de ${player.name}`}
+                    onClick={() =>
+                      setPreviewPlayer(previewPlayerId === player.id ? null : player.id)
+                    }
+                  >
+                    👁
                   </button>
                 )}
 
@@ -106,6 +143,13 @@ export function PlayersPanel(): JSX.Element {
           />
 
           <Toggle
+            label="Paredes barram o movimento"
+            hint="Vale so para os jogadores: voce continua posicionando NPCs em qualquer lugar. O teste e sobre a linha reta entre origem e destino, entao contornar uma quina pode exigir mover em duas etapas."
+            checked={settings.wallsBlockMovement}
+            onChange={(v) => void act('settings:update', { wallsBlockMovement: v })}
+          />
+
+          <Toggle
             label="Jogadores podem anotar no mapa"
             hint="Permite criar efeitos e textos na camada de anotacoes."
             checked={settings.playersCanAnnotate}
@@ -119,6 +163,8 @@ export function PlayersPanel(): JSX.Element {
           />
         </Section>
       )}
+
+      {gm && <BackupSection tableId={table.id} />}
 
       <Section title="Voce">
         <PlayerSelfEditor />
@@ -158,5 +204,52 @@ function PlayerSelfEditor(): JSX.Element {
         />
       </label>
     </div>
+  );
+}
+
+/**
+ * Backup da mesa.
+ *
+ * O banco e a pasta de uploads sao o backup real, mas so quem tem acesso ao
+ * servidor os alcanca. Este arquivo existe para o mestre levar a campanha
+ * embora — e por isso nao carrega senha nem token de sessao.
+ */
+function BackupSection({ tableId }: { tableId: string }): JSX.Element {
+  const notify = useStore((s) => s.notify);
+  const [busy, setBusy] = useState(false);
+
+  async function download(withAssets: boolean): Promise<void> {
+    setBusy(true);
+    try {
+      await exportTable(tableId, withAssets);
+      notify('info', 'Backup gerado.');
+    } catch (err) {
+      notify('error', (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Backup da mesa">
+      <div className="row wrap">
+        <button className="btn sm" disabled={busy} onClick={() => void download(true)}>
+          Baixar com imagens
+        </button>
+        <button className="btn sm" disabled={busy} onClick={() => void download(false)}>
+          Só a estrutura
+        </button>
+      </div>
+      <span className="hint">
+        Cenas, fichas, materiais, paredes e neblina num arquivo. Com imagens ele fica grande, mas é
+        um backup completo; sem elas, serve para versionar ou compartilhar a montagem da campanha.
+        Para restaurar, use <strong>Importar mesa</strong> na tela de entrada — ela sempre cria uma
+        mesa nova, e nunca sobrescreve esta.
+      </span>
+      <span className="hint">
+        O arquivo não inclui a senha de mestre nem as sessões dos jogadores: eles entram de novo
+        pelo código da mesa restaurada.
+      </span>
+    </Section>
   );
 }

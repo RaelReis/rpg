@@ -47,12 +47,18 @@ export interface VisionResult {
 // Obstaculos
 // ---------------------------------------------------------------------------
 
-/** Paredes e tiles bloqueantes reduzidos a segmentos testaveis. */
-export function collectBlockers(scene: Scene): Segment[] {
+/**
+ * Paredes e tiles bloqueantes reduzidos a segmentos testaveis.
+ *
+ * Visao e passagem diferem so nas janelas: elas deixam ver o outro lado e
+ * barram quem tenta atravessar.
+ */
+export function collectBlockers(scene: Scene, purpose: 'vision' | 'movement' = 'vision'): Segment[] {
   const out: Segment[] = [];
 
   for (const w of scene.walls) {
     if (w.door && w.open) continue;
+    if (w.window && purpose === 'vision') continue;
     out.push({ x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 });
   }
 
@@ -100,13 +106,27 @@ function orientation(ax: number, ay: number, bx: number, by: number, cx: number,
   return (by - ay) * (cx - bx) - (bx - ax) * (cy - by);
 }
 
-/** Interseccao propria de segmentos; toques exatos nas pontas nao bloqueiam. */
+/**
+ * O raio `a` atravessa o obstaculo `b`?
+ *
+ * As pontas do raio precisam estar em lados ESTRITAMENTE opostos da linha do
+ * obstaculo: um token parado exatamente sobre a linha de uma parede nao fica
+ * cego por ela. Ja as pontas do obstaculo contam: um raio que passa
+ * exatamente pela ponta de uma parede e barrado.
+ *
+ * Antes as duas pontas eram estritas, e isso abria uma fresta em toda junta.
+ * Duas paredes ligadas num canto se tocam num vertice que nao pertence ao
+ * interior de nenhuma delas; um raio passando exatamente por ali escapava das
+ * duas. Com paredes presas a grade isso e comum, porque a diagonal entre dois
+ * centros de celula cruza justamente um vertice da grade: a visao vazava
+ * pelos cantos e o token atravessava.
+ */
 export function segmentsIntersect(a: Segment, b: Segment): boolean {
   const o1 = orientation(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1);
   const o2 = orientation(a.x1, a.y1, a.x2, a.y2, b.x2, b.y2);
   const o3 = orientation(b.x1, b.y1, b.x2, b.y2, a.x1, a.y1);
   const o4 = orientation(b.x1, b.y1, b.x2, b.y2, a.x2, a.y2);
-  return o1 * o2 < 0 && o3 * o4 < 0;
+  return o1 * o2 <= 0 && o3 * o4 < 0;
 }
 
 /** Descarta rapidamente paredes cujo bounding box nao toca o raio. */
@@ -332,8 +352,28 @@ export function newlyExploredCells(scene: Scene): string[] {
   return fresh;
 }
 
-/** Paredes que o jogador pode ver desenhadas (portas secretas ficam de fora). */
+/**
+ * O caminho entre dois pontos atravessa alguma parede?
+ *
+ * O teste e sobre a LINHA RETA entre origem e destino — a mesma simplificacao
+ * que os VTTs consagrados usam. Um contorno legitimo em volta de um canto
+ * pode ser recusado, e a saida e a natural: mover em duas etapas. Verificar o
+ * caminho de verdade exigiria busca em grafo a cada arraste, e o custo nao se
+ * justifica para o ganho.
+ *
+ * Portas abertas nao barram, pelo mesmo motivo que nao barram a visao. Janelas
+ * sao o contrario: deixam ver e barram a passagem.
+ */
+export function movementBlocked(scene: Scene, from: Point, to: Point): boolean {
+  if (from.x === to.x && from.y === to.y) return false;
+  return !hasLineOfSight(from, to, collectBlockers(scene, 'movement'));
+}
+
+/**
+ * Paredes que o jogador pode ver desenhadas: portas e janelas, que sao coisas
+ * que ele enxerga no mapa. Parede comum e secreta ficam de fora.
+ */
 export function visibleWalls(walls: Wall[], role: Role): Wall[] {
   if (role === 'GM') return walls;
-  return walls.filter((w) => !w.hidden && w.door);
+  return walls.filter((w) => !w.hidden && (w.door || w.window));
 }

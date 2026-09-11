@@ -8,6 +8,7 @@ import type {
   Tile,
   Token,
   Wall,
+  WeatherConfig,
 } from './types.js';
 
 /** Fabricas de entidades. Cliente e servidor criam objetos completos pelos
@@ -57,6 +58,7 @@ export const DEFAULT_SETTINGS: TableSettings = {
   playersMoveOwnTokensOnly: true,
   showPartyBars: true,
   strictVision: true,
+  wallsBlockMovement: true,
   playersCanAnnotate: false,
   diceEnabled: true,
 };
@@ -78,6 +80,8 @@ export const DEFAULT_INITIATIVE: InitiativeState = {
  * quebrou. A neblina e um recurso que o mestre liga quando a cena pede,
  * nao um estado inicial.
  */
+export const DEFAULT_WEATHER: WeatherConfig = { kind: 'none', intensity: 0.5, angle: 12 };
+
 export const DEFAULT_FOG: FogConfig = {
   mode: 'off',
   explored: [],
@@ -104,6 +108,7 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     tokens: partial.tokens ?? [],
     effects: partial.effects ?? [],
     globalLight: partial.globalLight ?? 1,
+    weather: { ...DEFAULT_WEATHER, ...(partial.weather ?? {}) },
   };
 }
 
@@ -118,6 +123,7 @@ export function createToken(partial: Partial<Token> = {}): Token {
     scale: partial.scale ?? 1,
     rotation: partial.rotation ?? 0,
     layer: partial.layer ?? 3,
+    shape: partial.shape ?? 'circle',
     visibility: partial.visibility ?? 'visible',
     opacity: partial.opacity ?? 1,
     gmOnly: partial.gmOnly ?? false,
@@ -172,8 +178,60 @@ export function createEffect(partial: Partial<MapEffect> = {}): MapEffect {
     visibility: partial.visibility ?? 'visible',
     gmOnly: partial.gmOnly ?? false,
     fontSize: partial.fontSize ?? 28,
+    style: partial.style ?? 'flat',
+    colorAlt: partial.colorAlt ?? '#ffffff',
+    speed: partial.speed ?? 1,
   };
 }
+
+/**
+ * Presets dos Elementos do Outro Lado (Ordem Paranormal).
+ *
+ * As cores seguem a simbologia do sistema: Sangue e vermelho; Morte anda em
+ * preto, branco e cinza; Conhecimento e dourado; Energia e neon; e Medo nao
+ * tem cor propria — aparece translucido, misturado ao que estiver em volta.
+ * Cada preset e so um ponto de partida: cor, estilo e ritmo continuam
+ * editaveis, porque a mesa e de quem joga.
+ */
+export interface EffectPreset {
+  id: string;
+  label: string;
+  hint: string;
+  patch: Partial<MapEffect>;
+}
+
+export const PARANORMAL_PRESETS: EffectPreset[] = [
+  {
+    id: 'blood',
+    label: 'Sangue',
+    hint: 'Violencia e dor: brasas quentes subindo da area.',
+    patch: { style: 'embers', color: '#a4161a', colorAlt: '#ff4d4d', opacity: 0.5, speed: 1 },
+  },
+  {
+    id: 'death',
+    label: 'Morte',
+    hint: 'Lodo e decadencia: nevoa cinza que se arrasta.',
+    patch: { style: 'mist', color: '#79808a', colorAlt: '#eef1f4', opacity: 0.6, speed: 0.6 },
+  },
+  {
+    id: 'knowledge',
+    label: 'Conhecimento',
+    hint: 'Sigilos e simbolos: anel de runas girando.',
+    patch: { style: 'runes', color: '#d9a441', colorAlt: '#fff1c9', opacity: 0.6, speed: 0.8 },
+  },
+  {
+    id: 'energy',
+    label: 'Energia',
+    hint: 'Caos mutavel: vortice neon em movimento.',
+    patch: { style: 'vortex', color: '#7b2ff7', colorAlt: '#22e0ff', opacity: 0.55, speed: 1.4 },
+  },
+  {
+    id: 'fear',
+    label: 'Medo',
+    hint: 'Sem cor propria: chiado translucido que distorce o que cobre.',
+    patch: { style: 'static', color: '#101018', colorAlt: '#8f8fa8', opacity: 0.45, speed: 1.2 },
+  },
+];
 
 export function createWall(partial: Partial<Wall> = {}): Wall {
   return {
@@ -184,9 +242,18 @@ export function createWall(partial: Partial<Wall> = {}): Wall {
     y2: partial.y2 ?? 0,
     door: partial.door ?? false,
     open: partial.open ?? false,
+    window: partial.door ? false : (partial.window ?? false),
     hidden: partial.hidden ?? false,
   };
 }
+
+/**
+ * Visao com que um personagem nasce, em celulas.
+ *
+ * Com zero o jogador entra numa cena escura sem enxergar nem o proprio
+ * entorno, e o mestre precisava lembrar de ajustar cada token novo.
+ */
+export const CHARACTER_VISION_RADIUS = 1;
 
 export const CONDITION_PRESETS = [
   { id: 'stunned', label: 'Atordoado', icon: '💫' },

@@ -12,7 +12,23 @@ type Status = 'loading' | 'ready' | 'error';
 interface Entry {
   status: Status;
   image: HTMLImageElement;
+  /** Tentativas que ja falharam, para espacar a proxima. */
+  failures: number;
+  /** Antes disto, um erro continua valendo e nao dispara nova tentativa. */
+  retryAt: number;
 }
+
+/**
+ * Espera entre tentativas: 1s, 2s, 4s... ate 30s.
+ *
+ * O erro era definitivo: uma unica falha deixava a imagem em branco ate
+ * recarregar a pagina. E falhas passageiras sao comuns aqui — o cookie de
+ * acesso ainda a caminho na entrada, uma oscilacao do tunnel, o servidor
+ * reiniciando. Tentar de novo com espera crescente cobre todas sem martelar
+ * o servidor quando o arquivo realmente nao existe.
+ */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 30_000;
 
 const cache = new Map<string, Entry>();
 const listeners = new Set<() => void>();
@@ -27,25 +43,41 @@ function announce(): void {
   for (const fn of listeners) fn();
 }
 
-export function getImage(url: string | null | undefined): HTMLImageElement | null {
-  if (!url) return null;
-
-  const cached = cache.get(url);
-  if (cached) return cached.status === 'ready' ? cached.image : null;
-
+function load(url: string, entry: Entry): void {
   const image = new Image();
-  const entry: Entry = { status: 'loading', image };
-  cache.set(url, entry);
+  entry.image = image;
+  entry.status = 'loading';
 
   image.onload = () => {
     entry.status = 'ready';
+    entry.failures = 0;
     announce();
   };
   image.onerror = () => {
     entry.status = 'error';
+    entry.failures += 1;
+    const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (entry.failures - 1));
+    entry.retryAt = Date.now() + delay;
+    // O renderizador so chama `getImage` quando desenha, e com a mesa parada
+    // ele nao desenha. Sem este aviso a nova tentativa nunca aconteceria.
+    setTimeout(announce, delay);
   };
   image.src = url;
+}
 
+export function getImage(url: string | null | undefined): HTMLImageElement | null {
+  if (!url) return null;
+
+  const cached = cache.get(url);
+  if (cached) {
+    if (cached.status === 'ready') return cached.image;
+    if (cached.status === 'error' && Date.now() >= cached.retryAt) load(url, cached);
+    return null;
+  }
+
+  const entry: Entry = { status: 'loading', image: new Image(), failures: 0, retryAt: 0 };
+  cache.set(url, entry);
+  load(url, entry);
   return null;
 }
 

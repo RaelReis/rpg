@@ -3,6 +3,7 @@ import type {
   Cell,
   ChatMessage,
   FieldValue,
+  Handout,
   InitiativeEntry,
   InitiativeState,
   Layer,
@@ -25,7 +26,7 @@ import type {
  *
  * Sincronizacao em duas velocidades:
  *  - estado estrutural (`table:state`, `scene:patch`) vai inteiro, e muda pouco;
- *  - alta frequencia (`token:moved`, `fog:patch`, `cursor:moved`) vai em delta.
+ *  - alta frequencia (`token:moved`, `fog:patch`) vai em delta.
  *
  * `tokens:patch` e deliberadamente um upsert/remove: com `strictVision`, o
  * servidor calcula por jogador quais tokens sao visiveis, e a mesma mensagem
@@ -64,10 +65,21 @@ export interface TokenMovePayload {
   dragging?: boolean;
 }
 
+/**
+ * Pincel de neblina.
+ *
+ * `hide` e `block` sao coisas diferentes de proposito:
+ *
+ * - `hide` cobre de volta — apaga o que estava revelado e explorado, mas a
+ *   area continua descobrivel: o personagem que andar ate la revela de novo.
+ *   E o gesto comum, de "fechar o mapa" antes de uma cena.
+ * - `block` sela a area: nem a visao dos tokens revela. Serve para o que o
+ *   grupo nao pode ver de jeito nenhum, e so sai com `unblock`.
+ */
 export interface FogPaintPayload {
   sceneId: string;
   cells: string[];
-  action: 'reveal' | 'hide' | 'clear-reveal' | 'clear-hide';
+  action: 'reveal' | 'hide' | 'block' | 'clear-reveal' | 'unblock';
 }
 
 export interface FogResetPayload {
@@ -86,8 +98,17 @@ export interface FogPatch {
   explored?: CellSet;
   revealed?: CellSet;
   hidden?: CellSet;
-  /** Substituicao total (usado no reset). */
+  /** Substituicao total das listas cruas (reset do mestre). */
   reset?: { explored?: string[]; revealed?: string[]; hidden?: string[] };
+  /**
+   * Visao ja calculada pelo servidor para ESTE jogador (`strictVision`).
+   *
+   * Separada de `reset` de proposito. As duas chegavam no mesmo campo, e o
+   * cliente gravava toda substituicao tambem como visao calculada: um reset
+   * de listas cruas faria o cliente tratar o pincel do mestre como "o que o
+   * jogador ve", ignorando a linha de visao dos tokens.
+   */
+  computed?: { visible: string[]; explored: string[] };
 }
 
 export interface TokensPatch {
@@ -104,15 +125,6 @@ export interface MapPing {
   playerName: string;
   /** Puxa a camera dos jogadores para o ponto (so o mestre pode). */
   focus: boolean;
-}
-
-export interface CursorMove {
-  sceneId: string;
-  playerId: string;
-  name: string;
-  color: string;
-  x: number;
-  y: number;
 }
 
 export interface ChatSendPayload {
@@ -160,6 +172,12 @@ export interface ClientToServerEvents {
   'sheet:update': (payload: { sheetId: string; values?: Record<string, FieldValue>; name?: string; portraitAssetId?: string | null; sharedWithParty?: boolean }, ack: Ack<null>) => void;
   'sheet:delete': (payload: { sheetId: string }, ack: Ack<null>) => void;
   'sheet:assign': (payload: { sheetId: string; playerId: string | null }, ack: Ack<null>) => void;
+  /**
+   * Rola a formula de um campo da ficha. Quem resolve as referencias e joga
+   * os dados e o servidor — deixar isso no cliente permitiria escolher o
+   * resultado com o console aberto.
+   */
+  'sheet:roll': (payload: { sheetId: string; fieldId: string; whisper?: boolean }, ack: Ack<null>) => void;
 
   'initiative:update': (patch: Partial<InitiativeState>, ack: Ack<null>) => void;
   'initiative:add': (payload: { entry: Partial<InitiativeEntry> }, ack: Ack<null>) => void;
@@ -174,9 +192,22 @@ export interface ClientToServerEvents {
 
   'asset:delete': (payload: { assetId: string }, ack: Ack<null>) => void;
 
+  'handout:create': (payload: { title: string; text?: string; assetId?: string | null }, ack: Ack<Handout>) => void;
+  'handout:update': (payload: { handoutId: string; patch: Partial<Handout> }, ack: Ack<null>) => void;
+  'handout:delete': (payload: { handoutId: string }, ack: Ack<null>) => void;
+  /**
+   * Abre o material na tela de quem ja tem acesso.
+   *
+   * Compartilhar e apresentar sao coisas diferentes: o mestre pode deixar um
+   * material disponivel para consulta sem interromper a cena, e apresentar
+   * quando for a hora.
+   */
+  'handout:present': (payload: { handoutId: string }, ack: Ack<null>) => void;
+
   'chat:send': (payload: ChatSendPayload, ack: Ack<null>) => void;
   'map:ping': (payload: Omit<MapPing, 'playerName' | 'color'>) => void;
-  'cursor:move': (payload: { sceneId: string; x: number; y: number }) => void;
+  // Nao ha evento de cursor: ninguem, nem o mestre, ve o ponteiro dos outros.
+  // O ping continua sendo o jeito deliberado de apontar algo no mapa.
 }
 
 export interface ServerToClientEvents {
@@ -200,12 +231,12 @@ export interface ServerToClientEvents {
   'initiative:patch': (initiative: InitiativeState) => void;
   'settings:patch': (settings: TableSettings) => void;
   'assets:patch': (payload: { upsert?: Asset[]; remove?: string[] }) => void;
+  'handouts:patch': (payload: { upsert?: Handout[]; remove?: string[] }) => void;
+  'handout:presented': (payload: { handoutId: string }) => void;
   'table:renamed': (name: string) => void;
 
   'chat:message': (message: ChatMessage) => void;
   'map:ping': (ping: MapPing) => void;
-  'cursor:moved': (payload: CursorMove) => void;
-  'cursor:left': (payload: { playerId: string }) => void;
 
   'notice': (payload: { level: 'info' | 'warn' | 'error'; message: string }) => void;
   'session:ended': (payload: { reason: string }) => void;

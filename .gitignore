@@ -7,7 +7,13 @@ build/
 server/uploads/
 server/prisma/*.db
 server/prisma/*.db-journal
+# Arquivos auxiliares do modo WAL do SQLite.
+server/prisma/*.db-wal
+server/prisma/*.db-shm
+server/prisma/*.db.bak-*
 .DS_Store
 *.tsbuildinfo
 dist-types/
 fog-preview.png
+effects-preview.png
+token-shape-preview.png

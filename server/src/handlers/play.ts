@@ -188,17 +188,24 @@ export function sendChat(ctx: Ctx, payload: ChatSendPayload, ack: Ack<null>): vo
   const roll = command ? rollFormula(command) : null;
   if (command && !roll) return fail(ack, `Nao entendi a rolagem "${command}".`);
 
-  const message: ChatMessage = {
-    id: generateId('msg'),
+  publishChat(ctx, {
     playerId: player.id,
     authorName: player.name,
     authorColor: player.color,
     text: roll ? '' : text,
     roll,
+    rollLabel: null,
     whisper: Boolean(payload?.whisper),
-    createdAt: Date.now(),
-  };
+  });
+  ok(ack, null);
+}
 
+/** Monta a mensagem, guarda no historico e entrega a quem tem direito. */
+export function publishChat(
+  ctx: Ctx,
+  parts: Omit<ChatMessage, 'id' | 'createdAt'>,
+): ChatMessage {
+  const message: ChatMessage = { ...parts, id: generateId('msg'), createdAt: Date.now() };
   ctx.room.appendChat(message);
 
   // Sussurro e uma conversa reservada entre o jogador e o mestre.
@@ -207,7 +214,7 @@ export function sendChat(ctx: Ctx, payload: ChatSendPayload, ack: Ack<null>): vo
     if (message.whisper && viewer.role !== 'GM' && viewer.playerId !== message.playerId) continue;
     socket.emit('chat:message', message);
   }
-  ok(ack, null);
+  return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,26 +244,6 @@ export function pingMap(ctx: Ctx, payload: Omit<MapPing, 'playerName' | 'color'>
   }
 }
 
-export function moveCursor(ctx: Ctx, payload: { sceneId: string; x: number; y: number }): void {
-  const player = ctx.room.player(ctx.viewer.playerId);
-  if (!player) return;
-
-  const data = {
-    sceneId: safeString(payload?.sceneId, 64),
-    playerId: player.id,
-    name: player.name,
-    color: player.color,
-    x: clampNumber(payload?.x, -30000, 30000, 0),
-    y: clampNumber(payload?.y, -30000, 30000, 0),
-  };
-
-  for (const socket of socketsOf(ctx.room)) {
-    if (socket.data.viewer.playerId === player.id) continue;
-    if (socket.data.currentSceneId !== data.sceneId) continue;
-    socket.emit('cursor:moved', data);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Jogadores
 // ---------------------------------------------------------------------------
@@ -273,7 +260,7 @@ export function updatePlayer(ctx: Ctx, patch: { name?: string; color?: string },
     player.color = patch.color;
   }
 
-  ctx.room.touch('players');
+  ctx.room.touchPlayer(player.id);
   emitPlayers(ctx.room);
   ok(ack, null);
 }
@@ -290,7 +277,7 @@ export async function kickPlayer(ctx: Ctx, payload: { playerId: string }, ack: A
   for (const sheet of ctx.room.state.sheets) {
     if (sheet.ownerPlayerId === target.id) {
       sheet.ownerPlayerId = null;
-      ctx.room.touch('sheets');
+      ctx.room.touchSheet(sheet.id);
     }
   }
 
@@ -320,7 +307,7 @@ export async function promotePlayer(
   }
 
   target.role = role;
-  ctx.room.touch('players');
+  ctx.room.touchPlayer(target.id);
   await prisma.player.updateMany({ where: { id: target.id }, data: { role } });
 
   // O papel muda o que a pessoa tem direito de receber: reenviamos tudo.
@@ -383,7 +370,7 @@ export async function deleteAsset(ctx: Ctx, payload: { assetId: string }, ack: A
   for (const sheet of ctx.room.state.sheets) {
     if (sheet.portraitAssetId === assetId) {
       sheet.portraitAssetId = null;
-      ctx.room.touch('sheets');
+      ctx.room.touchSheet(sheet.id);
     }
   }
 

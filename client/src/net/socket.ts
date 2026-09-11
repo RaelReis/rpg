@@ -9,6 +9,7 @@ import type {
   TableState,
 } from '@rpg/shared';
 
+import { grantImageAccess, revokeImageAccess } from './api';
 import { useStore } from '../state/store';
 
 /**
@@ -61,13 +62,42 @@ export function getSocket(): ClientSocket {
   return socket;
 }
 
-/** Envia um evento e devolve o resultado como promessa. */
-export function rpc<T>(event: keyof ClientToServerEvents, payload?: unknown): Promise<T> {
+/**
+ * Teto de espera por um ack. Todo handler do servidor responde a partir do
+ * estado em memoria — a gravacao no banco e assincrona e nao segura a
+ * resposta —, entao qualquer coisa alem disto e falha, nao lentidao.
+ */
+const RPC_TIMEOUT_MS = 15000;
+
+/**
+ * Envia um evento e devolve o resultado como promessa.
+ *
+ * O tempo limite nao e detalhe: sem ele, um ack perdido — servidor reiniciado
+ * no meio da chamada, evento descartado pelo limitador de taxa — deixa a
+ * promessa pendente para sempre, e a interface fica presa em "Salvando..."
+ * sem erro e sem saida a nao ser recarregar a pagina.
+ */
+export function rpc<T>(
+  event: keyof ClientToServerEvents,
+  payload?: unknown,
+  timeoutMs = RPC_TIMEOUT_MS,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const s = getSocket();
     if (!s.connected) return reject(new Error('Sem conexao com o servidor.'));
 
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error('O servidor nao respondeu. Tente de novo.'));
+    }, timeoutMs);
+
     const ack: Ack<T> = (res: Result<T>) => {
+      // O ack ainda pode chegar depois do estouro; ai ja nao ha o que fazer
+      // com ele, e resolver duas vezes seria silencioso mas errado.
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (res.ok) resolve(res.data);
       else reject(new Error(res.error));
     };
@@ -117,7 +147,7 @@ export async function connectAndResume(): Promise<boolean> {
     const data = await rpc<{ session: Session; state: TableState }>('session:resume', {
       token: session.token,
     });
-    applySession(data.session, data.state);
+    await applySession(data.session, data.state);
     return true;
   } catch {
     // Sessao invalida (mesa apagada, jogador removido): comeca do zero.
@@ -134,7 +164,7 @@ export async function joinTable(req: JoinRequest): Promise<void> {
     await once(s, 'connect', 8000);
   }
   const data = await rpc<{ session: Session; state: TableState }>('session:join', req);
-  applySession(data.session, data.state);
+  await applySession(data.session, data.state);
 }
 
 /** Usada logo apos criar a mesa pela API REST, que ja devolve a sessao. */
@@ -148,11 +178,18 @@ export async function resumeWithSession(session: Session): Promise<void> {
   const data = await rpc<{ session: Session; state: TableState }>('session:resume', {
     token: session.token,
   });
-  applySession(data.session, data.state);
+  await applySession(data.session, data.state);
 }
 
-function applySession(session: Session, state: TableState): void {
+async function applySession(session: Session, state: TableState): Promise<void> {
   storeSession(session);
+
+  // O cookie das imagens vem ANTES da mesa. Em paralelo, o canvas pedia as
+  // imagens assim que o estado chegava, antes do cookie existir: elas
+  // voltavam 401 e, para quem entrava pela primeira vez, a mesa abria sem
+  // arte. Custa uma ida ao servidor na entrada.
+  await grantImageAccess(session.token);
+
   const store = useStore.getState();
   store.setSession(session);
   store.setTable(state);
@@ -160,6 +197,9 @@ function applySession(session: Session, state: TableState): void {
 }
 
 export function leaveTable(): void {
+  const previous = storedSession();
+  if (previous) void revokeImageAccess(previous.token);
+
   storeSession(null);
   const store = useStore.getState();
   store.setSession(null);
@@ -197,7 +237,9 @@ function registerListeners(s: ClientSocket): void {
     const session = storedSession();
     if (session && store().table) {
       rpc<{ session: Session; state: TableState }>('session:resume', { token: session.token })
-        .then((data) => {
+        .then(async (data) => {
+          // O cookie pode ter expirado ou sido limpo enquanto a conexao caia.
+          await grantImageAccess(data.session.token);
           store().setSession(data.session);
           store().setTable(data.state);
           store().notify('info', 'Reconectado a mesa.');
@@ -246,12 +288,22 @@ function registerListeners(s: ClientSocket): void {
   s.on('initiative:patch', (initiative) => store().setInitiative(initiative));
   s.on('settings:patch', (settings) => store().setSettings(settings));
   s.on('assets:patch', ({ upsert, remove }) => store().upsertAssets(upsert ?? [], remove ?? []));
+  s.on('handouts:patch', ({ upsert, remove }) =>
+    store().upsertHandouts(upsert ?? [], remove ?? []),
+  );
+
+  // Apresentar e um gesto do mestre pedindo a atencao da mesa: a janela abre
+  // sozinha, em vez de esperar a pessoa procurar o material na aba.
+  s.on('handout:presented', ({ handoutId }) => {
+    const state = store();
+    const handout = state.table?.handouts.find((h) => h.id === handoutId);
+    state.openHandout(handoutId);
+    if (handout) state.notify('info', `O mestre apresentou: ${handout.title}`);
+  });
   s.on('table:renamed', (name) => store().setTableName(name));
 
   s.on('chat:message', (message) => store().addChatMessage(message));
   s.on('map:ping', (ping) => store().addPing(ping));
-  s.on('cursor:moved', (cursor) => store().setPeer(cursor));
-  s.on('cursor:left', ({ playerId }) => store().removePeer(playerId));
 
   s.on('notice', ({ level, message }) => store().notify(level, message));
 

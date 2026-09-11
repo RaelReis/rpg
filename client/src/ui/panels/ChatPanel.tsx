@@ -121,6 +121,7 @@ function MessageRow({ message, mine }: { message: ChatMessage; mine: boolean }):
         <div className="roll">
           <span className="total">{message.roll.total}</span>
           <span className="detail">
+            {message.rollLabel && <strong className="roll-label">{message.rollLabel}</strong>}
             {message.roll.formula}
             {message.roll.rolls.length > 0 && ` · [${message.roll.rolls.join(', ')}]`}
           </span>

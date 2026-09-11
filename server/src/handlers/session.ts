@@ -19,6 +19,8 @@ import {
 } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
 import { stateForViewer } from '../filter.js';
+import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
+import { spawnCharacterToken } from './characters.js';
 import { rooms, type Room } from '../room.js';
 import { fail, ok, safeString } from './context.js';
 
@@ -66,6 +68,7 @@ async function createSheetForPlayer(room: Room, playerId: string, name: string):
   });
 
   room.state.sheets.push(sheet);
+  spawnCharacterToken(room, sheet);
   return sheet;
 }
 
@@ -85,6 +88,7 @@ function stateWithVisibilityCache(room: Room, socket: TypedSocket): TableState {
 
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
+  socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
   return state;
 }
 
@@ -95,6 +99,7 @@ function attach(socket: TypedSocket, room: Room, playerId: string): void {
   socket.data.tableId = room.state.id;
   socket.data.viewer = { playerId, role: player.role };
   socket.data.visibleTokens = new Set();
+  socket.data.knownAssets = new Set();
   socket.data.currentSceneId = room.state.activeSceneId;
 
   room.sockets.add(socket.id);
@@ -103,7 +108,7 @@ function attach(socket: TypedSocket, room: Room, playerId: string): void {
 
   player.connected = true;
   player.lastSeen = Date.now();
-  room.touch('players');
+  room.touchPlayer(player.id);
 }
 
 export async function handleJoin(
@@ -111,12 +116,28 @@ export async function handleJoin(
   req: JoinRequest,
   ack: Ack<JoinResult>,
 ): Promise<void> {
+  // Estes campos chegam de quem ainda nao tem sessao nenhuma: o tipo e
+  // conferido antes de qualquer uso, porque `code.trim()` ou `scryptSync` com
+  // um objeto lancam — e esta e a porta aberta para qualquer visitante.
   const name = safeString(req?.name, 40).trim();
   if (!name) return fail(ack, 'Informe um nome.');
-  if (!req?.code) return fail(ack, 'Informe o codigo da mesa.');
+  if (typeof req?.code !== 'string' || !req.code.trim()) {
+    return fail(ack, 'Informe o codigo da mesa.');
+  }
+  if (req.gmPassword !== undefined && typeof req.gmPassword !== 'string') {
+    return fail(ack, 'Senha de mestre invalida.');
+  }
+  if (req.gmPassword !== undefined && req.gmPassword.length > 200) {
+    // scrypt com uma senha gigante e trabalho de CPU gratis para quem ataca.
+    return fail(ack, 'Senha de mestre invalida.');
+  }
 
   const room = await rooms.loadByCode(req.code);
   if (!room) return fail(ack, 'Mesa nao encontrada. Confira o codigo.');
+
+  // Cada entrada cria um jogador e uma ficha permanentes: sem teto, quem tiver
+  // o codigo enche a mesa e o banco a forca de reentrar.
+  if (atCapacity(room.state.players, 'players')) return fail(ack, LIMIT_MESSAGES.players);
 
   // A senha do mestre e o que separa os dois papeis. Sem senha informada, a
   // pessoa entra como jogador, mesmo que a mesa nao tenha senha definida.
@@ -126,6 +147,14 @@ export async function handleJoin(
       where: { id: room.state.id },
       select: { gmPasswordHash: true },
     });
+    // Mesa sem senha de mestre e com mestre: ninguem assume o papel pelo
+    // convite. Antes `verifyPassword` aceitava qualquer senha quando nao havia
+    // uma definida, e bastava marcar "entrar como mestre" e digitar qualquer
+    // coisa para tomar a mesa.
+    const hasGm = room.state.players.some((p) => p.role === 'GM');
+    if (!stored?.gmPasswordHash && hasGm) {
+      return fail(ack, 'Esta mesa ja tem um mestre.');
+    }
     if (!verifyPassword(req.gmPassword, stored?.gmPasswordHash ?? null)) {
       return fail(ack, 'Senha de mestre incorreta.');
     }
@@ -161,8 +190,8 @@ export async function handleJoin(
     const sheet = await createSheetForPlayer(room, playerId, name);
     const player = room.player(playerId);
     if (player) player.sheetId = sheet.id;
-    room.touch('players');
-    room.touch('sheets');
+    room.touchPlayer(playerId);
+    room.touchSheet(sheet.id);
   }
 
   attach(socket, room, playerId);
@@ -185,7 +214,7 @@ export async function handleResume(
   req: ResumeRequest,
   ack: Ack<JoinResult>,
 ): Promise<void> {
-  if (!req?.token) return fail(ack, 'Sessao ausente.');
+  if (typeof req?.token !== 'string' || !req.token) return fail(ack, 'Sessao ausente.');
 
   const resolved = await rooms.resolveSession(req.token);
   if (!resolved) return fail(ack, 'Sessao expirada ou invalida. Entre novamente.');
@@ -232,9 +261,8 @@ export function handleDisconnect(socket: TypedSocket): void {
   if (player && !stillOnline) {
     player.connected = false;
     player.lastSeen = Date.now();
-    room.touch('players');
+    room.touchPlayer(player.id);
     emitPlayers(room);
-    socket.to(roomChannel(tableId)).emit('cursor:left', { playerId });
   }
 }
 

@@ -5,12 +5,13 @@ import {
   DEFAULT_SETTINGS,
   type Asset,
   type ChatMessage,
-  type CursorMove,
   type FogPatch,
+  type Handout,
   type InitiativeState,
   type MapEffect,
   type MapPing,
   type Player,
+  type Point,
   type Scene,
   type Session,
   type Sheet,
@@ -46,13 +47,43 @@ export type Tool =
   | 'effect'
   | 'tile';
 
-export type SideTab = 'scene' | 'tokens' | 'sheet' | 'initiative' | 'chat' | 'assets' | 'players';
+export type SideTab =
+  | 'scene'
+  | 'tokens'
+  | 'sheet'
+  | 'initiative'
+  | 'chat'
+  | 'handouts'
+  | 'assets'
+  | 'players';
 
 export interface Notice {
   id: number;
   level: 'info' | 'warn' | 'error';
   message: string;
 }
+
+/**
+ * Uma acao de mapa que pode ser desfeita e refeita pelo mestre.
+ *
+ * Os dois sentidos ficam na mesma entrada porque recriar muda a identidade:
+ * desfazer uma exclusao cria um objeto com id novo, e o refazer seguinte tem
+ * de apagar ESSE id, nao o original. Quem monta a entrada guarda o id numa
+ * variavel que os dois lados compartilham.
+ */
+export interface UndoEntry {
+  label: string;
+  undo: () => void | Promise<void>;
+  redo: () => void | Promise<void>;
+}
+
+/** O que a ferramenta de parede desenha a cada clique. */
+export type WallKind = 'wall' | 'door' | 'window';
+
+/** O que esta sendo arrastado para o mapa, para a previa de onde vai cair. */
+export type DragPayload =
+  | { kind: 'sheet'; sheetId: string }
+  | { kind: 'asset'; assetId: string; assetKind: string };
 
 export interface Camera {
   x: number;
@@ -63,10 +94,6 @@ export interface Camera {
 export interface ActivePing extends MapPing {
   id: number;
   createdAt: number;
-}
-
-export interface PeerCursor extends CursorMove {
-  updatedAt: number;
 }
 
 interface AppState {
@@ -82,7 +109,10 @@ interface AppState {
 
   // --- interface
   tool: Tool;
-  selectedTokenId: string | null;
+  /** Selecao de tokens; multipla, para mover ou apagar um grupo de uma vez. */
+  selectedTokenIds: string[];
+  selectedTileId: string | null;
+  selectedWallId: string | null;
   selectedSheetId: string | null;
   selectedAssetId: string | null;
   sideTab: SideTab;
@@ -92,11 +122,57 @@ interface AppState {
   hiddenLayers: number[];
   /** Sobrepoe no mapa do mestre ate onde o grupo enxerga. */
   showPartyVision: boolean;
+  /**
+   * Mestre olhando a cena pelos olhos deste jogador.
+   *
+   * E ferramenta de conferencia: o mestre enxerga tudo por definicao, entao
+   * nao tem como saber se a porta que abriu realmente liberou a visao de
+   * alguem sem entrar na pele daquela pessoa.
+   */
+  previewPlayerId: string | null;
+  /** Medidor de quadros sobre o mapa (tecla G). */
+  showPerf: boolean;
+  /** Raio do pincel de neblina, em celulas. */
+  fogBrush: number;
+  /**
+   * Ponto onde o proximo trecho de parede comeca.
+   *
+   * Cada clique grava o trecho na hora; o rascunho guarda so a ponta solta,
+   * para a previa ate o cursor e para o proximo clique continuar dali.
+   */
+  wallDraft: Point[];
+  /** O que o proximo trecho vira. Alt no clique faz uma porta avulsa. */
+  wallKind: WallKind;
+  /** Ficha ou imagem sendo arrastada sobre o mapa, se houver. */
+  dragging: DragPayload | null;
+  /** Pincel livre ou area retangular. */
+  fogShape: 'brush' | 'rect';
+  /**
+   * Ao cobrir, selar a area em vez de apenas fecha-la.
+   *
+   * Coberta, a area volta a ser descobrivel por quem andar ate la; selada,
+   * nem a visao dos tokens a revela. O padrao e o gesto mais comum — cobrir.
+   */
+  fogSeal: boolean;
+  /**
+   * Historico de desfazer, apenas local e apenas do mestre.
+   *
+   * Nao e um desfazer colaborativo: cada acao guarda como se reverter, e a
+   * reversao viaja como uma operacao nova. Desfazer a exclusao de um token
+   * recria um token igual, com id novo — o suficiente para consertar um erro
+   * no meio da sessao, sem a complexidade de sincronizar historicos.
+   */
+  undoStack: UndoEntry[];
+  /** O que foi desfeito e ainda pode voltar. Qualquer acao nova o esvazia. */
+  redoStack: UndoEntry[];
   notices: Notice[];
-  peers: Record<string, PeerCursor>;
   pings: ActivePing[];
   templateEditorOpen: boolean;
   sheetModalId: string | null;
+  /** Material aberto na tela, por escolha propria ou apresentado pelo mestre. */
+  openHandoutId: string | null;
+  /** Mensagens de chat chegadas enquanto a aba estava em outro painel. */
+  unreadChat: number;
 
   // --- acoes de sessao
   setSession(session: Session | null): void;
@@ -123,11 +199,25 @@ interface AppState {
   setSettings(settings: TableSettings): void;
   setTableName(name: string): void;
   upsertAssets(assets: Asset[], remove: string[]): void;
+  upsertHandouts(handouts: Handout[], remove: string[]): void;
   addChatMessage(message: ChatMessage): void;
 
   // --- interface
   setTool(tool: Tool): void;
   selectToken(id: string | null): void;
+  toggleTokenSelection(id: string): void;
+  selectTokens(ids: string[]): void;
+  selectTile(id: string | null): void;
+  selectWall(id: string | null): void;
+  setFogBrush(radius: number): void;
+  setWallDraft(points: Point[]): void;
+  setWallKind(kind: WallKind): void;
+  setDragging(payload: DragPayload | null): void;
+  setFogShape(shape: 'brush' | 'rect'): void;
+  setFogSeal(seal: boolean): void;
+  pushUndo(entry: UndoEntry): void;
+  undo(): void;
+  redo(): void;
   selectSheet(id: string | null): void;
   selectAsset(id: string | null): void;
   setSideTab(tab: SideTab): void;
@@ -135,14 +225,15 @@ interface AppState {
   setCamera(camera: Camera): void;
   toggleLayer(layer: number): void;
   togglePartyVision(): void;
+  setPreviewPlayer(playerId: string | null): void;
+  togglePerf(): void;
   notify(level: Notice['level'], message: string): void;
   dismissNotice(id: number): void;
-  setPeer(cursor: CursorMove): void;
-  removePeer(playerId: string): void;
   addPing(ping: MapPing): void;
   prunePings(): void;
   openTemplateEditor(open: boolean): void;
   openSheetModal(sheetId: string | null): void;
+  openHandout(handoutId: string | null): void;
 }
 
 let noticeSeq = 0;
@@ -171,7 +262,9 @@ export const useStore = create<AppState>((set, get) => ({
   rev: 0,
 
   tool: 'select',
-  selectedTokenId: null,
+  selectedTokenIds: [],
+  selectedTileId: null,
+  selectedWallId: null,
   selectedSheetId: null,
   selectedAssetId: null,
   sideTab: 'chat',
@@ -179,11 +272,22 @@ export const useStore = create<AppState>((set, get) => ({
   camera: { x: 0, y: 0, zoom: 1 },
   hiddenLayers: [],
   showPartyVision: false,
+  previewPlayerId: null,
+  showPerf: false,
+  fogBrush: 1,
+  fogShape: 'brush',
+  fogSeal: false,
+  wallDraft: [],
+  wallKind: 'wall',
+  dragging: null,
+  undoStack: [],
+  redoStack: [],
   notices: [],
-  peers: {},
   pings: [],
   templateEditorOpen: false,
   sheetModalId: null,
+  openHandoutId: null,
+  unreadChat: 0,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -202,7 +306,18 @@ export const useStore = create<AppState>((set, get) => ({
             null),
     })),
 
-  clearTable: () => set({ table: null, rev: 0, selectedTokenId: null, peers: {}, pings: [] }),
+  clearTable: () =>
+    set({
+      table: null,
+      rev: 0,
+      selectedTokenIds: [],
+      selectedTileId: null,
+      selectedWallId: null,
+      pings: [],
+      undoStack: [],
+      redoStack: [],
+      wallDraft: [],
+    }),
 
   patchScene: (sceneId, patch) =>
     set((s) => {
@@ -224,7 +339,22 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
   setActiveScene: (sceneId) =>
-    set((s) => (s.table ? { table: { ...s.table, activeSceneId: sceneId }, rev: s.rev + 1 } : {})),
+    set((s) => {
+      if (!s.table) return {};
+      // O historico e por cena: desfazer algo de outro mapa aconteceria fora
+      // da vista, e a pessoa nao veria o efeito do proprio Ctrl+Z.
+      const changed = s.table.activeSceneId !== sceneId;
+      return {
+        table: { ...s.table, activeSceneId: sceneId },
+        rev: s.rev + 1,
+        undoStack: changed ? [] : s.undoStack,
+        redoStack: changed ? [] : s.redoStack,
+        wallDraft: changed ? [] : s.wallDraft,
+        selectedTokenIds: changed ? [] : s.selectedTokenIds,
+        selectedTileId: changed ? null : s.selectedTileId,
+        selectedWallId: changed ? null : s.selectedWallId,
+      };
+    }),
 
   upsertTokens: (sceneId, tokens) =>
     set((s) => {
@@ -241,10 +371,7 @@ export const useStore = create<AppState>((set, get) => ({
         scene.tokens = scene.tokens.filter((t) => !gone.has(t.id));
       });
       return changed
-        ? {
-            rev: s.rev + 1,
-            selectedTokenId: gone.has(s.selectedTokenId ?? '') ? null : s.selectedTokenId,
-          }
+        ? { rev: s.rev + 1, selectedTokenIds: s.selectedTokenIds.filter((id) => !gone.has(id)) }
         : {};
     }),
 
@@ -290,17 +417,19 @@ export const useStore = create<AppState>((set, get) => ({
   applyFogPatch: (patch) =>
     set((s) => {
       const changed = withScene(s.table, patch.sceneId, (scene) => {
-        // O reset chega quando o servidor recalcula a visao do jogador ou
-        // quando o mestre limpa a neblina: substitui, nao acumula.
+        // Visao ja calculada pelo servidor (strictVision): substitui o que o
+        // jogador enxerga. Nao toca as listas cruas, que nesse modo ficam
+        // vazias no cliente, exatamente como o estado completo as entrega.
+        if (patch.computed) {
+          scene.fog.computedVisible = patch.computed.visible;
+          scene.fog.computedExplored = patch.computed.explored;
+          return;
+        }
+
+        // Reset das listas cruas, feito pelo mestre: substitui, nao acumula.
         if (patch.reset) {
-          if (patch.reset.explored) {
-            scene.fog.computedExplored = patch.reset.explored;
-            scene.fog.explored = patch.reset.explored;
-          }
-          if (patch.reset.revealed) {
-            scene.fog.computedVisible = patch.reset.revealed;
-            scene.fog.revealed = patch.reset.revealed;
-          }
+          if (patch.reset.explored) scene.fog.explored = patch.reset.explored;
+          if (patch.reset.revealed) scene.fog.revealed = patch.reset.revealed;
           if (patch.reset.hidden) scene.fog.hidden = patch.reset.hidden;
           return;
         }
@@ -355,18 +484,85 @@ export const useStore = create<AppState>((set, get) => ({
       };
     }),
 
+  upsertHandouts: (handouts, remove) =>
+    set((s) => {
+      if (!s.table) return {};
+      return {
+        table: { ...s.table, handouts: mergeById(s.table.handouts, handouts, remove) },
+        rev: s.rev + 1,
+        // Um material removido nao pode continuar aberto na tela de ninguem.
+        openHandoutId: remove.includes(s.openHandoutId ?? '') ? null : s.openHandoutId,
+      };
+    }),
+
   addChatMessage: (message) =>
     set((s) => {
       if (!s.table) return {};
       const chat = [...s.table.chat, message].slice(-200);
-      return { table: { ...s.table, chat }, rev: s.rev + 1 };
+      // A propria mensagem nunca conta como nao lida.
+      const mine = message.playerId === s.session?.playerId;
+      const reading = s.sideTab === 'chat' && s.sideOpen;
+      return {
+        table: { ...s.table, chat },
+        rev: s.rev + 1,
+        unreadChat: mine || reading ? s.unreadChat : s.unreadChat + 1,
+      };
     }),
 
   setTool: (tool) => set({ tool }),
-  selectToken: (selectedTokenId) => set({ selectedTokenId }),
+  selectToken: (id) =>
+    set({ selectedTokenIds: id ? [id] : [], selectedTileId: null, selectedWallId: null }),
+
+  toggleTokenSelection: (id) =>
+    set((s) => ({
+      selectedTokenIds: s.selectedTokenIds.includes(id)
+        ? s.selectedTokenIds.filter((t) => t !== id)
+        : [...s.selectedTokenIds, id],
+      selectedTileId: null,
+      selectedWallId: null,
+    })),
+
+  selectTokens: (ids) => set({ selectedTokenIds: ids, selectedTileId: null, selectedWallId: null }),
+  selectTile: (selectedTileId) =>
+    set({ selectedTileId, selectedTokenIds: [], selectedWallId: null }),
+  selectWall: (selectedWallId) =>
+    set({ selectedWallId, selectedTokenIds: [], selectedTileId: null }),
+  setFogBrush: (radius) => set({ fogBrush: Math.min(8, Math.max(0, Math.round(radius))) }),
+  setFogShape: (fogShape) => set({ fogShape }),
+  setFogSeal: (fogSeal) => set({ fogSeal }),
+  setWallDraft: (wallDraft) => set({ wallDraft }),
+  setWallKind: (wallKind) => set({ wallKind }),
+  setDragging: (dragging) => set({ dragging }),
+
+  // Acao nova depois de um desfazer abre outro galho da historia: o que
+  // estava para refazer deixa de fazer sentido.
+  pushUndo: (entry) => set((s) => ({ undoStack: [...s.undoStack, entry].slice(-50), redoStack: [] })),
+
+  undo: () => {
+    const stack = get().undoStack;
+    const entry = stack[stack.length - 1];
+    if (!entry) {
+      get().notify('info', 'Nada para desfazer.');
+      return;
+    }
+    set((s) => ({ undoStack: stack.slice(0, -1), redoStack: [...s.redoStack, entry].slice(-50) }));
+    void Promise.resolve(entry.undo()).then(() => get().notify('info', `Desfeito: ${entry.label}`));
+  },
+
+  redo: () => {
+    const stack = get().redoStack;
+    const entry = stack[stack.length - 1];
+    if (!entry) {
+      get().notify('info', 'Nada para refazer.');
+      return;
+    }
+    set((s) => ({ redoStack: stack.slice(0, -1), undoStack: [...s.undoStack, entry].slice(-50) }));
+    void Promise.resolve(entry.redo()).then(() => get().notify('info', `Refeito: ${entry.label}`));
+  },
   selectSheet: (selectedSheetId) => set({ selectedSheetId }),
   selectAsset: (selectedAssetId) => set({ selectedAssetId }),
-  setSideTab: (sideTab) => set({ sideTab, sideOpen: true }),
+  setSideTab: (sideTab) =>
+    set((s) => ({ sideTab, sideOpen: true, unreadChat: sideTab === 'chat' ? 0 : s.unreadChat })),
   toggleSide: () => set((s) => ({ sideOpen: !s.sideOpen })),
   setCamera: (camera) => set({ camera }),
 
@@ -378,6 +574,12 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   togglePartyVision: () => set((s) => ({ showPartyVision: !s.showPartyVision })),
+  togglePerf: () => set((s) => ({ showPerf: !s.showPerf })),
+
+  setPreviewPlayer: (previewPlayerId) =>
+    // A previa e so de leitura: manter uma selecao ativa convidaria a editar
+    // o mapa enquanto se olha pela perspectiva de outra pessoa.
+    set({ previewPlayerId, selectedTokenIds: [], selectedTileId: null, selectedWallId: null }),
 
   notify: (level, message) => {
     const id = ++noticeSeq;
@@ -386,16 +588,6 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   dismissNotice: (id) => set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
-
-  setPeer: (cursor) =>
-    set((s) => ({ peers: { ...s.peers, [cursor.playerId]: { ...cursor, updatedAt: Date.now() } } })),
-
-  removePeer: (playerId) =>
-    set((s) => {
-      const peers = { ...s.peers };
-      delete peers[playerId];
-      return { peers };
-    }),
 
   addPing: (ping) =>
     set((s) => ({ pings: [...s.pings, { ...ping, id: ++pingSeq, createdAt: Date.now() }] })),
@@ -409,6 +601,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   openTemplateEditor: (templateEditorOpen) => set({ templateEditorOpen }),
   openSheetModal: (sheetModalId) => set({ sheetModalId }),
+  openHandout: (openHandoutId) => set({ openHandoutId }),
 }));
 
 // ---------------------------------------------------------------------------

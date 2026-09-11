@@ -20,12 +20,18 @@ export function contextOf(socket: TypedSocket): Ctx | null {
   return { room, viewer: data.viewer, socket };
 }
 
+/**
+ * O ack vem do cliente e pode nao ser funcao: nos eventos sem payload
+ * (`initiative:next`, por exemplo) ele e o PRIMEIRO argumento, e quem manda
+ * um objeto ali entrega um "ack" que `?.()` tentaria chamar. Conferir o tipo
+ * aqui cobre todos os handlers de uma vez.
+ */
 export function ok<T>(ack: Ack<T> | undefined, data: T): void {
-  ack?.({ ok: true, data });
+  if (typeof ack === 'function') ack({ ok: true, data });
 }
 
 export function fail(ack: Ack<never> | Ack<unknown> | undefined, error: string): void {
-  (ack as ((r: Result<unknown>) => void) | undefined)?.({ ok: false, error });
+  if (typeof ack === 'function') (ack as (r: Result<unknown>) => void)({ ok: false, error });
 }
 
 export function isGm(ctx: Ctx): boolean {
@@ -72,6 +78,19 @@ export function canMoveToken(ctx: Ctx, token: Token): boolean {
 /** Um jogador so edita a ficha que e dele. */
 export function canEditSheet(ctx: Ctx, sheetOwnerId: string | null): boolean {
   return isGm(ctx) || sheetOwnerId === ctx.viewer.playerId;
+}
+
+/**
+ * Aceita um `assetId` apenas se a imagem pertencer a esta mesa.
+ *
+ * Sem esta checagem qualquer id era gravado como veio. Combinado com o
+ * `/uploads` aberto, bastava conhecer o id de uma imagem de outra mesa para
+ * traze-la para dentro desta — e, pior, para faze-la aparecer para todos os
+ * jogadores daqui.
+ */
+export function ownedAsset(ctx: Ctx, id: unknown): string | null {
+  if (typeof id !== 'string' || !id) return null;
+  return ctx.room.state.assets.some((a) => a.id === id) ? id : null;
 }
 
 export function clampNumber(v: unknown, min: number, max: number, fallback: number): number {

@@ -27,6 +27,8 @@ export function ScenePanel(): JSX.Element {
   const rev = useStore((s) => s.rev);
   const table = useStore((s) => s.table);
   const [newSceneName, setNewSceneName] = useState('');
+  const selectedWallId = useStore((s) => s.selectedWallId);
+  const selectWall = useStore((s) => s.selectWall);
 
   void rev;
   const scene = activeScene(useStore.getState());
@@ -251,7 +253,17 @@ export function ScenePanel(): JSX.Element {
             {scene.fog.mode === 'vision' && (
               <span className="hint">
                 Cada token precisa de um raio de visao (aba Tokens) e de um dono para enxergar.
-                Paredes bloqueiam a visao; portas so bloqueiam quando fechadas.
+                Paredes bloqueiam a visao; portas so bloqueiam quando fechadas. O pincel tambem
+                funciona neste modo: o que voce revelar fica revelado, e o que voce cobrir volta a
+                ser descoberto por quem andar ate la.
+              </span>
+            )}
+
+            {scene.fog.mode === 'manual' && (
+              <span className="hint">
+                Neste modo o mapa so abre pelo seu pincel — a visao dos tokens e ignorada. Se voce
+                quer que os personagens revelem o caminho ao andar, use{' '}
+                <strong>Por visao</strong>, onde o pincel continua disponivel.
               </span>
             )}
 
@@ -331,6 +343,55 @@ export function ScenePanel(): JSX.Element {
             </span>
           </Section>
 
+          <Section title="Clima">
+            <SelectField
+              label="Tipo"
+              value={scene.weather?.kind ?? 'none'}
+              options={[
+                { value: 'none', label: 'Sem clima' },
+                { value: 'rain', label: 'Chuva' },
+                { value: 'snow', label: 'Neve' },
+                { value: 'fog', label: 'Nevoa' },
+                { value: 'ash', label: 'Cinzas' },
+              ]}
+              onChange={(v) => patch({ weather: { ...scene.weather, kind: v } })}
+            />
+
+            {(scene.weather?.kind ?? 'none') !== 'none' && (
+              <>
+                <label className="field">
+                  <span className="label">Intensidade</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={scene.weather.intensity}
+                    onChange={(e) =>
+                      patch({ weather: { ...scene.weather, intensity: Number(e.target.value) } })
+                    }
+                  />
+                </label>
+
+                {scene.weather.kind !== 'fog' && (
+                  <NumberField
+                    label="Vento"
+                    suffix="graus"
+                    value={scene.weather.angle}
+                    min={-80}
+                    max={80}
+                    onChange={(v) => patch({ weather: { ...scene.weather, angle: v } })}
+                  />
+                )}
+              </>
+            )}
+
+            <span className="hint">
+              Atmosfera apenas: o clima nao afeta a visao nem o movimento. Ele acompanha a camera,
+              e nao o terreno, entao cai na frente da tela como cairia na frente dos olhos.
+            </span>
+          </Section>
+
           <Section title="Paredes">
             <div className="row">
               <span className="hint" style={{ flex: 1 }}>
@@ -352,35 +413,83 @@ export function ScenePanel(): JSX.Element {
             </div>
 
             <div className="list">
-              {scene.walls
-                .filter((w) => w.door)
-                .map((wall) => (
-                  <div key={wall.id} className="item">
-                    <span className="name">Porta {wall.hidden ? '(secreta)' : ''}</span>
+              {scene.walls.map((wall, index) => (
+                <div
+                  key={wall.id}
+                  className={`item${wall.id === selectedWallId ? ' active' : ''}`}
+                  onClick={() => selectWall(wall.id)}
+                >
+                  <span
+                    className="swatch"
+                    style={{
+                      background: wall.door
+                        ? wall.open
+                          ? 'var(--success)'
+                          : 'var(--brass)'
+                        : wall.hidden
+                          ? '#9b7ede'
+                          : 'var(--danger)',
+                      width: 4,
+                      borderRadius: 2,
+                    }}
+                  />
+                  <span className="name">
+                    {wall.door ? 'Porta' : 'Parede'} {index + 1}
+                    {wall.hidden && <span className="sub"> · secreta</span>}
+                  </span>
+
+                  {wall.door && (
                     <button
                       className="btn sm"
-                      onClick={() =>
+                      onClick={(e) => {
+                        e.stopPropagation();
                         void act('wall:update', {
                           sceneId: scene.id,
                           wallId: wall.id,
                           patch: { open: !wall.open },
-                        })
-                      }
+                        });
+                      }}
                     >
                       {wall.open ? 'Fechar' : 'Abrir'}
                     </button>
-                    <button
-                      className="btn ghost sm"
-                      onClick={() => void act('wall:delete', { sceneId: scene.id, wallId: wall.id })}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
+                  )}
+
+                  <button
+                    className="btn ghost sm"
+                    title={wall.door ? 'Converter em parede comum' : 'Converter em porta'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void act('wall:update', {
+                        sceneId: scene.id,
+                        wallId: wall.id,
+                        patch: { door: !wall.door },
+                      });
+                    }}
+                  >
+                    {wall.door ? '▨' : '🚪'}
+                  </button>
+
+                  <button
+                    className="btn ghost sm danger"
+                    title="Excluir"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void act('wall:delete', { sceneId: scene.id, wallId: wall.id });
+                      selectWall(null);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
             </div>
+
             <span className="hint">
-              Use a ferramenta de parede no trilho a esquerda. Segure Alt ao desenhar para criar
-              uma porta.
+              Desenhe com a ferramenta de parede: cada clique fixa um vertice,{' '}
+              <strong>Enter</strong> encerra, <strong>Alt</strong> cria porta.
+              <br />
+              Para remover uma parede especifica, clique nela no mapa com a ferramenta de selecao e
+              tecle <strong>Delete</strong> — ou use o ✕ desta lista.
             </span>
           </Section>
         </>

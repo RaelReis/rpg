@@ -26,20 +26,23 @@ export function InitiativePanel(): JSX.Element {
 
   function addSelectedTokens(): void {
     if (!scene) return;
-    const selectedId = useStore.getState().selectedTokenId;
-    const token = scene.tokens.find((t) => t.id === selectedId);
-    if (!token) return;
+    const selected = new Set(useStore.getState().selectedTokenIds);
 
-    void act('initiative:add', {
-      entry: {
-        id: generateId('ini'),
-        tokenId: token.id,
-        name: token.name,
-        playerId: token.ownerPlayerId,
-        hiddenFromPlayers: token.gmOnly || token.visibility === 'hidden',
-        value: 0,
-      },
-    });
+    for (const token of scene.tokens) {
+      if (!selected.has(token.id)) continue;
+      if (initiative.entries.some((e) => e.tokenId === token.id)) continue;
+
+      void act('initiative:add', {
+        entry: {
+          id: generateId('ini'),
+          tokenId: token.id,
+          name: token.name,
+          playerId: token.ownerPlayerId,
+          hiddenFromPlayers: token.gmOnly || token.visibility === 'hidden',
+          value: 0,
+        },
+      });
+    }
   }
 
   function addAllPlayerTokens(): void {
@@ -97,7 +100,7 @@ export function InitiativePanel(): JSX.Element {
           <>
             <div className="row wrap">
               <button className="btn sm" onClick={addSelectedTokens}>
-                + Token selecionado
+                + Selecionados
               </button>
               <button className="btn sm" onClick={addAllPlayerTokens}>
                 + Todos os jogadores

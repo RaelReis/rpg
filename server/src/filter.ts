@@ -5,7 +5,9 @@ import {
   filterTemplateForRole,
   type Asset,
   type ChatMessage,
+  type Handout,
   type InitiativeState,
+  type Player,
   type Role,
   type Scene,
   type Sheet,
@@ -69,7 +71,7 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
   // o jogador recebe sao portas visiveis (para poder interagir) e o resultado
   // ja calculado da visao.
   const walls = strict
-    ? scene.walls.filter((w) => w.door && !w.hidden)
+    ? scene.walls.filter((w) => (w.door || w.window) && !w.hidden)
     : scene.walls.filter((w) => !w.hidden);
 
   // Com strictVision, as listas cruas de neblina (onde o mestre pintou, o que
@@ -162,29 +164,72 @@ function sheetsForViewer(room: Room, viewer: Viewer, visibleTokens: Token[]): Sh
   return out;
 }
 
+/**
+ * Imagens que uma cena usa. Recebe a cena JA filtrada para o observador: um
+ * token oculto que ficou de fora nao pode trazer a propria arte junto.
+ */
+export function assetIdsOfScene(scene: Scene): (string | null)[] {
+  return [
+    scene.backgroundAssetId,
+    ...scene.tokens.map((t) => t.assetId),
+    ...scene.tiles.map((t) => t.assetId),
+    ...scene.effects.map((e) => e.assetId),
+  ];
+}
+
+/** Imagens que uma ficha usa: o retrato e os itens de inventario. */
+export function assetIdsOfSheet(sheet: Sheet): (string | null)[] {
+  const ids: (string | null)[] = [sheet.portraitAssetId];
+  for (const value of Object.values(sheet.values)) {
+    if (Array.isArray(value)) for (const item of value) ids.push(item.assetId);
+  }
+  return ids;
+}
+
+/**
+ * Jogadores com o retrato da ficha principal, para a lista de presenca.
+ *
+ * O retrato e derivado na hora do envio: gravado no jogador, ficaria velho a
+ * cada troca de imagem na ficha.
+ */
+export function playersWithPortraits(room: Room): Player[] {
+  return room.state.players.map((p) => ({
+    ...p,
+    portraitAssetId: room.sheet(p.sheetId)?.portraitAssetId ?? null,
+  }));
+}
+
 /** Somente os assets referenciados pelo que este observador recebeu. */
-function assetsForViewer(room: Room, viewer: Viewer, scene: Scene | null, sheets: Sheet[]): Asset[] {
+function assetsForViewer(
+  room: Room,
+  viewer: Viewer,
+  scene: Scene | null,
+  sheets: Sheet[],
+  players: Player[],
+): Asset[] {
   if (viewer.role === 'GM') return room.state.assets;
 
-  const ids = new Set<string>();
-  const add = (id: string | null | undefined) => {
-    if (id) ids.add(id);
-  };
-
-  if (scene) {
-    add(scene.backgroundAssetId);
-    for (const t of scene.tokens) add(t.assetId);
-    for (const t of scene.tiles) add(t.assetId);
-    for (const e of scene.effects) add(e.assetId);
-  }
-  for (const sheet of sheets) {
-    add(sheet.portraitAssetId);
-    for (const value of Object.values(sheet.values)) {
-      if (Array.isArray(value)) for (const item of value) add(item.assetId);
-    }
+  const ids = new Set<string | null | undefined>();
+  // Retratos da lista de presenca no cabecalho.
+  for (const player of players) ids.add(player.portraitAssetId);
+  if (scene) for (const id of assetIdsOfScene(scene)) ids.add(id);
+  for (const sheet of sheets) for (const id of assetIdsOfSheet(sheet)) ids.add(id);
+  for (const handout of room.state.handouts) {
+    if (handoutForViewer(handout, viewer)) ids.add(handout.assetId);
   }
 
   return room.state.assets.filter((a) => ids.has(a.id));
+}
+
+/**
+ * O material so existe para quem recebeu acesso. Um handout em preparacao
+ * nao pode aparecer na lista do jogador — nem o titulo, que ja entrega a
+ * surpresa.
+ */
+export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | null {
+  if (viewer.role === 'GM') return handout;
+  if (handout.sharedWithAll) return handout;
+  return handout.sharedWith.includes(viewer.playerId) ? handout : null;
 }
 
 function initiativeForViewer(initiative: InitiativeState, viewer: Viewer): InitiativeState {
@@ -205,18 +250,24 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
   const s = room.state;
 
   if (viewer.role === 'GM') {
-    return { ...s, sheetTemplate: s.sheetTemplate };
+    return { ...s, players: playersWithPortraits(room), sheetTemplate: s.sheetTemplate };
   }
 
   const active = room.activeScene();
   const scene = active ? sceneForViewer(room, active, viewer) : null;
   const sheets = sheetsForViewer(room, viewer, scene?.tokens ?? []);
 
+  const players = playersWithPortraits(room);
+
   return {
     ...s,
+    players,
     scenes: scene ? [scene] : [],
     sheets,
-    assets: assetsForViewer(room, viewer, scene, sheets),
+    handouts: s.handouts
+      .map((h) => handoutForViewer(h, viewer))
+      .filter((h): h is Handout => h !== null),
+    assets: assetsForViewer(room, viewer, scene, sheets, players),
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
     initiative: initiativeForViewer(s.initiative, viewer),
     chat: chatForViewer(s.chat, viewer),

@@ -2,7 +2,10 @@ import {
   createSheetValues,
   filterTemplateForRole,
   generateId,
+  normalizeTemplate,
   reconcileSheetValues,
+  resolveFormulaRefs,
+  rollFormula,
   sanitizeSheetPatch,
   type Ack,
   type FieldType,
@@ -13,11 +16,14 @@ import {
   type SheetTemplate,
 } from '@rpg/shared';
 
-import { socketsOf } from '../broadcast.js';
+import { emitPlayers, emitTokenUpsert, socketsOf, syncAssets } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
-import { sheetForViewer } from '../filter.js';
+import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
+import { assetIdsOfSheet, sheetForViewer } from '../filter.js';
+import { spawnCharacterToken, syncCharacterOwner } from './characters.js';
+import { publishChat } from './play.js';
 import type { Room } from '../room.js';
-import { clampNumber, fail, isGm, ok, safeString, type Ctx } from './context.js';
+import { clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
 
 /**
  * Template de ficha e fichas.
@@ -28,82 +34,20 @@ import { clampNumber, fail, isGm, ok, safeString, type Ctx } from './context.js'
  * compativel e preservado.
  */
 
-const FIELD_TYPES: FieldType[] = [
-  'text',
-  'longtext',
-  'number',
-  'boolean',
-  'select',
-  'resource',
-  'inventory',
-  'image',
-];
-
-const MAX_FIELDS = 200;
-const MAX_SECTIONS = 30;
-
-function sanitizeTemplate(raw: SheetTemplate): SheetTemplate {
-  const sections: SheetSection[] = (Array.isArray(raw?.sections) ? raw.sections : [])
-    .slice(0, MAX_SECTIONS)
-    .map((s, i): SheetSection => ({
-      id: safeString(s?.id, 40) || generateId('sec'),
-      label: safeString(s?.label, 60, 'Secao'),
-      order: typeof s?.order === 'number' ? s.order : i,
-      collapsed: Boolean(s?.collapsed),
-    }));
-
-  if (sections.length === 0) {
-    sections.push({ id: 'main', label: 'Geral', order: 0, collapsed: false });
-  }
-
-  const sectionIds = new Set(sections.map((s) => s.id));
-  const seenFieldIds = new Set<string>();
-
-  const fields: SheetField[] = (Array.isArray(raw?.fields) ? raw.fields : [])
-    .slice(0, MAX_FIELDS)
-    .map((f, i): SheetField => {
-      let id = safeString(f?.id, 40) || generateId('fld');
-      // Ids repetidos colidiriam no Record de valores da ficha.
-      while (seenFieldIds.has(id)) id = generateId('fld');
-      seenFieldIds.add(id);
-
-      const type: FieldType = FIELD_TYPES.includes(f?.type) ? f.type : 'text';
-      const span = f?.span === 2 || f?.span === 3 ? f.span : 1;
-
-      return {
-        id,
-        label: safeString(f?.label, 60, 'Campo'),
-        type,
-        sectionId: sectionIds.has(f?.sectionId) ? f.sectionId : sections[0].id,
-        order: typeof f?.order === 'number' ? f.order : i,
-        locked: Boolean(f?.locked),
-        gmOnly: Boolean(f?.gmOnly),
-        description: safeString(f?.description, 300, ''),
-        min: typeof f?.min === 'number' ? f.min : null,
-        max: typeof f?.max === 'number' ? f.max : null,
-        step: typeof f?.step === 'number' ? f.step : null,
-        options: Array.isArray(f?.options) ? f.options.slice(0, 50).map((o) => safeString(o, 60)) : [],
-        color: safeString(f?.color, 32, '#6b7fd7'),
-        showOnToken: Boolean(f?.showOnToken),
-        span,
-        defaultValue: (f?.defaultValue ?? null) as FieldValue,
-      };
-    });
-
-  return { name: safeString(raw?.name, 60, 'Ficha'), sections, fields };
-}
-
 /** Envia uma ficha a cada socket na versao que ele pode ver. */
 function emitSheet(room: Room, sheet: Sheet): void {
   for (const socket of socketsOf(room)) {
     const visible = sheetForViewer(room, sheet, socket.data.viewer);
-    if (visible) socket.emit('sheets:patch', { upsert: [visible] });
+    if (visible) {
+      syncAssets(room, socket, assetIdsOfSheet(visible));
+      socket.emit('sheets:patch', { upsert: [visible] });
+    }
     else socket.emit('sheets:patch', { remove: [sheet.id] });
   }
 }
 
 export function updateTemplate(ctx: Ctx, raw: SheetTemplate, ack: Ack<null>): void {
-  const template = sanitizeTemplate(raw);
+  const template = normalizeTemplate(raw);
   ctx.room.state.sheetTemplate = template;
 
   for (const sheet of ctx.room.state.sheets) {
@@ -121,6 +65,7 @@ export function updateTemplate(ctx: Ctx, raw: SheetTemplate, ack: Ack<null>): vo
     const sheets = ctx.room.state.sheets
       .map((s) => sheetForViewer(ctx.room, s, viewer))
       .filter((s): s is Sheet => s !== null);
+    syncAssets(ctx.room, socket, sheets.flatMap(assetIdsOfSheet));
     socket.emit('sheets:patch', { upsert: sheets });
   }
   ok(ack, null);
@@ -131,6 +76,8 @@ export async function createSheet(
   payload: { name: string; ownerPlayerId?: string | null },
   ack: Ack<Sheet>,
 ): Promise<void> {
+  if (atCapacity(ctx.room.state.sheets, 'sheets')) return fail(ack, LIMIT_MESSAGES.sheets);
+
   const sheet: Sheet = {
     id: generateId('sht'),
     name: safeString(payload?.name, 60, 'Nova ficha') || 'Nova ficha',
@@ -159,9 +106,29 @@ export async function createSheet(
   }
 
   ctx.room.state.sheets.push(sheet);
-  ctx.room.touch('sheets');
+  ctx.room.touchSheet(sheet.id);
   emitSheet(ctx.room, sheet);
+  spawnCharacterToken(ctx.room, sheet);
   ok(ack, sheet);
+}
+
+/**
+ * Retrato novo na ficha: o token do personagem e a lista de presenca seguem.
+ *
+ * So troca a arte do token que usava o retrato antigo (ou nenhuma arte). Se o
+ * mestre escolheu outra imagem de proposito para o token, ela fica.
+ */
+function portraitChanged(ctx: Ctx, sheet: Sheet, previous: string | null): void {
+  for (const scene of ctx.room.state.scenes) {
+    for (const token of scene.tokens) {
+      if (token.sheetId !== sheet.id) continue;
+      if (token.assetId !== previous && token.assetId !== null) continue;
+      token.assetId = sheet.portraitAssetId;
+      ctx.room.touchScene(scene.id);
+      emitTokenUpsert(ctx.room, scene, token);
+    }
+  }
+  emitPlayers(ctx.room);
 }
 
 export function updateSheet(
@@ -193,14 +160,16 @@ export function updateSheet(
     sheet.name = safeString(payload.name, 60, sheet.name);
   }
   if (payload.portraitAssetId !== undefined && (gm || isOwner)) {
-    sheet.portraitAssetId = payload.portraitAssetId;
+    const previous = sheet.portraitAssetId;
+    sheet.portraitAssetId = ownedAsset(ctx, payload.portraitAssetId);
+    if (sheet.portraitAssetId !== previous) portraitChanged(ctx, sheet, previous);
   }
   if (payload.sharedWithParty !== undefined && (gm || isOwner)) {
     sheet.sharedWithParty = Boolean(payload.sharedWithParty);
   }
 
   sheet.updatedAt = Date.now();
-  ctx.room.touch('sheets');
+  ctx.room.touchSheet(sheet.id);
   emitSheet(ctx.room, sheet);
   ok(ack, null);
 }
@@ -224,11 +193,58 @@ export function deleteSheet(ctx: Ctx, payload: { sheetId: string }, ack: Ack<nul
   for (const player of ctx.room.state.players) {
     if (player.sheetId === removed.id) {
       player.sheetId = null;
-      ctx.room.touch('players');
+      ctx.room.touchPlayer(player.id);
     }
   }
 
   for (const socket of socketsOf(ctx.room)) socket.emit('sheets:patch', { remove: [removed.id] });
+  ok(ack, null);
+}
+
+/**
+ * Rola a formula de um campo da ficha.
+ *
+ * A resolucao das referencias e o lancamento acontecem aqui, e nao no
+ * navegador: uma rolagem decidida no cliente seria so uma sugestao. O
+ * resultado entra no chat com o rotulo do campo, para a mesa saber o que
+ * foi testado.
+ */
+export function rollSheetField(
+  ctx: Ctx,
+  payload: { sheetId: string; fieldId: string; whisper?: boolean },
+  ack: Ack<null>,
+): void {
+  if (!ctx.room.state.settings.diceEnabled) {
+    return fail(ack, 'A rolagem de dados esta desativada nesta mesa.');
+  }
+
+  const sheet = ctx.room.sheet(payload?.sheetId);
+  if (!sheet) return fail(ack, 'Ficha nao encontrada.');
+
+  const gm = isGm(ctx);
+  const isOwner = sheet.ownerPlayerId === ctx.viewer.playerId;
+  if (!gm && !isOwner && !sheet.sharedWithParty) {
+    return fail(ack, 'Voce nao tem acesso a esta ficha.');
+  }
+
+  const field = ctx.room.state.sheetTemplate.fields.find((f) => f.id === payload?.fieldId);
+  if (!field) return fail(ack, 'Campo nao encontrado.');
+  if (!gm && field.gmOnly) return fail(ack, 'Campo indisponivel.');
+  if (!field.rollFormula.trim()) return fail(ack, 'Este campo nao tem formula de rolagem.');
+
+  const roll = rollFormula(resolveFormulaRefs(field.rollFormula, sheet.values));
+  if (!roll) return fail(ack, `Nao entendi a formula "${field.rollFormula}".`);
+
+  const player = ctx.room.player(ctx.viewer.playerId);
+  publishChat(ctx, {
+    playerId: player?.id ?? null,
+    authorName: player?.name ?? 'Mesa',
+    authorColor: player?.color ?? '#d9a441',
+    text: '',
+    roll,
+    rollLabel: `${sheet.name} · ${field.label}`,
+    whisper: Boolean(payload?.whisper),
+  });
   ok(ack, null);
 }
 
@@ -252,10 +268,12 @@ export function assignSheet(
   const owner = ctx.room.player(playerId);
   if (owner) owner.sheetId = sheet.id;
 
-  ctx.room.touch('sheets');
-  ctx.room.touch('players');
+  ctx.room.touchSheet(sheet.id);
+  if (previousOwner) ctx.room.touchPlayer(previousOwner.id);
+  if (owner) ctx.room.touchPlayer(owner.id);
   emitSheet(ctx.room, sheet);
-  for (const socket of socketsOf(ctx.room)) socket.emit('players:patch', ctx.room.state.players);
+  syncCharacterOwner(ctx.room, sheet);
+  emitPlayers(ctx.room);
   ok(ack, null);
 }
 

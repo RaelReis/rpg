@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { createTable, lookupTable, type TableSummary } from '../net/api';
+import { createTable, importTable, lookupTable, type TableSummary } from '../net/api';
 import { joinTable, resumeWithSession } from '../net/socket';
 
 /**
@@ -31,12 +31,28 @@ export function Gate(): JSX.Element {
   const [gmName, setGmName] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [created, setCreated] = useState<string | null>(null);
+  const backupRef = useRef<HTMLInputElement>(null);
 
   // O codigo tambem pode chegar pelo link de convite (?mesa=ABC-123).
   useEffect(() => {
     const fromUrl = new URLSearchParams(window.location.search).get('mesa');
     if (fromUrl) setCode(fromUrl.toUpperCase());
   }, []);
+
+  /*
+   * "Entrar como mestre" so aparece quando a mesa ainda nao tem mestre.
+   *
+   * Quem chega pelo convite e jogador; oferecer o papel de mestre a essa pessoa
+   * so convida a confusao — e, numa mesa sem senha, era o jeito de tomar a
+   * mesa. Continua existindo um caminho para o proprio mestre voltar de outro
+   * aparelho: o link com `&mestre` mostra a opcao, e a senha segue exigida.
+   */
+  const gmRecovery = new URLSearchParams(window.location.search).has('mestre');
+  const offerGm = gmRecovery || (summary !== null && !summary.hasGm);
+
+  useEffect(() => {
+    if (!offerGm) setAsGm(false);
+  }, [offerGm]);
 
   // Confere o codigo enquanto a pessoa digita, para errar cedo e barato.
   useEffect(() => {
@@ -89,6 +105,41 @@ export function Gate(): JSX.Element {
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
+    }
+  }
+
+  /**
+   * Restaura um backup. A importacao SEMPRE cria uma mesa nova: sobrescrever
+   * uma existente destruiria material sem volta, e comparar as duas antes de
+   * descartar e uma decisao de quem importou.
+   */
+  async function handleImport(file: File | undefined): Promise<void> {
+    if (!file) return;
+    const name = gmName.trim() || tableName.trim();
+    if (!name) {
+      setError('Preencha seu nome de mestre antes de importar.');
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+    try {
+      const backup = JSON.parse(await file.text()) as unknown;
+      const result = await importTable(backup, name, newPassword);
+      setCreated(result.session.tableCode);
+      if (result.missingAssets > 0) {
+        // Vale avisar: o backup "so estrutura" volta sem arte, e a mesa
+        // parecer vazia sem explicacao seria pior do que o aviso.
+        window.alert(
+          `${result.missingAssets} imagem(ns) nao vieram no arquivo. A mesa foi restaurada sem elas.`,
+        );
+      }
+      await resumeWithSession(result.session);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    } finally {
+      if (backupRef.current) backupRef.current.value = '';
     }
   }
 
@@ -159,15 +210,17 @@ export function Gate(): JSX.Element {
                 />
               </div>
 
-              <label className="check">
-                <input type="checkbox" checked={asGm} onChange={(e) => setAsGm(e.target.checked)} />
-                <span>
-                  Entrar como mestre
-                  <small>Exige a senha definida na criacao da mesa.</small>
-                </span>
-              </label>
+              {offerGm && (
+                <label className="check">
+                  <input type="checkbox" checked={asGm} onChange={(e) => setAsGm(e.target.checked)} />
+                  <span>
+                    Entrar como mestre
+                    <small>Exige a senha definida na criacao da mesa.</small>
+                  </span>
+                </label>
+              )}
 
-              {asGm && (
+              {offerGm && asGm && (
                 <div className="field">
                   <label className="label" htmlFor="gmpass">
                     Senha de mestre
@@ -242,6 +295,29 @@ export function Gate(): JSX.Element {
               <button className="btn primary block" disabled={busy}>
                 {busy ? 'Criando...' : 'Criar mesa'}
               </button>
+
+              <div className="divider" />
+
+              <button
+                type="button"
+                className="btn block"
+                disabled={busy}
+                onClick={() => backupRef.current?.click()}
+              >
+                Importar mesa de um backup
+              </button>
+              <span className="hint">
+                Restaura cenas, fichas e materiais de um arquivo exportado. Cria sempre uma mesa
+                nova, com codigo novo — nada existente e sobrescrito.
+              </span>
+
+              <input
+                ref={backupRef}
+                type="file"
+                accept="application/json,.json"
+                hidden
+                onChange={(e) => void handleImport(e.target.files?.[0])}
+              />
             </form>
           )}
         </div>

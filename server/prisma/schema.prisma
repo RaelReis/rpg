@@ -17,8 +17,14 @@ datasource db {
 }
 
 model Table {
-  id             String   @id
-  code           String   @unique
+  id   String @id
+  /// Codigo como se mostra, com hifen: "ABC-123".
+  code String @unique
+  /// O mesmo codigo sem separadores nem caixa, para buscar por indice.
+  /// Sem esta coluna a busca por codigo tinha de varrer a tabela inteira e
+  /// normalizar em memoria, porque o formato digitado nunca bate com o
+  /// guardado. E nulo apenas nas linhas anteriores a migracao.
+  codeNormalized String? @unique
   name           String
   gmPasswordHash String?
   activeSceneId  String?
@@ -26,6 +32,7 @@ model Table {
   sheetTemplate  String
   initiative     String
   chat           String   @default("[]")
+  handouts       String   @default("[]")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

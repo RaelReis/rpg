@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "tsx watch --clear-screen=false src/index.ts",
-    "start": "tsx src/index.ts",
+    "start": "tsx src/start.ts",
+    "start:dev": "tsx src/index.ts",
     "db:push": "prisma db push --skip-generate && prisma generate",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"

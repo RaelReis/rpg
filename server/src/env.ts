@@ -35,6 +35,15 @@ loadDotEnv(path.join(SERVER_ROOT, '.env'));
 export const PORT = Number(process.env.PORT ?? 8787);
 
 /**
+ * Interface de rede. Vazio escuta em todas, que e o padrao do Node.
+ *
+ * Atras de um tunnel, `127.0.0.1` faz o tunnel ser a unica porta de entrada:
+ * ninguem na rede local alcanca o servidor direto, e so assim confiar no
+ * X-Forwarded-For (TRUST_PROXY) deixa de ser um jeito de forjar o IP.
+ */
+export const HOST = process.env.HOST ?? '';
+
+/**
  * Origens aceitas pelo CORS e pelo handshake do socket. Em dev o Vite serve
  * em 5173; em producao o proprio servidor entrega o build do cliente e a
  * origem passa a ser a mesma, dispensando a lista.
@@ -52,6 +61,17 @@ export const UPLOAD_DIR = path.resolve(
 export const CLIENT_DIST = path.resolve(PROJECT_ROOT, 'client', 'dist');
 
 export const IS_PROD = process.env.NODE_ENV === 'production';
+
+/**
+ * Quantos proxies existem na frente do servidor.
+ *
+ * O limite de taxa mede por IP, e atras de um proxy todo mundo chega com o
+ * endereco do proxy: sem isto, um grupo inteiro divide o mesmo balde e um
+ * jogador esgota o limite dos outros. Fica desligado por padrao de proposito
+ * — ligar sem proxy de verdade na frente deixa qualquer cliente forjar o
+ * X-Forwarded-For e escapar do limite escolhendo um IP novo a cada pedido.
+ */
+export const TRUST_PROXY = Number(process.env.TRUST_PROXY ?? 0);
 
 /** Mesas sem ninguem conectado saem da memoria depois disto (ficam no banco). */
 export const ROOM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;

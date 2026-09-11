@@ -2,9 +2,13 @@ import { useState } from 'react';
 import {
   CONDITION_PRESETS,
   LAYER_NAMES,
+  PARANORMAL_PRESETS,
   tokenBarFields,
   type Layer,
+  type EffectStyle,
   type MapEffect,
+  type TokenShape,
+  type Tile,
   type Token,
 } from '@rpg/shared';
 
@@ -25,7 +29,7 @@ import {
 
 export function TokensPanel(): JSX.Element {
   const rev = useStore((s) => s.rev);
-  const selectedId = useStore((s) => s.selectedTokenId);
+  const selectedIds = useStore((s) => s.selectedTokenIds);
   const selectToken = useStore((s) => s.selectToken);
   const table = useStore((s) => s.table);
 
@@ -33,7 +37,8 @@ export function TokensPanel(): JSX.Element {
   const scene = activeScene(useStore.getState());
   if (!scene || !table) return <Empty>Ative uma cena para trabalhar com tokens.</Empty>;
 
-  const selected = scene.tokens.find((t) => t.id === selectedId) ?? null;
+  const selected =
+    selectedIds.length === 1 ? (scene.tokens.find((t) => t.id === selectedIds[0]) ?? null) : null;
 
   function createToken(assetId: string | null): void {
     if (!scene) return;
@@ -80,7 +85,7 @@ export function TokensPanel(): JSX.Element {
                     return (
                       <button
                         key={token.id}
-                        className={`item${token.id === selectedId ? ' active' : ''}`}
+                        className={`item${selectedIds.includes(token.id) ? ' active' : ''}`}
                         onClick={() => selectToken(token.id)}
                       >
                         {asset ? (
@@ -105,7 +110,18 @@ export function TokensPanel(): JSX.Element {
         )}
       </Section>
 
+      {selectedIds.length > 1 && (
+        <Section title={`${selectedIds.length} tokens selecionados`}>
+          <span className="hint">
+            Arraste para mover o grupo, <strong>Ctrl+D</strong> duplica e <strong>Delete</strong>{' '}
+            remove todos. Selecione apenas um para abrir o inspetor.
+          </span>
+        </Section>
+      )}
+
       {selected && <TokenInspector token={selected} sceneId={scene.id} />}
+
+      <TilesSection tiles={scene.tiles} sceneId={scene.id} />
 
       <EffectsSection effects={scene.effects} sceneId={scene.id} />
     </>
@@ -140,6 +156,23 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
       }
     >
       <TextField label="Nome" value={token.name} maxLength={60} onChange={(v) => patch({ name: v })} />
+
+      <SelectField
+        label="Forma no mapa"
+        value={token.shape}
+        options={[
+          { value: 'circle', label: 'Peca redonda (vista de cima)' },
+          { value: 'art', label: 'Arte inteira (personagem de pe)' },
+        ]}
+        onChange={(v) => patch({ shape: v as TokenShape })}
+      />
+      {token.shape === 'art' && (
+        <span className="hint">
+          A ilustracao aparece por completo, de pe sobre a celula, com a transparencia da imagem
+          preservada — use um PNG recortado. O tamanho define a largura; a altura vem da propria
+          imagem. A area que o token ocupa na grade continua sendo o tamanho declarado.
+        </span>
+      )}
 
       <div className="grid-2">
         <SelectField
@@ -330,6 +363,160 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
 // ---------------------------------------------------------------------------
 
 /**
+ * Tiles: as pecas de cenario das camadas de fundo e de obstaculos.
+ *
+ * Diferente do token, o tile e um retangulo — serve para colar uma parte de
+ * mapa, um movel, uma coluna. E e aqui que mora o `blocksVision`, que
+ * transforma a peca em obstaculo real para a neblina.
+ */
+function TilesSection({ tiles, sceneId }: { tiles: Tile[]; sceneId: string }): JSX.Element {
+  const selectedTileId = useStore((s) => s.selectedTileId);
+  const selectTile = useStore((s) => s.selectTile);
+  const setTool = useStore((s) => s.setTool);
+  const selected = tiles.find((t) => t.id === selectedTileId) ?? null;
+
+  const patch = (p: Partial<Tile>): void => {
+    if (selected) void act('tile:update', { sceneId, tileId: selected.id, patch: p });
+  };
+
+  return (
+    <Section
+      title={`Tiles (${tiles.length})`}
+      actions={
+        <button className="btn sm" onClick={() => setTool('tile')} title="Arraste no mapa para criar">
+          + Colocar
+        </button>
+      }
+    >
+      {tiles.length === 0 ? (
+        <Empty>
+          Escolha uma imagem na aba Imagens e arraste-a para o mapa, ou use a ferramenta de tile no
+          trilho a esquerda.
+        </Empty>
+      ) : (
+        <div className="list">
+          {tiles.map((tile) => {
+            const asset = findAsset(tile.assetId);
+            return (
+              <button
+                key={tile.id}
+                className={`item${tile.id === selectedTileId ? ' active' : ''}`}
+                onClick={() => selectTile(tile.id)}
+              >
+                {asset ? (
+                  <img className="swatch" src={asset.thumbUrl ?? asset.url} alt="" />
+                ) : (
+                  <span className="swatch" style={{ background: tile.color ?? '#2b3140' }} />
+                )}
+                <span className="name">
+                  {asset?.originalName ?? 'Tile'}
+                  <span className="sub">
+                    {' '}
+                    · camada {tile.layer} · {Math.round(tile.width)}×{Math.round(tile.height)}
+                  </span>
+                </span>
+                {tile.blocksVision && <span className="tag">bloqueia</span>}
+                {tile.gmOnly && <span className="tag gm">MJ</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {selected && (
+        <>
+          <div className="divider" />
+
+          <div className="grid-2">
+            <NumberField
+              label="Largura"
+              suffix="px"
+              value={Math.round(selected.width)}
+              min={4}
+              onChange={(v) => patch({ width: v })}
+            />
+            <NumberField
+              label="Altura"
+              suffix="px"
+              value={Math.round(selected.height)}
+              min={4}
+              onChange={(v) => patch({ height: v })}
+            />
+          </div>
+
+          <div className="grid-2">
+            <NumberField
+              label="Rotacao"
+              suffix="graus"
+              value={selected.rotation}
+              min={-360}
+              max={360}
+              onChange={(v) => patch({ rotation: v })}
+            />
+            <SelectField
+              label="Camada"
+              value={String(selected.layer)}
+              options={[1, 2, 3, 4].map((l) => ({
+                value: String(l),
+                label: `${l} — ${LAYER_NAMES[l as Layer]}`,
+              }))}
+              onChange={(v) => patch({ layer: Number(v) as Layer })}
+            />
+          </div>
+
+          <label className="field">
+            <span className="label">Opacidade</span>
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={selected.opacity}
+              onChange={(e) => patch({ opacity: Number(e.target.value) })}
+            />
+          </label>
+
+          <Toggle
+            label="Bloqueia a visao"
+            hint="A peca vira obstaculo: a neblina para nela, como numa parede."
+            checked={selected.blocksVision}
+            onChange={(v) => patch({ blocksVision: v })}
+          />
+
+          <Toggle
+            label="Somente o mestre ve"
+            checked={selected.gmOnly}
+            onChange={(v) => patch({ gmOnly: v })}
+          />
+
+          <Toggle
+            label="Travado"
+            hint="Impede arrastar sem querer enquanto voce trabalha por cima."
+            checked={selected.locked}
+            onChange={(v) => patch({ locked: v })}
+          />
+
+          <Dropzone kind="tile" label="Trocar imagem do tile" onUploaded={(assetId) => patch({ assetId })} />
+
+          <button
+            className="btn ghost sm danger"
+            style={{ alignSelf: 'flex-start' }}
+            onClick={() => {
+              void act('tile:delete', { sceneId, tileId: selected.id });
+              selectTile(null);
+            }}
+          >
+            Excluir tile
+          </button>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
  * Efeitos de mapa. O que importa aqui e a ancoragem: preso a uma celula da
  * grid, colado num token (e entao acompanha o movimento dele) ou solto em
  * qualquer coordenada.
@@ -337,9 +524,9 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
 function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: string }): JSX.Element {
   const [kind, setKind] = useState<MapEffect['kind']>('circle');
   const scene = activeScene(useStore.getState());
-  const selectedTokenId = useStore((s) => s.selectedTokenId);
+  const selectedTokenId = useStore((s) => s.selectedTokenIds[0] ?? null);
 
-  function create(anchor: MapEffect['anchor']): void {
+  function create(anchor: MapEffect['anchor'], preset: Partial<MapEffect> = {}): void {
     if (!scene) return;
     void act('effect:create', {
       sceneId,
@@ -354,6 +541,7 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
         x: anchor === 'free' ? scene.width / 2 : 0,
         y: anchor === 'free' ? scene.height / 2 : 0,
         label: kind === 'text' ? 'Anotacao' : '',
+        ...preset,
       },
     });
   }
@@ -373,6 +561,26 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
         ]}
         onChange={setKind}
       />
+
+      <span className="label">Elementos do Outro Lado</span>
+      <div className="row wrap">
+        {PARANORMAL_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            className={`btn sm preset-${preset.id}`}
+            title={preset.hint}
+            onClick={() => create('free', preset.patch)}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <span className="hint">
+        Cria a area ja com a cor e o movimento do elemento. Tudo continua editavel depois — o
+        preset e um ponto de partida, nao uma regra.
+      </span>
+
+      <div className="divider" />
 
       <div className="row wrap">
         <button className="btn sm" onClick={() => create('grid')} title="Fixo em uma celula da grid">
@@ -447,6 +655,44 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
               />
             </label>
           </div>
+
+          <SelectField
+            label="Estilo"
+            value={effect.style}
+            options={[
+              { value: 'flat', label: 'Chapado' },
+              { value: 'glow', label: 'Brilho' },
+              { value: 'pulse', label: 'Pulsante' },
+              { value: 'runes', label: 'Runas (Conhecimento)' },
+              { value: 'vortex', label: 'Vortice (Energia)' },
+              { value: 'mist', label: 'Nevoa (Morte)' },
+              { value: 'embers', label: 'Brasas (Sangue)' },
+              { value: 'static', label: 'Chiado (Medo)' },
+            ]}
+            onChange={(v) => patch({ style: v as EffectStyle })}
+          />
+
+          {effect.style !== 'flat' && (
+            <>
+              <ColorField
+                label="Cor secundaria"
+                value={effect.colorAlt}
+                onChange={(v) => patch({ colorAlt: v })}
+              />
+              <label className="field">
+                <span className="label">Velocidade</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={4}
+                  step={0.1}
+                  value={effect.speed}
+                  onChange={(e) => patch({ speed: Number(e.target.value) })}
+                />
+                <span className="hint">Em zero, o efeito congela.</span>
+              </label>
+            </>
+          )}
 
           {(effect.kind === 'circle' || effect.kind === 'cone' || effect.kind === 'line') && (
             <NumberField

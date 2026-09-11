@@ -23,7 +23,6 @@ import {
   addInitiativeEntry,
   deleteAsset,
   kickPlayer,
-  moveCursor,
   nextTurn,
   pingMap,
   previousTurn,
@@ -34,6 +33,12 @@ import {
   updateInitiative,
   updatePlayer,
 } from './handlers/play.js';
+import {
+  createHandout,
+  deleteHandout,
+  presentHandout,
+  updateHandout,
+} from './handlers/handouts.js';
 import {
   activateScene,
   createSceneHandler,
@@ -47,6 +52,7 @@ import {
   assignSheet,
   createSheet,
   deleteSheet,
+  rollSheetField,
   updateSheet,
   updateTemplate,
 } from './handlers/sheets.js';
@@ -59,6 +65,54 @@ import {
  * de fato e este arquivo.
  */
 
+type Listener = (...args: unknown[]) => unknown;
+
+/**
+ * Nenhum evento, por mais malformado, derruba o processo.
+ *
+ * O servidor e um processo so, com todas as mesas em memoria: uma excecao que
+ * escapa de um handler encerra o Node e leva a sessao de todo mundo junto. E
+ * bastava pouco — `session:resume` com um token numerico chegava a
+ * `crypto.update(12345)`, lancava dentro de uma funcao assincrona, e um
+ * visitante anonimo, sem sessao nenhuma, derrubava a aplicacao.
+ *
+ * Validar cada campo de cada payload continua sendo o certo, e os handlers de
+ * entrada fazem isso. Esta guarda e a rede embaixo: envolve TODO listener
+ * registrado no socket, inclusive os que ainda nao existem, e transforma a
+ * falha em resposta de erro para quem perguntou. Por isso os handlers devolvem
+ * a promessa em vez de descarta-la com `void` — sem ela, a rejeicao escaparia
+ * da guarda.
+ */
+function guardListeners(socket: TypedSocket): void {
+  const register = socket.on.bind(socket) as unknown as (event: string, listener: Listener) => TypedSocket;
+
+  const report = (event: string, args: unknown[], err: unknown): void => {
+    console.error(`[socket ${socket.id}] falha em "${event}":`, err);
+    const ack = args[args.length - 1];
+    if (typeof ack !== 'function') return;
+    try {
+      ack({ ok: false, error: 'O servidor nao conseguiu processar o pedido.' });
+    } catch {
+      // O handler ja havia respondido antes de falhar.
+    }
+  };
+
+  (socket as unknown as { on: (event: string, listener: Listener) => TypedSocket }).on = (
+    event,
+    listener,
+  ) =>
+    register(event, (...args: unknown[]) => {
+      try {
+        const result = listener(...args);
+        if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+          (result as Promise<unknown>).catch((err) => report(event, args, err));
+        }
+      } catch (err) {
+        report(event, args, err);
+      }
+    });
+}
+
 /** Teto de eventos por janela, para uma aba com defeito nao inundar a mesa. */
 const RATE_LIMIT_WINDOW_MS = 1000;
 const RATE_LIMIT_MAX_EVENTS = 220;
@@ -67,6 +121,9 @@ export function registerSocketHandlers(io: TypedServer): void {
   bindIo(io);
 
   io.on('connection', (socket: TypedSocket) => {
+    // Antes de qualquer registro: o que for registrado sem guarda fica sem ela.
+    guardListeners(socket);
+
     let windowStart = Date.now();
     let eventCount = 0;
 
@@ -76,10 +133,22 @@ export function registerSocketHandlers(io: TypedServer): void {
         windowStart = now;
         eventCount = 0;
       }
+
       if (++eventCount > RATE_LIMIT_MAX_EVENTS) {
+        // Recusar sem responder deixa o cliente esperando um ack que nunca
+        // vem: a promessa fica pendente para sempre e o botao trava em
+        // "Salvando...". Quem pergunta merece um nao — o ultimo argumento do
+        // evento e o ack, quando o cliente enviou um.
+        const ack = rest[rest.length - 1];
+        if (typeof ack === 'function') {
+          (ack as (r: { ok: false; error: string }) => void)({
+            ok: false,
+            error: 'Excesso de eventos. Aguarde um instante.',
+          });
+        }
         return next(new Error('Excesso de eventos. Aguarde um instante.'));
       }
-      void rest;
+
       next();
     });
 
@@ -89,34 +158,34 @@ export function registerSocketHandlers(io: TypedServer): void {
 
     /** Handler que exige apenas uma sessao valida. */
     const member =
-      <P, R>(fn: (ctx: Ctx, payload: P, ack: Ack<R>) => void) =>
+      <P, R>(fn: (ctx: Ctx, payload: P, ack: Ack<R>) => unknown) =>
       (payload: P, ack: Ack<R>) => {
         const ctx = contextOf(socket);
         if (!ctx) return fail(ack, 'Sessao nao encontrada. Recarregue a pagina.');
-        fn(ctx, payload, ack);
+        return fn(ctx, payload, ack);
       };
 
     /** Handler restrito ao mestre. */
     const gm =
-      <P, R>(fn: (ctx: Ctx, payload: P, ack: Ack<R>) => void) =>
+      <P, R>(fn: (ctx: Ctx, payload: P, ack: Ack<R>) => unknown) =>
       (payload: P, ack: Ack<R>) => {
         const ctx = contextOf(socket);
         if (!ctx) return fail(ack, 'Sessao nao encontrada. Recarregue a pagina.');
         if (!isGm(ctx)) return fail(ack, 'Apenas o mestre pode fazer isso.');
-        fn(ctx, payload, ack);
+        return fn(ctx, payload, ack);
       };
 
     /** Evento sem resposta (fire-and-forget), como cursor e ping. */
     const loose =
-      <P>(fn: (ctx: Ctx, payload: P) => void) =>
+      <P>(fn: (ctx: Ctx, payload: P) => unknown) =>
       (payload: P) => {
         const ctx = contextOf(socket);
-        if (ctx) fn(ctx, payload);
+        if (ctx) return fn(ctx, payload);
       };
 
     // -- sessao ------------------------------------------------------------
-    socket.on('session:join', (req, ack) => void handleJoin(socket, req, ack));
-    socket.on('session:resume', (req, ack) => void handleResume(socket, req, ack));
+    socket.on('session:join', (req, ack) => handleJoin(socket, req, ack));
+    socket.on('session:resume', (req, ack) => handleResume(socket, req, ack));
     socket.on('disconnect', () => handleDisconnect(socket));
 
     // -- mesa e cenas ------------------------------------------------------
@@ -161,10 +230,11 @@ export function registerSocketHandlers(io: TypedServer): void {
 
     // -- fichas ------------------------------------------------------------
     socket.on('template:update', gm(updateTemplate));
-    socket.on('sheet:create', gm((ctx, payload, ack) => void createSheet(ctx, payload, ack)));
+    socket.on('sheet:create', gm(createSheet));
     socket.on('sheet:update', member(updateSheet));
     socket.on('sheet:delete', gm(deleteSheet));
     socket.on('sheet:assign', gm(assignSheet));
+    socket.on('sheet:roll', member(rollSheetField));
 
     // -- iniciativa --------------------------------------------------------
     socket.on('initiative:update', gm(updateInitiative));
@@ -191,11 +261,15 @@ export function registerSocketHandlers(io: TypedServer): void {
     // -- social ------------------------------------------------------------
     socket.on('chat:send', member(sendChat));
     socket.on('player:update', member(updatePlayer));
-    socket.on('player:kick', gm((ctx, payload, ack) => void kickPlayer(ctx, payload, ack)));
-    socket.on('player:promote', gm((ctx, payload, ack) => void promotePlayer(ctx, payload, ack)));
-    socket.on('asset:delete', gm((ctx, payload, ack) => void deleteAsset(ctx, payload, ack)));
+    socket.on('player:kick', gm(kickPlayer));
+    socket.on('player:promote', gm(promotePlayer));
+    socket.on('asset:delete', gm(deleteAsset));
+
+    socket.on('handout:create', gm(createHandout));
+    socket.on('handout:update', gm(updateHandout));
+    socket.on('handout:delete', gm(deleteHandout));
+    socket.on('handout:present', gm(presentHandout));
 
     socket.on('map:ping', loose(pingMap));
-    socket.on('cursor:move', loose(moveCursor));
   });
 }

@@ -1,10 +1,12 @@
 import type {
+  FieldType,
   FieldValue,
   InventoryItem,
   ResourceValue,
   Role,
   Sheet,
   SheetField,
+  SheetSection,
   SheetTemplate,
 } from './types.js';
 
@@ -188,6 +190,88 @@ export function filterTemplateForRole(template: SheetTemplate, role: Role): Shee
 }
 
 // ---------------------------------------------------------------------------
+// Normalizacao do template
+// ---------------------------------------------------------------------------
+
+const FIELD_TYPES: FieldType[] = [
+  'text',
+  'longtext',
+  'number',
+  'boolean',
+  'select',
+  'resource',
+  'inventory',
+  'image',
+];
+
+const MAX_FIELDS = 200;
+const MAX_SECTIONS = 30;
+
+function text(v: unknown, maxLength: number, fallback = ''): string {
+  return typeof v === 'string' ? v.slice(0, maxLength) : fallback;
+}
+
+/**
+ * Preenche um template ate a forma completa de `SheetTemplate`.
+ *
+ * Roda em dois momentos, e os dois importam:
+ *
+ *  - ao SALVAR, porque o cliente pode mandar qualquer coisa;
+ *  - ao CARREGAR do banco, porque um template gravado por uma versao antiga
+ *    do programa nao tem os campos criados depois. Sem isto, adicionar uma
+ *    propriedade nova ao modelo quebra todas as mesas que ja existiam — o
+ *    valor chega `undefined` e derruba a interface na primeira leitura.
+ */
+export function normalizeTemplate(raw: Partial<SheetTemplate> | null | undefined): SheetTemplate {
+  const sections: SheetSection[] = (Array.isArray(raw?.sections) ? raw.sections : [])
+    .slice(0, MAX_SECTIONS)
+    .map((s, i): SheetSection => ({
+      id: text(s?.id, 40) || `sec_${i}`,
+      label: text(s?.label, 60, 'Secao'),
+      order: typeof s?.order === 'number' ? s.order : i,
+      collapsed: Boolean(s?.collapsed),
+    }));
+
+  if (sections.length === 0) {
+    sections.push({ id: 'main', label: 'Geral', order: 0, collapsed: false });
+  }
+
+  const sectionIds = new Set(sections.map((s) => s.id));
+  const seen = new Set<string>();
+
+  const fields: SheetField[] = (Array.isArray(raw?.fields) ? raw.fields : [])
+    .slice(0, MAX_FIELDS)
+    .map((f, i): SheetField => {
+      // Ids repetidos colidiriam no Record de valores da ficha.
+      let id = text(f?.id, 40) || `fld_${i}`;
+      while (seen.has(id)) id = `${id}_${i}`;
+      seen.add(id);
+
+      return {
+        id,
+        label: text(f?.label, 60, 'Campo'),
+        type: FIELD_TYPES.includes(f?.type as FieldType) ? (f.type as FieldType) : 'text',
+        sectionId: sectionIds.has(f?.sectionId as string) ? (f.sectionId as string) : sections[0].id,
+        order: typeof f?.order === 'number' ? f.order : i,
+        locked: Boolean(f?.locked),
+        gmOnly: Boolean(f?.gmOnly),
+        description: text(f?.description, 300),
+        min: typeof f?.min === 'number' ? f.min : null,
+        max: typeof f?.max === 'number' ? f.max : null,
+        step: typeof f?.step === 'number' ? f.step : null,
+        options: Array.isArray(f?.options) ? f.options.slice(0, 50).map((o) => text(o, 60)) : [],
+        color: text(f?.color, 32, '#6b7fd7'),
+        showOnToken: Boolean(f?.showOnToken),
+        span: f?.span === 2 || f?.span === 3 ? f.span : 1,
+        defaultValue: (f?.defaultValue ?? null) as FieldValue,
+        rollFormula: text(f?.rollFormula, 100),
+      };
+    });
+
+  return { name: text(raw?.name, 60, 'Ficha'), sections, fields };
+}
+
+// ---------------------------------------------------------------------------
 // Template inicial
 // ---------------------------------------------------------------------------
 
@@ -205,6 +289,7 @@ function field(partial: Partial<SheetField> & Pick<SheetField, 'id' | 'label' | 
     showOnToken: false,
     span: 1,
     defaultValue: null,
+    rollFormula: '',
     ...partial,
   };
 }
@@ -234,7 +319,7 @@ export function createDefaultTemplate(): SheetTemplate {
       field({ id: 'actions', label: 'Acoes por turno', type: 'resource', sectionId: 'resources', order: 2, min: 0, max: 20, color: '#e0a33e', showOnToken: false, defaultValue: { current: 3, max: 3 } }),
 
       field({ id: 'defense', label: 'Defesa', type: 'number', sectionId: 'attributes', order: 0, min: 0, defaultValue: 10 }),
-      field({ id: 'initiative', label: 'Iniciativa', type: 'number', sectionId: 'attributes', order: 1, defaultValue: 0 }),
+      field({ id: 'initiative', label: 'Iniciativa', type: 'number', sectionId: 'attributes', order: 1, defaultValue: 0, rollFormula: '1d20+@initiative' }),
       field({ id: 'speed', label: 'Deslocamento', type: 'number', sectionId: 'attributes', order: 2, min: 0, defaultValue: 9 }),
 
       field({ id: 'items', label: 'Itens', type: 'inventory', sectionId: 'inventory', order: 0, span: 3 }),

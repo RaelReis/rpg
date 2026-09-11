@@ -7,18 +7,20 @@ import {
   type TableSettings,
 } from '@rpg/shared';
 
+import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import {
   pushScene,
   refreshVision,
   sendFullStateToAll,
   socketsOf,
 } from '../broadcast.js';
-import { clampNumber, fail, ok, safeString, type Ctx } from './context.js';
+import { clampNumber, fail, ok, ownedAsset, safeString, type Ctx } from './context.js';
 
 /** Cenas (mapas), configuracao de grid e ajustes gerais da mesa. */
 
 const GRID_TYPES = ['square', 'hex-pointy', 'hex-flat', 'none'] as const;
 const FOG_MODES = ['off', 'manual', 'vision'] as const;
+const WEATHER_KINDS = ['none', 'rain', 'snow', 'fog', 'ash'] as const;
 
 function sanitizeGrid(patch: Partial<GridConfig>, current: GridConfig): GridConfig {
   return {
@@ -48,8 +50,7 @@ export function updateScene(ctx: Ctx, payload: { sceneId: string; patch: Partial
 
   if (p.name !== undefined) scene.name = safeString(p.name, 80, scene.name);
   if (p.backgroundAssetId !== undefined) {
-    scene.backgroundAssetId =
-      p.backgroundAssetId === null ? null : safeString(p.backgroundAssetId, 64, '') || null;
+    scene.backgroundAssetId = ownedAsset(ctx, p.backgroundAssetId);
   }
   if (p.backgroundColor !== undefined) scene.backgroundColor = safeString(p.backgroundColor, 32, scene.backgroundColor);
   if (p.width !== undefined) scene.width = clampNumber(p.width, 100, 20000, scene.width);
@@ -59,6 +60,15 @@ export function updateScene(ctx: Ctx, payload: { sceneId: string; patch: Partial
   if (p.globalLight !== undefined) {
     scene.globalLight = clampNumber(p.globalLight, 0, 1, scene.globalLight);
     visionAffected = true;
+  }
+
+  if (p.weather) {
+    const w = p.weather;
+    if (w.kind && WEATHER_KINDS.includes(w.kind)) scene.weather.kind = w.kind;
+    if (w.intensity !== undefined) {
+      scene.weather.intensity = clampNumber(w.intensity, 0, 1, scene.weather.intensity);
+    }
+    if (w.angle !== undefined) scene.weather.angle = clampNumber(w.angle, -80, 80, scene.weather.angle);
   }
 
   if (p.grid) {
@@ -88,9 +98,11 @@ export function createSceneHandler(
   payload: { name: string; backgroundAssetId?: string | null },
   ack: Ack<Scene>,
 ): void {
+  if (atCapacity(ctx.room.state.scenes, 'scenes')) return fail(ack, LIMIT_MESSAGES.scenes);
+
   const scene = createScene({
     name: safeString(payload?.name, 80, 'Nova cena') || 'Nova cena',
-    backgroundAssetId: payload?.backgroundAssetId ?? null,
+    backgroundAssetId: ownedAsset(ctx, payload?.backgroundAssetId),
     order: ctx.room.state.scenes.length,
   });
 

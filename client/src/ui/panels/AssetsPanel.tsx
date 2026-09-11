@@ -73,7 +73,19 @@ export function AssetsPanel(): JSX.Element {
                 key={asset.id}
                 className={`asset${asset.id === selectedAssetId ? ' selected' : ''}`}
                 onClick={() => selectAsset(asset.id === selectedAssetId ? null : asset.id)}
-                title={`${asset.originalName} — ${asset.width}×${asset.height}, ${formatBytes(asset.size)}`}
+                // Arrastar para o mapa cria o objeto direto onde foi solto:
+                // imagens de mapa e tile viram cenario, o resto vira token.
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-rpg-asset', asset.id);
+                  e.dataTransfer.setData('application/x-rpg-asset-kind', asset.kind);
+                  e.dataTransfer.effectAllowed = 'copy';
+                  // O mapa so le o conteudo do arraste ao soltar; para a previa
+                  // de onde vai cair, ele precisa saber antes o que e.
+                  useStore.getState().setDragging({ kind: 'asset', assetId: asset.id, assetKind: asset.kind });
+                }}
+                onDragEnd={() => useStore.getState().setDragging(null)}
+                title={`${asset.originalName} — ${asset.width}×${asset.height}, ${formatBytes(asset.size)}\nArraste para o mapa`}
               >
                 <img src={asset.thumbUrl ?? asset.url} alt={asset.originalName} loading="lazy" />
                 <span className="kind">{asset.kind}</span>

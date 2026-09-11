@@ -183,13 +183,7 @@ function FieldEditor({
     void act('sheet:update', { sheetId: sheet.id, values: { [field.id]: next } });
   };
 
-  const label = (
-    <span className="label" title={field.description || undefined}>
-      {field.label}
-      {field.gmOnly && ' · mestre'}
-      {field.locked && !editable && ' 🔒'}
-    </span>
-  );
+  const label = <FieldLabel field={field} sheet={sheet} editable={editable} />;
 
   switch (field.type) {
     case 'longtext':
@@ -257,6 +251,7 @@ function FieldEditor({
       return (
         <ResourceEditor
           field={field}
+          sheet={sheet}
           value={isResourceValue(value) ? value : { current: 0, max: 0 }}
           editable={editable}
           onCommit={commit}
@@ -298,16 +293,70 @@ function FieldEditor({
   }
 }
 
+/**
+ * Rotulo do campo, com o botao de rolagem quando o modelo define uma formula.
+ *
+ * A rolagem sai daqui como um pedido ao servidor, que resolve as referencias
+ * (`@destreza`) com os valores atuais e joga os dados. Rolar no navegador
+ * transformaria o resultado numa sugestao.
+ */
+function FieldLabel({
+  field,
+  sheet,
+  editable,
+}: {
+  field: SheetField;
+  sheet: Sheet;
+  editable: boolean;
+}): JSX.Element {
+  const [rolling, setRolling] = useState(false);
+  // O servidor normaliza o template ao carregar, mas nao custa nada aceitar
+  // um campo incompleto aqui: derrubar a ficha inteira por causa de uma
+  // propriedade ausente e uma troca ruim.
+  const canRoll = (field.rollFormula ?? '').trim().length > 0;
+
+  async function roll(e: React.MouseEvent): Promise<void> {
+    // Alt rola em sussurro: teste de percepcao sem entregar o resultado.
+    const whisper = e.altKey;
+    setRolling(true);
+    await act('sheet:roll', { sheetId: sheet.id, fieldId: field.id, whisper });
+    setRolling(false);
+  }
+
+  return (
+    <span className="label label-row" title={field.description || undefined}>
+      <span>
+        {field.label}
+        {field.gmOnly && ' · mestre'}
+        {field.locked && !editable && ' 🔒'}
+      </span>
+      {canRoll && (
+        <button
+          type="button"
+          className="roll-btn"
+          disabled={rolling}
+          onClick={(e) => void roll(e)}
+          title={`Rolar ${field.rollFormula} — Alt para sussurrar ao mestre`}
+        >
+          🎲
+        </button>
+      )}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 /** Barra de recurso: atual / maximo, com botoes de ajuste rapido. */
 function ResourceEditor({
   field,
+  sheet,
   value,
   editable,
   onCommit,
 }: {
   field: SheetField;
+  sheet: Sheet;
   value: ResourceValue;
   editable: boolean;
   onCommit: (v: FieldValue) => void;
@@ -321,7 +370,7 @@ function ResourceEditor({
 
   return (
     <div className="resource">
-      <span className="label">{field.label}</span>
+      <FieldLabel field={field} sheet={sheet} editable={editable} />
 
       <div className="bar">
         <div

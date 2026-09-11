@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type {
+  Asset,
   ClientToServerEvents,
   MapEffect,
   Player,
@@ -10,7 +11,16 @@ import type {
   Wall,
 } from '@rpg/shared';
 
-import { sceneForViewer, stateForViewer, tokenForViewer, visibleTokenIds, visionFor, type Viewer } from './filter.js';
+import {
+  assetIdsOfScene,
+  playersWithPortraits,
+  sceneForViewer,
+  stateForViewer,
+  tokenForViewer,
+  visibleTokenIds,
+  visionFor,
+  type Viewer,
+} from './filter.js';
 import type { Room } from './room.js';
 
 export interface SocketData {
@@ -19,6 +29,8 @@ export interface SocketData {
   /** Cache do que este socket enxerga, para emitir apenas o delta. */
   visibleTokens: Set<string>;
   currentSceneId: string | null;
+  /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
+  knownAssets: Set<string>;
 }
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -46,6 +58,46 @@ export function socketsOf(room: Room): TypedSocket[] {
 }
 
 // ---------------------------------------------------------------------------
+// Imagens
+// ---------------------------------------------------------------------------
+
+/**
+ * Garante que o jogador tenha os dados das imagens antes do conteudo que as usa.
+ *
+ * O jogador nao recebe a lista inteira de imagens da mesa: o mapa da proxima
+ * cena ou a arte de um chefe ainda escondido entregariam a surpresa, nem que
+ * fosse pelo nome do arquivo. Ele recebe so o que ja esta em uso no que ele
+ * enxerga. So que essa lista era montada apenas no estado completo, e nada a
+ * atualizava depois: quando o mestre punha arte num token no meio da sessao, o
+ * jogador recebia o token com um `assetId` que nao sabia transformar em URL.
+ * A imagem aparecia para o mestre na hora e para a mesa so depois de recarregar.
+ *
+ * Por isso cada emissor chama isto com as imagens do que esta prestes a enviar,
+ * JA filtrado para o observador: o que ele nao pode ver nao traz a arte junto.
+ * A memoria por socket evita reenviar o que ele ja tem.
+ */
+export function syncAssets(
+  room: Room,
+  socket: TypedSocket,
+  ids: Iterable<string | null | undefined>,
+): void {
+  if (socket.data.viewer.role === 'GM') return; // o mestre recebe todas
+
+  const known = (socket.data.knownAssets ??= new Set());
+  const fresh: Asset[] = [];
+
+  for (const id of ids) {
+    if (!id || known.has(id)) continue;
+    const asset = room.state.assets.find((a) => a.id === id);
+    if (!asset) continue;
+    known.add(id);
+    fresh.push(asset);
+  }
+
+  if (fresh.length) socket.emit('assets:patch', { upsert: fresh });
+}
+
+// ---------------------------------------------------------------------------
 // Envio de estado
 // ---------------------------------------------------------------------------
 
@@ -55,6 +107,7 @@ export function sendFullState(room: Room, socket: TypedSocket): void {
 
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
+  socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
   socket.emit('table:state', state);
 }
 
@@ -73,6 +126,7 @@ export function pushScene(room: Room, scene: Scene): void {
     const filtered = sceneForViewer(room, scene, viewer);
     socket.data.currentSceneId = filtered.id;
     socket.data.visibleTokens = new Set(filtered.tokens.map((t) => t.id));
+    syncAssets(room, socket, assetIdsOfScene(filtered));
     socket.emit('scene:patch', { sceneId: scene.id, patch: filtered });
   }
 }
@@ -112,13 +166,14 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
     socket.data.visibleTokens = nowVisible;
 
     if (upsert.length || remove.length) {
+      syncAssets(room, socket, upsert.map((t) => t.assetId));
       socket.emit('tokens:patch', { sceneId: scene.id, upsert, remove });
     }
 
     if (strict) {
       socket.emit('fog:patch', {
         sceneId: scene.id,
-        reset: { explored: [...vision.explored], revealed: [...vision.visible] },
+        computed: { visible: [...vision.visible], explored: [...vision.explored] },
       });
     }
   }
@@ -154,6 +209,7 @@ export function emitTokenUpsert(room: Room, scene: Scene, token: Token): void {
 
     if (presented) {
       socket.data.visibleTokens?.add(token.id);
+      syncAssets(room, socket, [presented.assetId]);
       socket.emit('tokens:patch', { sceneId: scene.id, upsert: [presented] });
     } else if (wasVisible) {
       socket.data.visibleTokens?.delete(token.id);
@@ -177,6 +233,7 @@ export function emitTiles(room: Room, scene: Scene, upsert: Tile[], remove: stri
     const visible = gm ? upsert : upsert.filter((t) => !t.gmOnly);
     const hide = gm ? remove : [...remove, ...upsert.filter((t) => t.gmOnly).map((t) => t.id)];
     if (visible.length || hide.length) {
+      syncAssets(room, socket, visible.map((t) => t.assetId));
       socket.emit('tiles:patch', { sceneId: scene.id, upsert: visible, remove: hide });
     }
   }
@@ -190,6 +247,7 @@ export function emitEffects(room: Room, scene: Scene, upsert: MapEffect[], remov
     const visible = gm ? upsert : upsert.filter((e) => !hidden(e));
     const hide = gm ? remove : [...remove, ...upsert.filter(hidden).map((e) => e.id)];
     if (visible.length || hide.length) {
+      syncAssets(room, socket, visible.map((e) => e.assetId));
       socket.emit('effects:patch', { sceneId: scene.id, upsert: visible, remove: hide });
     }
   }
@@ -206,11 +264,12 @@ export function emitWalls(room: Room, scene: Scene, upsert: Wall[], remove: stri
     if (scene.id !== room.state.activeSceneId) continue;
 
     // Sem strictVision o cliente calcula a propria visao e precisa das paredes.
-    const allowed = strict
-      ? upsert.filter((w) => w.door && !w.hidden)
-      : upsert.filter((w) => !w.hidden);
+    // Portas e janelas sao coisas que o jogador enxerga no mapa; paredes
+    // comuns, nao.
+    const drawable = (w: Wall) => (w.door || w.window) && !w.hidden;
+    const allowed = strict ? upsert.filter(drawable) : upsert.filter((w) => !w.hidden);
     const hide = strict
-      ? [...remove, ...upsert.filter((w) => !w.door || w.hidden).map((w) => w.id)]
+      ? [...remove, ...upsert.filter((w) => !drawable(w)).map((w) => w.id)]
       : [...remove, ...upsert.filter((w) => w.hidden).map((w) => w.id)];
 
     if (allowed.length || hide.length) {
@@ -220,8 +279,12 @@ export function emitWalls(room: Room, scene: Scene, upsert: Wall[], remove: stri
 }
 
 export function emitPlayers(room: Room): void {
-  const players: Player[] = room.state.players;
-  for (const socket of socketsOf(room)) socket.emit('players:patch', players);
+  const players = playersWithPortraits(room);
+  for (const socket of socketsOf(room)) {
+    // Sem os dados da imagem o jogador veria o retrato do colega quebrado.
+    syncAssets(room, socket, players.map((p) => p.portraitAssetId));
+    socket.emit('players:patch', players);
+  }
 }
 
 export function emitInitiative(room: Room): void {

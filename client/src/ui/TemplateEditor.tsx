@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   generateId,
   type FieldType,
@@ -41,6 +41,7 @@ export function TemplateEditor(): JSX.Element {
     current ? structuredClone(current) : { name: 'Ficha', sections: [], fields: [] },
   );
   const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const sections = [...draft.sections].sort((a, b) => a.order - b.order);
 
@@ -93,6 +94,7 @@ export function TemplateEditor(): JSX.Element {
           showOnToken: false,
           span: 1,
           defaultValue: null,
+          rollFormula: '',
         },
       ],
     }));
@@ -137,6 +139,42 @@ export function TemplateEditor(): JSX.Element {
     }
   }
 
+  /**
+   * Exporta o modelo como JSON. Montar a ficha de um sistema da trabalho; sem
+   * isso ela ficaria presa a uma mesa, e cada campanha nova comecaria do zero.
+   */
+  function exportTemplate(): void {
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${draft.name.replace(/[^\w\-]+/g, '-').toLowerCase() || 'ficha'}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importTemplate(file: File | undefined): Promise<void> {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<SheetTemplate>;
+      if (!Array.isArray(parsed?.fields) || !Array.isArray(parsed?.sections)) {
+        throw new Error('O arquivo nao parece um modelo de ficha.');
+      }
+
+      // Carrega no rascunho, nao na mesa: o mestre revisa e so entao salva.
+      setDraft({
+        name: String(parsed.name ?? 'Ficha importada').slice(0, 60),
+        sections: parsed.sections,
+        fields: parsed.fields,
+      });
+      notify('info', 'Modelo carregado. Revise e salve para aplicar a mesa.');
+    } catch (err) {
+      notify('error', `Nao foi possivel importar: ${(err as Error).message}`);
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
   return (
     <Modal
       title="Modelo de ficha"
@@ -147,6 +185,16 @@ export function TemplateEditor(): JSX.Element {
           <span className="hint" style={{ flex: 1, textAlign: 'left' }}>
             As fichas existentes serao ajustadas ao novo modelo.
           </span>
+          <button className="btn" onClick={exportTemplate} title="Baixar este modelo como JSON">
+            Exportar
+          </button>
+          <button
+            className="btn"
+            onClick={() => fileRef.current?.click()}
+            title="Carregar um modelo salvo"
+          >
+            Importar
+          </button>
           <button className="btn" onClick={() => close(false)}>
             Cancelar
           </button>
@@ -225,6 +273,14 @@ export function TemplateEditor(): JSX.Element {
         <button className="btn" onClick={addSection}>
           + Nova secao
         </button>
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(e) => void importTemplate(e.target.files?.[0])}
+        />
       </div>
     </Modal>
   );
@@ -374,6 +430,24 @@ function FieldRow({
               />
             </div>
           )}
+
+          <label className="field">
+            <span className="label">Formula de rolagem</span>
+            <input
+              className="input mono"
+              value={field.rollFormula}
+              maxLength={100}
+              placeholder="Ex.: 1d20+@destreza"
+              onChange={(e) => onPatch({ rollFormula: e.target.value })}
+            />
+            <span className="hint">
+              Preenchida, o campo ganha um dado clicavel na ficha. Use{' '}
+              <span className="mono">@id_do_campo</span> para somar outro valor da mesma ficha —
+              o id aparece no topo de cada campo. Aceita <span className="mono">4d6kh3</span> para
+              manter os melhores dados.
+            </span>
+            <span className="hint mono">id deste campo: {field.id}</span>
+          </label>
 
           <label className="field">
             <span className="label">Descricao / ajuda</span>
