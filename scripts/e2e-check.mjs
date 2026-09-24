@@ -848,7 +848,7 @@ async function main() {
   check('mestre exporta a mesa', exportRes.ok);
   const backup = await exportRes.json();
   check('backup traz as cenas', Array.isArray(backup.scenes) && backup.scenes.length > 0);
-  check('backup declara a versao do formato', backup.format === 4, `format=${backup.format}`);
+  check('backup declara a versao do formato', backup.format === 5, `format=${backup.format}`);
   check('backup traz as fichas', Array.isArray(backup.sheets) && backup.sheets.length > 0);
   check(
     'backup NAO carrega credenciais',
@@ -1426,7 +1426,7 @@ async function main() {
       headers: { 'x-session-token': fresh.session.token },
     })
   ).json();
-  check('backup de cartelas no formato atual', cardBackup.format === 4, String(cardBackup.format));
+  check('backup de cartelas no formato atual', cardBackup.format === 5, String(cardBackup.format));
   check('backup leva as cartelas', cardBackup.sceneCards?.some((c) => c.title === 'Capitulo 3'));
   const cardImport = await fetch(`${BASE}/api/tables/import`, {
     method: 'POST',
@@ -1574,7 +1574,7 @@ async function main() {
       headers: { 'x-session-token': fresh.session.token },
     })
   ).json();
-  check('backup no formato 4', trigBackup.format === 4, String(trigBackup.format));
+  check('backup de gatilhos no formato atual', trigBackup.format === 5, String(trigBackup.format));
   const trigImport = await fetch(`${BASE}/api/tables/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1592,6 +1592,152 @@ async function main() {
     s4.disconnect();
   } else {
     check('importacao com gatilhos', false, JSON.stringify(trigImported));
+  }
+
+  console.log('\n== 28. Quadro de pistas ==');
+  const secretDiary = await rpc(gm2, 'handout:create', { title: 'Diario do mordomo', text: 'Ele mentiu.' });
+  const aliceBoardTraffic = [];
+  const recordAliceBoard = (event, ...args) => aliceBoardTraffic.push(JSON.stringify([event, args]));
+  alice.onAny(recordAliceBoard);
+
+  const note = await rpc(alice, 'board:create-item', { kind: 'note', x: 100, y: 100, text: 'Quem apagou a vela?' });
+  check('jogador prega uma nota', note?.kind === 'note' && note.authorId === aliceId);
+
+  const aliceSeesDrag = waitFor(alice, 'board:item-moved', (p) => p.itemId === note.id && p.x === 180);
+  await rpc(bob, 'board:move-item', { itemId: note.id, x: 180, y: 140, dragging: true });
+  check('arraste de um chega aos outros em tempo real', !!(await aliceSeesDrag));
+  const aliceSeesFinal = waitFor(alice, 'board:patch', (p) => p.upsertItems?.some((i) => i.id === note.id && i.x === 200));
+  await rpc(bob, 'board:move-item', { itemId: note.id, x: 200, y: 150, dragging: false });
+  check('soltar manda o item inteiro, gravado', !!(await aliceSeesFinal));
+  await rpc(bob, 'board:update-item', { itemId: note.id, patch: { text: 'Quem apagou a vela? (Bob)' } });
+  let bobDeleteRefused = false;
+  try {
+    await rpc(bob, 'board:delete-item', { itemId: note.id });
+  } catch {
+    bobDeleteRefused = true;
+  }
+  check('outro jogador move e edita, mas nao apaga', bobDeleteRefused);
+
+  // Cartao de material que Alice NAO tem.
+  const diaryCard = await rpc(gm2, 'board:create-item', { kind: 'handout', x: 400, y: 100, handoutId: secretDiary.id });
+  let aliceCardRefused = false;
+  try {
+    await rpc(alice, 'board:create-item', { kind: 'handout', x: 0, y: 0, handoutId: secretDiary.id });
+  } catch {
+    aliceCardRefused = true;
+  }
+  check('jogador nao prega material que nao tem', aliceCardRefused);
+  let foreignImageRefused = false;
+  try {
+    await rpc(alice, 'board:create-item', { kind: 'image', x: 0, y: 0, assetId: cardAsset.id });
+  } catch {
+    foreignImageRefused = true;
+  }
+  check('jogador so prega imagens de pista, e nao qualquer arte da mesa', foreignImageRefused);
+
+  await sleep(300);
+  const aliceBoardState = await rpc(alice, 'session:resume', { token: aliceJoin.session.token });
+  const aliceBoardWire = aliceBoardTraffic.join('\n') + JSON.stringify(aliceBoardState);
+  const aliceCard = aliceBoardState.state.clueBoard.items.find((i) => i.id === diaryCard.id);
+  check('cartao chega como "Material indisponivel"', aliceCard?.unavailable === true && aliceCard?.handoutId === null);
+  check('sem o id do material', !aliceBoardWire.includes(secretDiary.id));
+  check('nem o titulo', !aliceBoardWire.includes('Diario do mordomo'));
+
+  const completes = waitFor(alice, 'board:patch', (p) => p.upsertItems?.some((i) => i.id === diaryCard.id && i.handoutId === secretDiary.id));
+  const bobStill = waitFor(bob, 'board:patch', (p) => p.upsertItems?.some((i) => i.id === diaryCard.id), 1500);
+  await rpc(gm2, 'handout:update', { handoutId: secretDiary.id, patch: { sharedWith: [aliceId] } });
+  check('compartilhado depois, o cartao se completa', !!(await completes));
+  const bobPatch = await bobStill;
+  check(
+    'para quem continua sem acesso, segue indisponivel',
+    bobPatch?.upsertItems?.find((i) => i.id === diaryCard.id)?.unavailable === true &&
+      !JSON.stringify(bobPatch).includes(secretDiary.id),
+  );
+  alice.offAny(recordAliceBoard);
+
+  // Imagem de pista enviada por jogador: a arte chega aos outros antes do item.
+  const clueForm = new FormData();
+  clueForm.append('kind', 'clue');
+  clueForm.append('file', new Blob([cardArt], { type: 'image/png' }), 'pegada.png');
+  const clueRes = await fetch(`${BASE}/api/assets`, {
+    method: 'POST',
+    headers: { 'x-session-token': aliceJoin.session.token },
+    body: clueForm,
+  });
+  const clueAsset = (await clueRes.json()).asset;
+  check('jogador envia imagem de pista', clueRes.ok && clueAsset?.kind === 'clue');
+  const bobOrder = [];
+  const trackBob = (event, payload) => {
+    if (event === 'assets:patch' && payload?.upsert?.some((a) => a.id === clueAsset.id)) bobOrder.push('asset');
+    if (event === 'board:patch' && payload?.upsertItems?.some((i) => i.assetId === clueAsset.id)) bobOrder.push('item');
+  };
+  bob.onAny(trackBob);
+  const photo = await rpc(alice, 'board:create-item', { kind: 'image', x: 300, y: 400, assetId: clueAsset.id });
+  await sleep(300);
+  bob.offAny(trackBob);
+  check('a imagem chega aos outros antes do item', bobOrder.join(',') === 'asset,item', bobOrder.join(','));
+
+  // Fios.
+  const thread = await rpc(alice, 'board:create-thread', { fromId: note.id, toId: photo.id, color: '#c0392b' });
+  check('fio liga dois itens com a cor escolhida', thread?.color === '#c0392b');
+  let dupRefused = false;
+  try {
+    await rpc(bob, 'board:create-thread', { fromId: photo.id, toId: note.id, color: '#111111' });
+  } catch {
+    dupRefused = true;
+  }
+  check('nao duplica o fio entre os mesmos itens', dupRefused);
+  let bobCutRefused = false;
+  try {
+    await rpc(bob, 'board:delete-thread', { threadId: thread.id });
+  } catch {
+    bobCutRefused = true;
+  }
+  check('so o autor ou o mestre corta o fio', bobCutRefused);
+
+  // Travado: o servidor recusa edicao de jogador — nao so a interface.
+  await rpc(gm2, 'board:lock', { locked: true });
+  const lockedTries = await Promise.all([
+    rpc(alice, 'board:create-item', { kind: 'note', x: 0, y: 0 }).then(() => 'aceitou', (e) => e.message),
+    rpc(alice, 'board:move-item', { itemId: note.id, x: 999, y: 999, dragging: false }).then(() => 'aceitou', (e) => e.message),
+    rpc(alice, 'board:update-item', { itemId: note.id, patch: { text: 'x' } }).then(() => 'aceitou', (e) => e.message),
+    rpc(alice, 'board:delete-item', { itemId: note.id }).then(() => 'aceitou', (e) => e.message),
+    rpc(alice, 'board:create-thread', { fromId: note.id, toId: diaryCard.id, color: '#111111' }).then(() => 'aceitou', (e) => e.message),
+  ]);
+  check('quadro travado recusa criar, mover, editar, apagar e ligar', lockedTries.every((m) => m !== 'aceitou'), lockedTries.join(' | '));
+  const gmStillEdits = await rpc(gm2, 'board:update-item', { itemId: note.id, patch: { color: '#aecbe8' } }).then(() => true, () => false);
+  check('o mestre continua editando o quadro travado', gmStillEdits);
+  const afterLock = (await rpc(alice, 'session:resume', { token: aliceJoin.session.token })).state.clueBoard;
+  check('e nada mudou pelas tentativas do jogador', afterLock.items.find((i) => i.id === note.id)?.x === 200 && afterLock.locked);
+  await rpc(gm2, 'board:lock', { locked: false });
+
+  const aliceDeletes = await rpc(alice, 'board:delete-item', { itemId: photo.id }).then(() => true, () => false);
+  const boardAfter = (await rpc(gm2, 'session:resume', { token: fresh.session.token })).state.clueBoard;
+  check('o autor apaga o proprio item, e os fios dele vao junto', aliceDeletes && !boardAfter.threads.some((t) => t.id === thread.id));
+
+  // Backup leva o quadro, religado ao material importado.
+  const boardBackup = await (
+    await fetch(`${BASE}/api/tables/${fresh.session.tableId}/export?assets=0`, {
+      headers: { 'x-session-token': fresh.session.token },
+    })
+  ).json();
+  check('backup no formato 5 com o quadro', boardBackup.format === 5 && boardBackup.clueBoard?.items.length >= 2);
+  const boardImport = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: boardBackup, gmName: 'Mestre do quadro' }),
+  });
+  const boardImported = await boardImport.json();
+  if (boardImport.ok) {
+    const s5 = await connect();
+    const st5 = (await rpc(s5, 'session:resume', { token: boardImported.session.token })).state;
+    const restoredDiary = st5.handouts.find((h) => h.title === 'Diario do mordomo');
+    const restoredCard = st5.clueBoard.items.find((i) => i.kind === 'handout');
+    check('cartao restaurado aponta para o material restaurado', !!restoredDiary && restoredCard?.handoutId === restoredDiary.id);
+    check('itens restaurados voltam sem autor', st5.clueBoard.items.every((i) => i.authorId === null));
+    s5.disconnect();
+  } else {
+    check('importacao com quadro', false, JSON.stringify(boardImported));
   }
 
   alice.disconnect();

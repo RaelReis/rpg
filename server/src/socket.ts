@@ -47,6 +47,15 @@ import {
   updateScene,
   updateSettings,
 } from './handlers/scene.js';
+import {
+  createBoardItem,
+  createBoardThread,
+  deleteBoardItem,
+  deleteBoardThread,
+  lockBoard,
+  moveBoardItem,
+  updateBoardItem,
+} from './handlers/board.js';
 import { sendScreenMessage } from './handlers/messages.js';
 import {
   clearTriggerLog,
@@ -304,5 +313,19 @@ export function registerSocketHandlers(io: TypedServer): void {
     socket.on('handout:present', gm(presentHandout));
 
     socket.on('map:ping', loose(pingMap));
+
+    // -- quadro de pistas ----------------------------------------------------
+    // Aberto a todos; as permissoes (autor, quadro travado) ficam no handler.
+    socket.on('board:create-item', member(createBoardItem));
+    socket.on('board:update-item', member(updateBoardItem));
+    socket.on('board:move-item', (payload, ack) => {
+      const ctx = contextOf(socket);
+      if (!ctx) return fail(ack, 'Sessao nao encontrada.');
+      moveBoardItem(ctx, payload, ack);
+    });
+    socket.on('board:delete-item', member(deleteBoardItem));
+    socket.on('board:create-thread', member(createBoardThread));
+    socket.on('board:delete-thread', member(deleteBoardThread));
+    socket.on('board:lock', gm(lockBoard));
   });
 }

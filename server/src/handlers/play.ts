@@ -374,6 +374,15 @@ export async function deleteAsset(ctx: Ctx, payload: { assetId: string }, ack: A
     }
   }
 
+  // Imagens do quadro de pistas: o item fica, sem a imagem.
+  const pinned = ctx.room.state.clueBoard.items.filter((i) => i.assetId === assetId);
+  for (const item of pinned) item.assetId = null;
+  if (pinned.length) {
+    ctx.room.touch('board');
+    const { emitBoard } = await import('./board.js');
+    emitBoard(ctx.room, { items: pinned });
+  }
+
   // Cartelas sao do mestre: so ele precisa saber que perderam a imagem.
   const cards = ctx.room.state.sceneCards.filter((c) => c.assetId === assetId);
   for (const card of cards) card.assetId = null;

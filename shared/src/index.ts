@@ -4,6 +4,7 @@ export * from './vision.js';
 export * from './perception.js';
 export * from './screen.js';
 export * from './triggers.js';
+export * from './board.js';
 export * from './sheet.js';
 export * from './dice.js';
 export * from './defaults.js';

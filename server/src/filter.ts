@@ -1,4 +1,5 @@
 import {
+  boardItemFor,
   canPlayerSeeEffect,
   canPlayerSeeToken,
   computeVision,
@@ -6,7 +7,9 @@ import {
   filterSheetForRole,
   filterTemplateForRole,
   type Asset,
+  type BoardItem,
   type ChatMessage,
+  type ClueBoard,
   type Handout,
   type InitiativeState,
   type MapEffect,
@@ -242,6 +245,8 @@ function assetsForViewer(
   }
   // A imagem da cartela no ar; as preparadas nao entregam a arte.
   ids.add(room.live.forViewer(viewer).presentation?.assetId);
+  // Imagens pregadas no quadro de pistas, que e de todos.
+  for (const item of room.state.clueBoard.items) ids.add(item.assetId);
 
   return room.state.assets.filter((a) => ids.has(a.id));
 }
@@ -255,6 +260,27 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
   if (viewer.role === 'GM') return handout;
   if (handout.sharedWithAll) return handout;
   return handout.sharedWith.includes(viewer.playerId) ? handout : null;
+}
+
+/**
+ * Cartao do quadro de pistas como sai para este observador.
+ *
+ * Um cartao que aponta para um material nao compartilhado com ele chega como
+ * "Material indisponivel": sem a referencia, e portanto sem titulo nem imagem,
+ * que moram no material. Quando o material for compartilhado, o cartao e
+ * reenviado completo (ver `emitHandout`).
+ */
+export function boardItemForViewer(room: Room, item: BoardItem, viewer: Viewer): BoardItem {
+  if (item.kind !== 'handout') return item;
+  const handout = room.state.handouts.find((h) => h.id === item.handoutId);
+  if (viewer.role === 'GM') return item;
+  return boardItemFor(item, !!handout && handoutForViewer(handout, viewer) !== null);
+}
+
+export function boardForViewer(room: Room, viewer: Viewer): ClueBoard {
+  const board = room.state.clueBoard;
+  if (viewer.role === 'GM') return board;
+  return { ...board, items: board.items.map((i) => boardItemForViewer(room, i, viewer)) };
 }
 
 /**
@@ -327,6 +353,7 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
     // Cartelas preparadas sao material do mestre; o jogador so ve a que esta
     // no ar, por `live`.
     sceneCards: [],
+    clueBoard: boardForViewer(room, viewer),
     live: room.live.forViewer(viewer),
   };
 }

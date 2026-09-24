@@ -199,7 +199,7 @@ const upload = multer({
 });
 
 /** O jogador sobe o proprio material; mapas e tiles sao do mestre. */
-const PLAYER_ALLOWED_KINDS: AssetKind[] = ['portrait', 'item', 'token'];
+const PLAYER_ALLOWED_KINDS: AssetKind[] = ['portrait', 'item', 'token', 'clue'];
 
 app.post('/api/assets', upload.single('file'), async (req, res) => {
   const token = String(req.header('x-session-token') ?? '');

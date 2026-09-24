@@ -319,6 +319,8 @@ function registerListeners(s: ClientSocket): void {
 
   s.on('screen:applied', (effect) => store().applyScreenEffect(effect));
   s.on('screen:stopped', ({ ids }) => store().stopScreenEffects(ids));
+  s.on('board:patch', (patch) => store().applyBoardPatch(patch));
+  s.on('board:item-moved', ({ itemId, x, y }) => store().moveBoardItemLocal(itemId, x, y));
   s.on('cards:patch', ({ upsert, remove }) => store().upsertCards(upsert ?? [], remove ?? []));
   s.on('card:presented', (presentation) => store().showPresentation(presentation));
   s.on('card:closed', ({ presentationId }) => store().closePresentation(presentationId));

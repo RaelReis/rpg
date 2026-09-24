@@ -7,8 +7,10 @@ import {
   DEFAULT_SETTINGS,
   createScene,
   generateId,
+  normalizeBoard,
   normalizeTemplate,
   sanitizeCardDuration,
+  type ClueBoard,
   type Handout,
   type Scene,
   type SceneCard,
@@ -43,8 +45,9 @@ import { saveImage } from './uploads.js';
  * 2 — tokens e efeitos com `visibleTo` (alucinacoes).
  * 3 — cartelas de cena (`sceneCards`) e `introCardId` nas cenas.
  * 4 — gatilhos nas cenas (`triggers`, `triggerLog`).
+ * 5 — quadro de pistas (`clueBoard`).
  */
-export const BACKUP_FORMAT = 4;
+export const BACKUP_FORMAT = 5;
 const MIN_BACKUP_FORMAT = 1;
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
@@ -71,6 +74,8 @@ export interface TableBackup {
   handouts: Handout[];
   /** Desde o formato 3. */
   sceneCards?: SceneCard[];
+  /** Desde o formato 5. */
+  clueBoard?: ClueBoard;
   scenes: Scene[];
   sheets: Sheet[];
   /** Apenas para reconstruir a autoria; sem credenciais. */
@@ -118,6 +123,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
     initiative: s.initiative,
     handouts: s.handouts,
     sceneCards: s.sceneCards,
+    clueBoard: s.clueBoard,
     scenes: s.scenes,
     sheets: s.sheets,
     players: s.players.map((p) => ({ id: p.id, name: p.name, color: p.color, role: p.role })),
@@ -324,6 +330,21 @@ async function buildImportedTable(
     remapTriggers(scene, cardIdMap, handoutIdMap);
     room.touchScene(scene.id);
   }
+
+  // Quadro de pistas: imagens e materiais com os ids novos; os autores eram
+  // jogadores do backup, e os itens voltam sem autor (so o mestre apaga).
+  const board = normalizeBoard(backup.clueBoard);
+  room.state.clueBoard = {
+    locked: board.locked,
+    items: board.items.map((item) => ({
+      ...item,
+      assetId: remap(item.assetId),
+      handoutId: item.handoutId ? (handoutIdMap.get(item.handoutId) ?? null) : null,
+      authorId: null,
+      unavailable: undefined,
+    })),
+    threads: board.threads.map((thread) => ({ ...thread, authorId: null })),
+  };
 
   room.touch('table');
   room.touch('sheets');

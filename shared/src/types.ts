@@ -1,3 +1,4 @@
+import type { ClueBoard } from './board.js';
 import type { LiveState, SceneCard } from './screen.js';
 import type { Trigger, TriggerFiring } from './triggers.js';
 
@@ -452,7 +453,7 @@ export interface TableSettings {
   diceEnabled: boolean;
 }
 
-export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card';
+export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card' | 'clue';
 
 export interface Asset {
   id: string;
@@ -525,6 +526,8 @@ export interface TableState {
   handouts: Handout[];
   /** Cartelas de cena preparadas. So o mestre recebe. */
   sceneCards: SceneCard[];
+  /** Quadro de pistas do grupo, ja filtrado para quem recebe. */
+  clueBoard: ClueBoard;
   chat: ChatMessage[];
   /**
    * Efeitos de tela e cartela no ar. Derivado no envio, nunca gravado: vive

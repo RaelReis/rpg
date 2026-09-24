@@ -35,6 +35,9 @@ model Table {
   handouts       String   @default("[]")
   /// Cartelas de cena preparadas pelo mestre (SceneCard[]).
   sceneCards     String   @default("[]")
+  /// Quadro de pistas do grupo (ClueBoard). Coluna propria para que arrastar
+  /// uma nota nao regrave o chat, os materiais e o resto da mesa.
+  clueBoard      String   @default("{}")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

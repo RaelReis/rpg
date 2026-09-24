@@ -5,6 +5,7 @@ import type {
   ScreenEffectParams,
   SceneCard,
 } from './screen.js';
+import type { BoardItem, BoardItemKind, BoardThread } from './board.js';
 import type { Trigger, TriggerFiring } from './triggers.js';
 import type {
   Asset,
@@ -277,6 +278,32 @@ export interface ClientToServerEvents {
   ) => void;
   'card:close': (payload: Record<string, never>, ack: Ack<null>) => void;
 
+  /** Quadro de pistas: todos editam; travado, so o mestre. */
+  'board:create-item': (
+    payload: {
+      kind: BoardItemKind;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      text?: string;
+      color?: string;
+      assetId?: string | null;
+      handoutId?: string | null;
+    },
+    ack: Ack<BoardItem>,
+  ) => void;
+  'board:update-item': (
+    payload: { itemId: string; patch: Partial<Pick<BoardItem, 'x' | 'y' | 'width' | 'height' | 'rotation' | 'text' | 'color'>> },
+    ack: Ack<null>,
+  ) => void;
+  /** Arraste: `dragging` nao grava ainda; o evento final grava. */
+  'board:move-item': (payload: { itemId: string; x: number; y: number; dragging?: boolean }, ack?: Ack<null>) => void;
+  'board:delete-item': (payload: { itemId: string }, ack: Ack<null>) => void;
+  'board:create-thread': (payload: { fromId: string; toId: string; color: string }, ack: Ack<BoardThread>) => void;
+  'board:delete-thread': (payload: { threadId: string }, ack: Ack<null>) => void;
+  'board:lock': (payload: { locked: boolean }, ack: Ack<null>) => void;
+
   'chat:send': (payload: ChatSendPayload, ack: Ack<null>) => void;
   /** Mensagem individual na tela de jogadores escolhidos (so o mestre). */
   'message:send': (payload: ScreenMessageRequest, ack: Ack<ScreenMessageReport>) => void;
@@ -322,6 +349,15 @@ export interface ServerToClientEvents {
   'cards:patch': (payload: { upsert?: SceneCard[]; remove?: string[] }) => void;
   'card:presented': (presentation: CardPresentation) => void;
   'card:closed': (payload: { presentationId: string }) => void;
+
+  'board:patch': (payload: {
+    upsertItems?: BoardItem[];
+    removeItems?: string[];
+    upsertThreads?: BoardThread[];
+    removeThreads?: string[];
+    locked?: boolean;
+  }) => void;
+  'board:item-moved': (payload: { itemId: string; x: number; y: number }) => void;
   /** O cliente confirma pelo ack que a mensagem apareceu na tela. */
   'message:shown': (message: ScreenMessage, ack: (shown: boolean) => void) => void;
   'map:ping': (ping: MapPing) => void;
@@ -343,6 +379,7 @@ export const UPLOAD_LIMITS = {
   item: 2 * 1024 * 1024,
   effect: 5 * 1024 * 1024,
   card: 10 * 1024 * 1024,
+  clue: 5 * 1024 * 1024,
 } as const;
 
 export const ALLOWED_IMAGE_MIMES = [

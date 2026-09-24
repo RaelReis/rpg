@@ -8,6 +8,7 @@ import { HandoutModal } from './ui/HandoutModal';
 import { MessageComposer } from './ui/MessageComposer';
 import { Notices } from './ui/Notices';
 import { Rail } from './ui/Rail';
+import { ClueBoardView } from './ui/ClueBoard';
 import { CardPresentationView, ScreenEffectsLayer } from './ui/ScreenEffects';
 import { ScreenFxPanel } from './ui/ScreenFxPanel';
 import { ScreenMessages } from './ui/ScreenMessages';
@@ -83,6 +84,7 @@ export function App(): JSX.Element {
       {sheetModalId && <SheetModal sheetId={sheetModalId} />}
       {openHandoutId && <HandoutModal handoutId={openHandoutId} />}
       {messageComposer && session.role === 'GM' && <MessageComposer initial={messageComposer} />}
+      <ClueBoardView />
       <CardPresentationView />
       <Notices />
     </div>

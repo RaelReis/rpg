@@ -4,6 +4,8 @@ import {
   DEFAULT_INITIATIVE,
   DEFAULT_SETTINGS,
   type Asset,
+  type BoardItem,
+  type BoardThread,
   type ChatMessage,
   type FogPatch,
   type Handout,
@@ -231,6 +233,14 @@ interface AppState {
   reduceEffects: boolean;
   /** Painel de efeitos de tela aberto no trilho (mestre). */
   screenFxOpen: boolean;
+  /** Quadro de pistas aberto em tela cheia. */
+  boardOpen: boolean;
+  /**
+   * Contador de mudancas do quadro. Separado de `rev` de proposito: o arraste
+   * de uma nota chega dezenas de vezes por segundo, e so o quadro precisa
+   * redesenhar — nao os paineis, as fichas e o chat.
+   */
+  boardRev: number;
   /** Mensagens individuais do mestre na tela deste jogador. Nao persistem. */
   screenMessages: ScreenMessage[];
   /**
@@ -317,6 +327,16 @@ interface AppState {
   upsertCards(cards: SceneCard[], remove: string[]): void;
   setReduceEffects(reduce: boolean): void;
   setScreenFxOpen(open: boolean): void;
+  setBoardOpen(open: boolean): void;
+  applyBoardPatch(patch: {
+    upsertItems?: BoardItem[];
+    removeItems?: string[];
+    upsertThreads?: BoardThread[];
+    removeThreads?: string[];
+    locked?: boolean;
+  }): void;
+  /** Caminho quente do arraste: so a posicao, sem tocar em `rev`. */
+  moveBoardItemLocal(itemId: string, x: number, y: number): void;
   showScreenMessage(message: ScreenMessage): void;
   dismissScreenMessage(id: string): void;
   openMessageComposer(playerIds: string[] | null): void;
@@ -384,6 +404,8 @@ export const useStore = create<AppState>((set, get) => ({
   presentation: null,
   reduceEffects: initialReduceEffects(),
   screenFxOpen: false,
+  boardOpen: false,
+  boardRev: 0,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -423,6 +445,7 @@ export const useStore = create<AppState>((set, get) => ({
       screenEffects: [],
       presentation: null,
       screenFxOpen: false,
+      boardOpen: false,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -816,6 +839,33 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setScreenFxOpen: (screenFxOpen) => set({ screenFxOpen }),
+  setBoardOpen: (boardOpen) => set({ boardOpen }),
+
+  applyBoardPatch: (p) =>
+    set((s) => {
+      if (!s.table) return {};
+      const board = s.table.clueBoard ?? { locked: false, items: [], threads: [] };
+      return {
+        table: {
+          ...s.table,
+          clueBoard: {
+            locked: p.locked ?? board.locked,
+            items: mergeById(board.items, p.upsertItems ?? [], p.removeItems ?? []),
+            threads: mergeById(board.threads, p.upsertThreads ?? [], p.removeThreads ?? []),
+          },
+        },
+        boardRev: s.boardRev + 1,
+      };
+    }),
+
+  moveBoardItemLocal: (itemId, x, y) =>
+    set((s) => {
+      const item = s.table?.clueBoard?.items.find((i) => i.id === itemId);
+      if (!item) return {};
+      item.x = x;
+      item.y = y;
+      return { boardRev: s.boardRev + 1 };
+    }),
 }));
 
 function liveFrom(table: TableState): Pick<AppState, 'screenEffects' | 'presentation'> {

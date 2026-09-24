@@ -58,7 +58,7 @@ Outros comandos:
 | Comando | O que faz |
 | --- | --- |
 | `npm run share` | Publica a mesa para os amigos por um Cloudflare Tunnel |
-| `npm test` | Testes unitários do pacote compartilhado (grade, visão, percepção, gatilhos, efeitos, dados, fichas) |
+| `npm test` | Testes unitários do pacote compartilhado (grade, visão, percepção, gatilhos, efeitos, quadro, dados, fichas) |
 | `npm run typecheck` | Verifica os três pacotes com o TypeScript |
 | `npm run test:e2e` | Teste ponta a ponta com dois clientes reais (exige o servidor no ar) |
 | `npm run bench:fog` | Mede as recomposições da textura de neblina numa sessão típica |
@@ -104,6 +104,8 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - campos de ficha marcados como exclusivos do mestre;
 - cenas ainda não ativadas (material de preparação);
 - os **gatilhos** do mapa — nem as áreas, nem o registro de disparos;
+- no quadro de pistas, o **cartão de um material** que não foi compartilhado
+  com ele — chega como "Material indisponível", sem título, imagem ou id;
 - **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem,
   nem a ligação com a cena que abre com elas;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
@@ -536,10 +538,42 @@ que já entregaria a surpresa. Retirar o acesso o remove da tela dele.
 
 ---
 
+## Quadro de pistas
+
+O botão **📌 Pistas** no cabeçalho abre, em tela cheia, um quadro de cortiça
+para o grupo montar a investigação. É um por mesa, fica guardado entre as
+sessões e entra no backup.
+
+- **Itens**: nota de texto (clique duplo para escrever, cor do papel à
+  escolha), imagem enviada e cartão de material (um item de *Materiais*).
+- **Fios**: o botão 🧵 liga dois itens — clique no primeiro, depois no
+  segundo —, com a cor escolhida. Clicar num fio o corta.
+- **Quem faz o quê**: todos criam, movem e editam. Tirar um item ou cortar um
+  fio é de quem o criou e do mestre. O mestre pode **travar** o quadro, e aí
+  ele vira somente leitura para os jogadores — o servidor recusa a edição, e
+  não só a interface.
+- **Câmera própria**: cada pessoa arrasta o fundo e usa a roda do mouse no
+  próprio ritmo, como no mapa.
+
+**Cartões de material seguem o acesso ao material.** Um cartão que aponta
+para um material não compartilhado com aquele jogador chega a ele como
+*Material indisponível* — sem título, sem imagem e sem o id. Quando o mestre
+compartilha o material, o cartão se completa na hora. O jogador só prega os
+materiais que tem; imagens, só as enviadas na categoria *Pista*, para que um
+id de outra arte da mesa não sirva para trazê-la ao quadro de todos.
+
+A sincronização é em tempo real, e a última escrita vence, por item. Durante
+o arraste só as coordenadas circulam; o quadro vai para o banco ao soltar,
+de forma agrupada, numa coluna própria — mover uma nota não regrava o chat e
+os materiais da mesa.
+
+---
+
 ## Backup
 
 Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
-fichas, materiais, cartelas de cena, tokens, paredes e neblina. Há duas versões — **com imagens**,
+fichas, materiais, cartelas de cena, quadro de pistas, tokens, paredes e
+neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
 
@@ -560,7 +594,8 @@ material sem volta, e comparar as duas antes de descartar é decisão de quem
 importou. As fichas voltam sem dono e os materiais sem compartilhamento — os
 jogadores entram de novo pelo código, e o mestre reatribui. Alucinações
 continuam alucinações, mas com a lista vazia: ninguém as vê até o mestre
-escolher de novo, em vez de aparecerem para todos.
+escolher de novo, em vez de aparecerem para todos. Os itens do quadro de
+pistas voltam sem autor: só o mestre os apaga.
 
 O banco (`server/prisma/dev.db`) e a pasta `server/uploads/` continuam sendo o
 backup completo para quem tem acesso ao servidor.
@@ -589,6 +624,7 @@ regras é do mestre.
 | Retrato | 5 MB | todos |
 | Efeito | 5 MB | mestre |
 | Cartela | 10 MB | mestre |
+| Pista (quadro) | 5 MB | todos |
 | Item | 2 MB | todos |
 
 Formatos: PNG, JPEG, WebP, GIF, AVIF; até 8192 px por lado.

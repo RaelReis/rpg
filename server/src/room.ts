@@ -8,9 +8,11 @@ import {
   DEFAULT_SETTINGS,
   generateId,
   generateTableCode,
+  normalizeBoard,
   normalizeTemplate,
   type Asset,
   type ChatMessage,
+  type ClueBoard,
   type Handout,
   type Player,
   type Scene,
@@ -36,7 +38,11 @@ import { assetUrl } from './uploads.js';
  * escrita quando ele parar.
  */
 
-type DirtyKind = 'table' | 'players' | 'sheets';
+/**
+ * `board` e o quadro de pistas, gravado na propria coluna: arrastar uma nota
+ * nao deveria regravar o chat, os materiais e o resto da mesa.
+ */
+type DirtyKind = 'table' | 'players' | 'sheets' | 'board';
 
 export class Room {
   readonly state: TableState;
@@ -248,8 +254,11 @@ export class Room {
             chat: toJson(s.chat.slice(-CHAT_HISTORY_SIZE)),
             handouts: toJson(s.handouts),
             sceneCards: toJson(s.sceneCards),
+            clueBoard: toJson(s.clueBoard),
           },
         });
+      } else if (kinds.has('board')) {
+        await prisma.table.update({ where: { id: s.id }, data: { clueBoard: toJson(s.clueBoard) } });
       }
 
       for (const id of rmScenes) {
@@ -513,6 +522,7 @@ class RoomManager {
       ),
       handouts: fromJson<Handout[]>(row.handouts, []),
       sceneCards: fromJson<SceneCard[]>(row.sceneCards, []),
+      clueBoard: normalizeBoard(fromJson<Partial<ClueBoard>>(row.clueBoard, {})),
       chat: fromJson<ChatMessage[]>(row.chat, []),
       createdAt: row.createdAt.getTime(),
       updatedAt: row.updatedAt.getTime(),

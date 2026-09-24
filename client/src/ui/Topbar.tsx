@@ -15,6 +15,8 @@ export function Topbar(): JSX.Element {
   const session = useStore((s) => s.session);
   const notify = useStore((s) => s.notify);
   const gm = useStore(isGm);
+  const boardOpen = useStore((s) => s.boardOpen);
+  const setBoardOpen = useStore((s) => s.setBoardOpen);
 
   if (!table) return <div className="topbar" />;
 
@@ -74,6 +76,14 @@ export function Topbar(): JSX.Element {
       </div>
 
       {gm && <span className="tag gm">Mestre</span>}
+
+      <button
+        className={`btn ghost sm${boardOpen ? ' active' : ''}`}
+        onClick={() => setBoardOpen(!boardOpen)}
+        title="Quadro de pistas do grupo"
+      >
+        📌 Pistas
+      </button>
 
       <Preferences />
 
