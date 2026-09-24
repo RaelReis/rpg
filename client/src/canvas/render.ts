@@ -3,10 +3,12 @@ import {
   cellCorners,
   cellHeight,
   cellKey,
+  canPlayerSeeEffect,
   canPlayerSeeToken,
   cellsInRect,
   hexRadius,
   isHex,
+  isRestricted,
   parseCellKey,
   tokenCell,
   type Layer,
@@ -472,6 +474,36 @@ function drawTile(input: RenderInput, tile: Tile): void {
 // Tokens
 // ---------------------------------------------------------------------------
 
+/** Cor do contorno das alucinacoes, que so o mestre ve. */
+const HALLUCINATION_COLOR = '#b58be8';
+
+/**
+ * Indicador discreto de alucinacao: um olho pequeno no canto de cima.
+ * O contorno tracejado fica a cargo de quem desenha a forma do objeto.
+ */
+function drawHallucinationEye(input: RenderInput, x: number, y: number): void {
+  const { ctx, camera } = input;
+  const size = 12 / camera.zoom;
+  ctx.save();
+  ctx.globalAlpha = 0.95;
+  ctx.fillStyle = 'rgba(12,14,19,0.85)';
+  ctx.beginPath();
+  ctx.arc(x, y, size * 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = HALLUCINATION_COLOR;
+  ctx.lineWidth = 1.2 / camera.zoom;
+  ctx.stroke();
+  // Olho: amendoa com a pupila no meio.
+  ctx.beginPath();
+  ctx.ellipse(x, y, size * 0.5, size * 0.28, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = HALLUCINATION_COLOR;
+  ctx.beginPath();
+  ctx.arc(x, y, size * 0.14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawToken(input: RenderInput, token: Token): void {
   const { ctx, scene, camera } = input;
   if (input.previewPlayerId !== null) {
@@ -577,7 +609,21 @@ function drawToken(input: RenderInput, token: Token): void {
     ctx.setLineDash([]);
   }
 
+  if (input.role === 'GM' && isRestricted(token)) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.08, 0, Math.PI * 2);
+    ctx.strokeStyle = HALLUCINATION_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   ctx.restore();
+
+  if (input.role === 'GM' && isRestricted(token)) {
+    drawHallucinationEye(input, cx + radius * 0.78, cy - radius * 0.78);
+  }
 
   drawTokenBars(input, token, cx, cy + h / 2, w);
   drawTokenLabel(input, token, cx, cy + h / 2, w);
@@ -689,6 +735,17 @@ function drawArtToken(
     ctx.setLineDash([3 / camera.zoom, 5 / camera.zoom]);
     ctx.strokeRect(-artW / 2, -artH, artW, artH);
     ctx.restore();
+  }
+
+  if (input.role === 'GM' && isRestricted(token)) {
+    ctx.save();
+    ctx.strokeStyle = HALLUCINATION_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    const pad = 3 / camera.zoom;
+    ctx.strokeRect(-artW / 2 - pad, -artH - pad, artW + pad * 2, artH + pad * 2);
+    ctx.restore();
+    drawHallucinationEye(input, artW / 2, -artH);
   }
   ctx.restore();
 
@@ -813,7 +870,8 @@ function effectOrigin(input: RenderInput, effect: MapEffect): Point | null {
 }
 
 function drawEffect(input: RenderInput, effect: MapEffect): void {
-  if (input.previewPlayerId !== null && (effect.gmOnly || effect.visibility === 'hidden')) return;
+  // Mesma regra que o servidor usa para decidir se o efeito sai para o jogador.
+  if (input.previewPlayerId !== null && !canPlayerSeeEffect(input.scene, effect, input.previewPlayerId)) return;
   const origin = effectOrigin(input, effect);
   if (!origin) return;
   if (!litEnoughToDraw(input, effect.layer, origin)) return;
@@ -951,6 +1009,22 @@ function drawEffectLabelAndAnchor(input: RenderInput, effect: MapEffect, origin:
     ctx.fillStyle = '#e9e4d9';
     ctx.fillText(effect.label, origin.x, origin.y);
     ctx.restore();
+  }
+
+  // Alucinacao: contorno tracejado da propria forma e o olho no centro.
+  if (input.role === 'GM' && isRestricted(effect)) {
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = HALLUCINATION_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    if (effect.kind === 'circle' || effect.kind === 'cone' || effect.kind === 'rect' || effect.kind === 'image') {
+      traceEffectShape(ctx, effect.kind === 'image' ? { ...effect, kind: 'rect' } : effect, origin, input.scene.grid.size);
+      ctx.stroke();
+    }
+    ctx.restore();
+    const offset = effect.kind === 'text' ? effect.fontSize * 0.7 : 0;
+    drawHallucinationEye(input, origin.x, origin.y - offset);
   }
 
   // Marcador da ancora: deixa claro se o efeito segue um token ou esta solto.

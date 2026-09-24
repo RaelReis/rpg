@@ -1,4 +1,4 @@
-import type { Ack, Result, Scene, Token } from '@rpg/shared';
+import { inVisibleTo, type Ack, type Result, type Scene, type Token } from '@rpg/shared';
 
 import type { TypedSocket } from '../broadcast.js';
 import type { Viewer } from '../filter.js';
@@ -69,6 +69,7 @@ export function canMoveToken(ctx: Ctx, token: Token): boolean {
   if (isGm(ctx)) return true;
   if (token.locked) return false;
   if (token.gmOnly || token.visibility === 'hidden') return false;
+  if (!inVisibleTo(token, ctx.viewer.role, ctx.viewer.playerId)) return false;
   if (ctx.room.state.settings.playersMoveOwnTokensOnly) {
     return token.ownerPlayerId === ctx.viewer.playerId;
   }

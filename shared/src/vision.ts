@@ -6,6 +6,7 @@ import {
   cellHeight,
   tokenCell,
 } from './grid.js';
+import { emitsVision, inVisibleTo } from './perception.js';
 import type { Cell, Point, Scene, Token, Role, Wall } from './types.js';
 
 /**
@@ -223,6 +224,7 @@ export function tokenVisionCells(
 export function visionSources(scene: Scene, playerId: string | null): Token[] {
   return scene.tokens.filter((t) => {
     if (t.layer !== 3) return false;
+    if (!emitsVision(t)) return false;
     if (t.lightRadius > 0 && !t.gmOnly) return true;
     return t.ownerPlayerId !== null && t.ownerPlayerId === playerId && t.visionRadius > 0;
   });
@@ -310,6 +312,8 @@ export function canPlayerSeeToken(
   // enxerga do cenario, e nunca deve revelar o que o mestre escondeu.
   if (vision.gm) return true;
   if (token.gmOnly || token.visibility === 'hidden') return false;
+  // Alucinacao destinada a outra pessoa: nem a neblina aberta a revela.
+  if (!inVisibleTo(token, 'PLAYER', playerId)) return false;
   if (token.ownerPlayerId !== null && token.ownerPlayerId === playerId) return true;
   if (vision.unrestricted || scene.fog.mode === 'off') return true;
 
@@ -336,6 +340,7 @@ export function newlyExploredCells(scene: Scene): string[] {
 
   for (const token of scene.tokens) {
     if (token.layer !== 3) continue;
+    if (!emitsVision(token)) continue;
     const isPlayerEye = token.ownerPlayerId !== null && token.visionRadius > 0;
     const isLight = token.lightRadius > 0 && !token.gmOnly;
     if (!isPlayerEye && !isLight) continue;

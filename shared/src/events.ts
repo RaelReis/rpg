@@ -127,6 +127,42 @@ export interface MapPing {
   focus: boolean;
 }
 
+/**
+ * Mensagem individual: texto no centro da tela de um ou mais jogadores
+ * ("Voce ouve alguem chamar seu nome.").
+ *
+ * E efemera de proposito: nao entra no chat nem no banco, e quem estava
+ * offline nao a recebe depois — uma voz que chama o nome de alguem uma hora
+ * mais tarde ja nao assusta ninguem. O mestre e avisado em vez disso.
+ */
+export type ScreenMessageStyle = 'neutral' | 'whisper' | 'threat';
+
+export interface ScreenMessage {
+  id: string;
+  text: string;
+  /** Muda so a tipografia e a cor. */
+  style: ScreenMessageStyle;
+  /** Tempo na tela, em ms. `null` = ate o jogador fechar. */
+  durationMs: number | null;
+}
+
+export interface ScreenMessageRequest {
+  playerIds: string[];
+  text: string;
+  style: ScreenMessageStyle;
+  durationMs: number | null;
+}
+
+/** O que aconteceu com cada destinatario, para o mestre saber se chegou. */
+export interface ScreenMessageReport {
+  /** A tela do jogador confirmou que mostrou. */
+  delivered: string[];
+  /** Sem conexao aberta: nada foi enviado nem ficou guardado. */
+  offline: string[];
+  /** Conectado, mas nao confirmou a tempo (aba travada, rede ruim). */
+  unconfirmed: string[];
+}
+
 export interface ChatSendPayload {
   text: string;
   whisper: boolean;
@@ -205,6 +241,8 @@ export interface ClientToServerEvents {
   'handout:present': (payload: { handoutId: string }, ack: Ack<null>) => void;
 
   'chat:send': (payload: ChatSendPayload, ack: Ack<null>) => void;
+  /** Mensagem individual na tela de jogadores escolhidos (so o mestre). */
+  'message:send': (payload: ScreenMessageRequest, ack: Ack<ScreenMessageReport>) => void;
   'map:ping': (payload: Omit<MapPing, 'playerName' | 'color'>) => void;
   // Nao ha evento de cursor: ninguem, nem o mestre, ve o ponteiro dos outros.
   // O ping continua sendo o jeito deliberado de apontar algo no mapa.
@@ -236,6 +274,8 @@ export interface ServerToClientEvents {
   'table:renamed': (name: string) => void;
 
   'chat:message': (message: ChatMessage) => void;
+  /** O cliente confirma pelo ack que a mensagem apareceu na tela. */
+  'message:shown': (message: ScreenMessage, ack: (shown: boolean) => void) => void;
   'map:ping': (ping: MapPing) => void;
 
   'notice': (payload: { level: 'info' | 'warn' | 'error'; message: string }) => void;
@@ -267,5 +307,8 @@ export const ALLOWED_IMAGE_MIMES = [
 export const MAX_IMAGE_DIMENSION = 8192;
 export const MAX_CHAT_LENGTH = 2000;
 export const CHAT_HISTORY_SIZE = 200;
+export const MAX_SCREEN_MESSAGE_LENGTH = 400;
+/** Duracao maxima de uma mensagem temporizada; alem disso, use "ate fechar". */
+export const MAX_SCREEN_MESSAGE_MS = 120_000;
 
 export type { Cell, Layer };

@@ -153,6 +153,13 @@ export interface Token {
   label: string;
   locked: boolean;
   conditions: string[];
+  /**
+   * Alucinacao: jogadores que enxergam este token. `null` = todos (o normal).
+   *
+   * Quem nao esta na lista nao recebe o token. Um token restrito nao tem dono
+   * e nao emite luz nem visao — ver `perception.ts`.
+   */
+  visibleTo: string[] | null;
 }
 
 /** Imagem colada no mapa nas camadas 1 e 2 (terreno, moveis, paredes). */
@@ -231,6 +238,8 @@ export interface MapEffect {
   colorAlt: string;
   /** Multiplicador de velocidade da animacao. 0 congela o efeito. */
   speed: number;
+  /** Alucinacao: jogadores que enxergam o efeito. `null` = todos. */
+  visibleTo: string[] | null;
 }
 
 export type WeatherKind = 'none' | 'rain' | 'snow' | 'fog' | 'ash';

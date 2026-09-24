@@ -32,7 +32,16 @@ import { saveImage } from './uploads.js';
  * entram de novo pelo codigo.
  */
 
-export const BACKUP_FORMAT = 1;
+/**
+ * Versao do arquivo. Sobe quando o conteudo ganha algo que uma versao antiga
+ * do importador nao saberia tratar; arquivos de versoes anteriores continuam
+ * sendo aceitos (ver `MIN_BACKUP_FORMAT`).
+ *
+ * 1 — formato original.
+ * 2 — tokens e efeitos com `visibleTo` (alucinacoes).
+ */
+export const BACKUP_FORMAT = 2;
+const MIN_BACKUP_FORMAT = 1;
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
 const MAX_EMBEDDED_BYTES = 120 * 1024 * 1024;
@@ -125,8 +134,14 @@ export async function importTable(
   gmPassword: string,
 ): Promise<{ room: Room; gmToken: string; gmPlayerId: string; missingAssets: number }> {
   if (!backup || typeof backup !== 'object') throw new BackupError('Arquivo vazio ou ilegivel.');
-  if (backup.format !== BACKUP_FORMAT) {
-    throw new BackupError(`Formato de backup incompativel (esperado ${BACKUP_FORMAT}).`);
+  if (
+    typeof backup.format !== 'number' ||
+    backup.format < MIN_BACKUP_FORMAT ||
+    backup.format > BACKUP_FORMAT
+  ) {
+    throw new BackupError(
+      `Formato de backup incompativel (aceitos: ${MIN_BACKUP_FORMAT} a ${BACKUP_FORMAT}).`,
+    );
   }
   if (!Array.isArray(backup.scenes) || backup.scenes.length === 0) {
     throw new BackupError('O backup nao contem nenhuma cena.');
@@ -266,12 +281,21 @@ async function buildImportedTable(
     if (old?.id && fresh) sheetByOldId.set(old.id, fresh.id);
   });
 
+  // Alucinacoes continuam alucinacoes, mas a lista de quem as ve apontava
+  // para jogadores do backup. Ela volta vazia — ninguem ve ate o mestre
+  // escolher de novo —, em vez de virar `null`, que as mostraria a todos.
+  const unseen = <T extends { visibleTo: string[] | null }>(o: T): T =>
+    o.visibleTo ? { ...o, visibleTo: [] } : o;
+
   for (const scene of room.state.scenes) {
-    scene.tokens = scene.tokens.map((t) => ({
-      ...t,
-      ownerPlayerId: null,
-      sheetId: t.sheetId ? (sheetByOldId.get(t.sheetId) ?? null) : null,
-    }));
+    scene.tokens = scene.tokens.map((t) =>
+      unseen({
+        ...t,
+        ownerPlayerId: null,
+        sheetId: t.sheetId ? (sheetByOldId.get(t.sheetId) ?? null) : null,
+      }),
+    );
+    scene.effects = scene.effects.map(unseen);
     room.touchScene(scene.id);
   }
 

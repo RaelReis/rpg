@@ -1,6 +1,7 @@
 export * from './types.js';
 export * from './grid.js';
 export * from './vision.js';
+export * from './perception.js';
 export * from './sheet.js';
 export * from './dice.js';
 export * from './defaults.js';

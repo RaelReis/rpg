@@ -47,6 +47,7 @@ import {
   updateScene,
   updateSettings,
 } from './handlers/scene.js';
+import { sendScreenMessage } from './handlers/messages.js';
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
   assignSheet,
@@ -260,6 +261,7 @@ export function registerSocketHandlers(io: TypedServer): void {
 
     // -- social ------------------------------------------------------------
     socket.on('chat:send', member(sendChat));
+    socket.on('message:send', gm(sendScreenMessage));
     socket.on('player:update', member(updatePlayer));
     socket.on('player:kick', gm(kickPlayer));
     socket.on('player:promote', gm(promotePlayer));

@@ -303,6 +303,13 @@ function registerListeners(s: ClientSocket): void {
   s.on('table:renamed', (name) => store().setTableName(name));
 
   s.on('chat:message', (message) => store().addChatMessage(message));
+
+  // O ack e a confirmacao de entrega que o mestre ve: so responde depois de
+  // a mensagem estar no estado que a tela desenha.
+  s.on('message:shown', (message, ack) => {
+    store().showScreenMessage(message);
+    if (typeof ack === 'function') ack(true);
+  });
   s.on('map:ping', (ping) => store().addPing(ping));
 
   s.on('notice', ({ level, message }) => store().notify(level, message));

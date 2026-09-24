@@ -13,6 +13,7 @@ import {
   type Player,
   type Point,
   type Scene,
+  type ScreenMessage,
   type Session,
   type Sheet,
   type SheetTemplate,
@@ -173,6 +174,13 @@ interface AppState {
   openHandoutId: string | null;
   /** Mensagens de chat chegadas enquanto a aba estava em outro painel. */
   unreadChat: number;
+  /** Mensagens individuais do mestre na tela deste jogador. Nao persistem. */
+  screenMessages: ScreenMessage[];
+  /**
+   * Janela de mensagem individual aberta pelo mestre, com os destinatarios
+   * ja marcados. `null` = fechada.
+   */
+  messageComposer: string[] | null;
 
   // --- acoes de sessao
   setSession(session: Session | null): void;
@@ -234,6 +242,9 @@ interface AppState {
   openTemplateEditor(open: boolean): void;
   openSheetModal(sheetId: string | null): void;
   openHandout(handoutId: string | null): void;
+  showScreenMessage(message: ScreenMessage): void;
+  dismissScreenMessage(id: string): void;
+  openMessageComposer(playerIds: string[] | null): void;
 }
 
 let noticeSeq = 0;
@@ -288,6 +299,8 @@ export const useStore = create<AppState>((set, get) => ({
   sheetModalId: null,
   openHandoutId: null,
   unreadChat: 0,
+  screenMessages: [],
+  messageComposer: null,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -317,6 +330,8 @@ export const useStore = create<AppState>((set, get) => ({
       undoStack: [],
       redoStack: [],
       wallDraft: [],
+      screenMessages: [],
+      messageComposer: null,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -602,6 +617,13 @@ export const useStore = create<AppState>((set, get) => ({
   openTemplateEditor: (templateEditorOpen) => set({ templateEditorOpen }),
   openSheetModal: (sheetModalId) => set({ sheetModalId }),
   openHandout: (openHandoutId) => set({ openHandoutId }),
+
+  // Mais de tres na tela ao mesmo tempo viram ruido: a mais antiga cede.
+  showScreenMessage: (message) =>
+    set((s) => ({ screenMessages: [...s.screenMessages.filter((m) => m.id !== message.id), message].slice(-3) })),
+  dismissScreenMessage: (id) =>
+    set((s) => ({ screenMessages: s.screenMessages.filter((m) => m.id !== id) })),
+  openMessageComposer: (messageComposer) => set({ messageComposer }),
 }));
 
 // ---------------------------------------------------------------------------

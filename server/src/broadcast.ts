@@ -1,19 +1,23 @@
 import type { Server, Socket } from 'socket.io';
-import type {
-  Asset,
-  ClientToServerEvents,
-  MapEffect,
-  Player,
-  Scene,
-  ServerToClientEvents,
-  Tile,
-  Token,
-  Wall,
+import {
+  canPlayerSeeEffect,
+  type Asset,
+  type ClientToServerEvents,
+  type MapEffect,
+  type Player,
+  type Scene,
+  type ServerToClientEvents,
+  type TableState,
+  type Tile,
+  type Token,
+  type Wall,
 } from '@rpg/shared';
 
 import {
   assetIdsOfScene,
+  initiativeForViewer,
   playersWithPortraits,
+  presentEffect,
   sceneForViewer,
   stateForViewer,
   tokenForViewer,
@@ -28,6 +32,12 @@ export interface SocketData {
   viewer: Viewer;
   /** Cache do que este socket enxerga, para emitir apenas o delta. */
   visibleTokens: Set<string>;
+  /**
+   * Efeitos que este socket recebeu. Serve para mandar a remocao so a quem
+   * tinha o efeito: avisar "o efeito X sumiu" a quem nunca o viu entregaria
+   * o id de uma alucinacao destinada a outra pessoa.
+   */
+  visibleEffects: Set<string>;
   currentSceneId: string | null;
   /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
   knownAssets: Set<string>;
@@ -101,14 +111,27 @@ export function syncAssets(
 // Envio de estado
 // ---------------------------------------------------------------------------
 
-export function sendFullState(room: Room, socket: TypedSocket): void {
+/**
+ * Monta o estado do participante e sincroniza os caches do socket com o que
+ * vai ser enviado.
+ *
+ * Sem isto os caches ficam vazios e o servidor passa a achar que o jogador
+ * nao enxerga nada: para de lhe mandar `token:moved`, e os tokens congelam na
+ * tela dele enquanto continuam se movendo para os outros.
+ */
+export function stateWithCaches(room: Room, socket: TypedSocket): TableState {
   const state = stateForViewer(room, socket.data.viewer);
   const scene = state.scenes.find((s) => s.id === state.activeSceneId) ?? state.scenes[0] ?? null;
 
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
+  socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
   socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
-  socket.emit('table:state', state);
+  return state;
+}
+
+export function sendFullState(room: Room, socket: TypedSocket): void {
+  socket.emit('table:state', stateWithCaches(room, socket));
 }
 
 export function sendFullStateToAll(room: Room): void {
@@ -126,6 +149,7 @@ export function pushScene(room: Room, scene: Scene): void {
     const filtered = sceneForViewer(room, scene, viewer);
     socket.data.currentSceneId = filtered.id;
     socket.data.visibleTokens = new Set(filtered.tokens.map((t) => t.id));
+    socket.data.visibleEffects = new Set(filtered.effects.map((e) => e.id));
     syncAssets(room, socket, assetIdsOfScene(filtered));
     socket.emit('scene:patch', { sceneId: scene.id, patch: filtered });
   }
@@ -220,9 +244,11 @@ export function emitTokenUpsert(room: Room, scene: Scene, token: Token): void {
 
 export function emitTokenRemoved(room: Room, scene: Scene, tokenId: string): void {
   for (const socket of socketsOf(room)) {
-    if (socket.data.viewer.role !== 'GM' && scene.id !== room.state.activeSceneId) continue;
-    socket.data.visibleTokens?.delete(tokenId);
-    socket.emit('tokens:patch', { sceneId: scene.id, remove: [tokenId] });
+    const gm = socket.data.viewer.role === 'GM';
+    if (!gm && scene.id !== room.state.activeSceneId) continue;
+    // So quem tinha o token fica sabendo que ele saiu: o aviso carrega o id.
+    const had = socket.data.visibleTokens?.delete(tokenId) ?? false;
+    if (gm || had) socket.emit('tokens:patch', { sceneId: scene.id, remove: [tokenId] });
   }
 }
 
@@ -241,14 +267,26 @@ export function emitTiles(room: Room, scene: Scene, upsert: Tile[], remove: stri
 
 export function emitEffects(room: Room, scene: Scene, upsert: MapEffect[], remove: string[] = []): void {
   for (const socket of socketsOf(room)) {
-    const gm = socket.data.viewer.role === 'GM';
-    if (!gm && scene.id !== room.state.activeSceneId) continue;
-    const hidden = (e: MapEffect) => e.gmOnly || e.visibility === 'hidden';
-    const visible = gm ? upsert : upsert.filter((e) => !hidden(e));
-    const hide = gm ? remove : [...remove, ...upsert.filter(hidden).map((e) => e.id)];
+    const viewer = socket.data.viewer;
+    if (viewer.role === 'GM') {
+      socket.emit('effects:patch', { sceneId: scene.id, upsert, remove });
+      continue;
+    }
+    if (scene.id !== room.state.activeSceneId) continue;
+
+    const known = (socket.data.visibleEffects ??= new Set());
+    const visible = upsert.filter((e) => canPlayerSeeEffect(scene, e, viewer.playerId));
+    const hide = [
+      ...remove,
+      ...upsert.filter((e) => !visible.includes(e)).map((e) => e.id),
+    ].filter((id) => known.has(id));
+
+    for (const e of visible) known.add(e.id);
+    for (const id of hide) known.delete(id);
+
     if (visible.length || hide.length) {
       syncAssets(room, socket, visible.map((e) => e.assetId));
-      socket.emit('effects:patch', { sceneId: scene.id, upsert: visible, remove: hide });
+      socket.emit('effects:patch', { sceneId: scene.id, upsert: visible.map(presentEffect), remove: hide });
     }
   }
 }
@@ -289,15 +327,7 @@ export function emitPlayers(room: Room): void {
 
 export function emitInitiative(room: Room): void {
   for (const socket of socketsOf(room)) {
-    const viewer = socket.data.viewer;
-    const initiative =
-      viewer.role === 'GM'
-        ? room.state.initiative
-        : {
-            ...room.state.initiative,
-            entries: room.state.initiative.entries.filter((e) => !e.hiddenFromPlayers),
-          };
-    socket.emit('initiative:patch', initiative);
+    socket.emit('initiative:patch', initiativeForViewer(room, socket.data.viewer));
   }
 }
 

@@ -15,10 +15,10 @@ import {
   emitPlayers,
   roomChannel,
   sendFullState,
+  stateWithCaches,
   type TypedSocket,
 } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
-import { stateForViewer } from '../filter.js';
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import { spawnCharacterToken } from './characters.js';
 import { rooms, type Room } from '../room.js';
@@ -72,26 +72,6 @@ async function createSheetForPlayer(room: Room, playerId: string, name: string):
   return sheet;
 }
 
-/**
- * Monta o estado do participante e sincroniza o cache de visibilidade do
- * socket com o que acabou de ser enviado.
- *
- * Sem isto, `attach` zera o cache e o ack entrega os tokens sem registra-los:
- * o servidor passa a achar que este jogador nao enxerga nada e para de lhe
- * mandar `token:moved`. O sintoma e cruel — depois de uma reconexao os tokens
- * congelam na tela do jogador, mas continuam se movendo para todos os outros.
- */
-function stateWithVisibilityCache(room: Room, socket: TypedSocket): TableState {
-  const state = stateForViewer(room, socket.data.viewer);
-  const scene =
-    state.scenes.find((s) => s.id === state.activeSceneId) ?? state.scenes[0] ?? null;
-
-  socket.data.currentSceneId = scene?.id ?? null;
-  socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
-  socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
-  return state;
-}
-
 function attach(socket: TypedSocket, room: Room, playerId: string): void {
   const player = room.player(playerId);
   if (!player) return;
@@ -99,6 +79,7 @@ function attach(socket: TypedSocket, room: Room, playerId: string): void {
   socket.data.tableId = room.state.id;
   socket.data.viewer = { playerId, role: player.role };
   socket.data.visibleTokens = new Set();
+  socket.data.visibleEffects = new Set();
   socket.data.knownAssets = new Set();
   socket.data.currentSceneId = room.state.activeSceneId;
 
@@ -205,7 +186,7 @@ export async function handleJoin(
     name,
   };
 
-  ok(ack, { session, state: stateWithVisibilityCache(room, socket) });
+  ok(ack, { session, state: stateWithCaches(room, socket) });
   emitPlayers(room);
 }
 
@@ -234,7 +215,7 @@ export async function handleResume(
     name: player.name,
   };
 
-  ok(ack, { session, state: stateWithVisibilityCache(room, socket) });
+  ok(ack, { session, state: stateWithCaches(room, socket) });
   emitPlayers(room);
 }
 

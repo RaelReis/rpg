@@ -838,12 +838,17 @@ async function main() {
   check('jogador nao cria material', playerCreateRefused);
 
   console.log('\n== 15d. Backup da mesa ==');
+  const exportedVision = await rpc(gm, 'token:create', {
+    sceneId,
+    token: { name: 'Visao exportada', x: 700, y: 700, visibleTo: [playerId] },
+  });
   const exportRes = await fetch(`${BASE}/api/tables/${gmSession.tableId}/export?assets=0`, {
     headers: { 'x-session-token': gmSession.token },
   });
   check('mestre exporta a mesa', exportRes.ok);
   const backup = await exportRes.json();
   check('backup traz as cenas', Array.isArray(backup.scenes) && backup.scenes.length > 0);
+  check('backup declara a versao do formato', backup.format === 2, `format=${backup.format}`);
   check('backup traz as fichas', Array.isArray(backup.sheets) && backup.sheets.length > 0);
   check(
     'backup NAO carrega credenciais',
@@ -881,7 +886,37 @@ async function main() {
     'materiais restaurados voltam sem compartilhamento',
     restoredState.handouts.every((h) => !h.sharedWithAll && h.sharedWith.length === 0),
   );
+  const restoredVision = restoredState.scenes
+    .flatMap((sc) => sc.tokens)
+    .find((t) => t.name === exportedVision.name);
+  check(
+    'alucinacao restaurada continua restrita, sem ninguem na lista',
+    Array.isArray(restoredVision?.visibleTo) && restoredVision.visibleTo.length === 0,
+    JSON.stringify(restoredVision?.visibleTo),
+  );
   restored.disconnect();
+  await rpc(gm, 'token:delete', { sceneId, tokenId: exportedVision.id });
+
+  // Arquivo gerado antes das alucinacoes: formato 1, tokens sem o campo.
+  const legacyBackup = JSON.parse(JSON.stringify(backup));
+  legacyBackup.format = 1;
+  for (const sc of legacyBackup.scenes) for (const t of sc.tokens) delete t.visibleTo;
+  const legacyRes = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: legacyBackup, gmName: 'Mestre antigo' }),
+  });
+  const legacyImported = await legacyRes.json();
+  check('backup no formato antigo (1) continua importando', legacyRes.ok, JSON.stringify(legacyImported).slice(0, 120));
+  if (legacyRes.ok) {
+    const legacySocket = await connect();
+    const legacyState = (await rpc(legacySocket, 'session:resume', { token: legacyImported.session.token })).state;
+    check(
+      'tokens antigos chegam sem restricao de visibilidade',
+      legacyState.scenes.flatMap((sc) => sc.tokens).every((t) => t.visibleTo === null),
+    );
+    legacySocket.disconnect();
+  }
 
   const badImport = await fetch(`${BASE}/api/tables/import`, {
     method: 'POST',
@@ -1070,6 +1105,157 @@ async function main() {
   check('o retrato do personagem chega a lista de presenca dos outros', !!(await bobSeesFace));
   check('com os dados da imagem, para nao aparecer quebrado', !!(await bobGetsFaceAsset));
   check('o token do personagem ganha o retrato', !!(await tokenGetsFace));
+
+  console.log('\n== 23. Alucinacoes ==');
+  await rpc(gm2, 'scene:update', { sceneId: scene2, patch: { fog: { mode: 'off' } } });
+  await sleep(200);
+
+  // Todo o trafego que chega ao Bob, para procurar o id no fio — e nao so na tela.
+  const bobTraffic = [];
+  const recordBob = (event, ...args) => bobTraffic.push(JSON.stringify([event, args]));
+  bob.onAny(recordBob);
+
+  const aliceSeesVision = waitFor(alice, 'tokens:patch', (p) => p.upsert?.some((t) => t.name === 'Vulto'));
+  const vulto = await rpc(gm2, 'token:create', {
+    sceneId: scene2,
+    token: { name: 'Vulto', x: 6 * G, y: 6 * G, visibleTo: [aliceId], lightRadius: 3 },
+  });
+  check('a alucinacao chega a quem esta na lista', !!(await aliceSeesVision));
+  check('o servidor guarda a lista', JSON.stringify(vulto.visibleTo) === JSON.stringify([aliceId]));
+
+  const aura = await rpc(gm2, 'effect:create', {
+    sceneId: scene2,
+    effect: { kind: 'circle', anchor: 'token', tokenId: vulto.id, label: 'Aura do vulto' },
+  });
+  const sussurro = await rpc(gm2, 'effect:create', {
+    sceneId: scene2,
+    effect: { kind: 'text', anchor: 'free', x: 300, y: 300, label: 'Sangue na parede', visibleTo: [aliceId] },
+  });
+  await rpc(gm2, 'token:move', { sceneId: scene2, tokenId: vulto.id, x: 7 * G, y: 6 * G, dragging: false });
+  await rpc(gm2, 'initiative:add', { entry: { name: 'Vulto', tokenId: vulto.id, value: 30 } });
+  await rpc(gm2, 'token:update', { sceneId: scene2, tokenId: vulto.id, patch: { label: 'olhos vermelhos' } });
+
+  let ownerRefused = '';
+  try {
+    await rpc(gm2, 'token:update', { sceneId: scene2, tokenId: vulto.id, patch: { ownerPlayerId: aliceId } });
+  } catch (err) {
+    ownerRefused = err.message;
+  }
+  check('alucinacao nao aceita dono', ownerRefused.includes('dono'), ownerRefused || 'aceitou');
+
+  let ownedRefused = false;
+  try {
+    await rpc(gm2, 'token:update', { sceneId: scene2, tokenId: aliceToken.id, patch: { visibleTo: [bobId] } });
+  } catch {
+    ownedRefused = true;
+  }
+  check('token com dono nao vira alucinacao', ownedRefused);
+
+  await sleep(300);
+  const bobResumed = await rpc(bob, 'session:resume', { token: bobJoin.session.token });
+  const bobWire = bobTraffic.join('\n') + JSON.stringify(bobResumed);
+  check('o id da alucinacao NUNCA aparece no trafego do outro jogador', !bobWire.includes(vulto.id));
+  check('nem o nome dela', !bobWire.includes('Vulto'));
+  check('efeito preso a alucinacao tambem nao', !bobWire.includes(aura.id));
+  check(
+    'efeito com lista propria tambem nao',
+    !bobWire.includes(sussurro.id) && !bobWire.includes('Sangue na parede'),
+  );
+
+  const aliceResumed = (await rpc(alice, 'session:resume', { token: aliceJoin.session.token })).state;
+  const aliceScene = aliceResumed.scenes.find((sc) => sc.id === scene2);
+  const aliceVulto = aliceScene.tokens.find((t) => t.id === vulto.id);
+  check('quem esta na lista recebe o token', !!aliceVulto);
+  check(
+    'mas nao a lista, nem a luz: para ela e um token comum',
+    aliceVulto?.visibleTo === null && aliceVulto?.lightRadius === 0,
+    JSON.stringify({ visibleTo: aliceVulto?.visibleTo, light: aliceVulto?.lightRadius }),
+  );
+  check(
+    'nem o efeito entrega que e alucinacao',
+    aliceScene.effects.find((e) => e.id === sussurro.id)?.visibleTo === null,
+  );
+  check(
+    'e os efeitos',
+    aliceScene.effects.some((e) => e.id === aura.id) && aliceScene.effects.some((e) => e.id === sussurro.id),
+  );
+  check('e a entrada da iniciativa', aliceResumed.initiative.entries.some((e) => e.tokenId === vulto.id));
+
+  // Troca a lista: sai da tela de quem saiu, entra na de quem entrou.
+  const aliceLoses = waitFor(alice, 'tokens:patch', (p) => p.remove?.includes(vulto.id));
+  const aliceLosesAura = waitFor(alice, 'effects:patch', (p) => p.remove?.includes(aura.id));
+  const bobGains = waitFor(bob, 'tokens:patch', (p) => p.upsert?.some((t) => t.id === vulto.id));
+  const bobGainsAura = waitFor(bob, 'effects:patch', (p) => p.upsert?.some((e) => e.id === aura.id));
+  await rpc(gm2, 'token:update', { sceneId: scene2, tokenId: vulto.id, patch: { visibleTo: [bobId] } });
+  check('quem saiu da lista perde o token', !!(await aliceLoses));
+  check('e o efeito preso a ele', !!(await aliceLosesAura));
+  check('quem entrou na lista recebe o token', !!(await bobGains));
+  check('e o efeito preso a ele tambem', !!(await bobGainsAura));
+
+  // A exclusao so e anunciada a quem tinha o objeto.
+  const aliceTraffic = [];
+  const recordAlice = (event, ...args) => aliceTraffic.push(JSON.stringify([event, args]));
+  alice.onAny(recordAlice);
+  const bobLoses = waitFor(bob, 'tokens:patch', (p) => p.remove?.includes(vulto.id));
+  await rpc(gm2, 'token:delete', { sceneId: scene2, tokenId: vulto.id });
+  check('quem via recebe a remocao', !!(await bobLoses));
+  await sleep(200);
+  check('quem nao via nao fica sabendo do id na exclusao', !aliceTraffic.join('\n').includes(vulto.id));
+  await rpc(gm2, 'effect:delete', { sceneId: scene2, effectId: sussurro.id });
+  bob.offAny(recordBob);
+  alice.offAny(recordAlice);
+  await rpc(gm2, 'initiative:update', { entries: [] });
+
+  console.log('\n== 24. Mensagem individual ==');
+  const bobMessages = [];
+  bob.on('message:shown', (m, cb) => {
+    bobMessages.push(m);
+    cb?.(true);
+  });
+  const aliceMessage = new Promise((resolve) => {
+    alice.once('message:shown', (m, cb) => {
+      cb?.(true);
+      resolve(m);
+    });
+  });
+  const report = await rpc(gm2, 'message:send', {
+    playerIds: [aliceId],
+    text: 'Voce ouve alguem chamar seu nome.',
+    style: 'whisper',
+    durationMs: 5000,
+  });
+  const shown = await aliceMessage;
+  check('a mensagem aparece para o destinatario', shown?.text === 'Voce ouve alguem chamar seu nome.');
+  check('com estilo e duracao', shown?.style === 'whisper' && shown?.durationMs === 5000);
+  check('o mestre ve que foi entregue', report.delivered.includes(aliceId), JSON.stringify(report));
+  await sleep(200);
+  check('quem nao e destinatario nao recebe', bobMessages.length === 0);
+
+  const carol = await connect();
+  const carolJoin = await rpc(carol, 'session:join', { code: fresh.session.tableCode, name: 'Carol' });
+  carol.disconnect();
+  await sleep(300);
+  const offlineReport = await rpc(gm2, 'message:send', {
+    playerIds: [carolJoin.session.playerId],
+    text: 'Ninguem ouve.',
+    style: 'neutral',
+    durationMs: null,
+  });
+  check(
+    'jogador offline e avisado ao mestre, sem enfileirar',
+    offlineReport.offline.includes(carolJoin.session.playerId),
+  );
+  check('e nao conta como entregue', offlineReport.delivered.length === 0);
+
+  let playerMessageRefused = false;
+  try {
+    await rpc(alice, 'message:send', { playerIds: [bobId], text: 'oi', style: 'neutral', durationMs: 4000 });
+  } catch {
+    playerMessageRefused = true;
+  }
+  check('jogador nao envia mensagem individual', playerMessageRefused);
+  const chatAfter = (await rpc(gm2, 'session:resume', { token: fresh.session.token })).state.chat;
+  check('a mensagem nao entra no chat', !chatAfter.some((m) => m.text.includes('chamar seu nome')));
 
   alice.disconnect();
   bob.disconnect();

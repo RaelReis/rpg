@@ -12,7 +12,7 @@ import {
   type Token,
 } from '@rpg/shared';
 
-import { act } from '../../net/socket';
+import { act, rpc } from '../../net/socket';
 import { activeScene, findAsset, useStore } from '../../state/store';
 import {
   ColorField,
@@ -98,6 +98,7 @@ export function TokensPanel(): JSX.Element {
                           {owner && <span className="sub"> · {owner.name}</span>}
                         </span>
                         {token.gmOnly && <span className="tag gm">MJ</span>}
+                        {token.visibleTo && <span className="tag hallucination">alucinacao</span>}
                         {token.visibility === 'hidden' && <span className="tag">oculto</span>}
                         {token.visionRadius > 0 && <span className="tag">👁 {token.visionRadius}</span>}
                       </button>
@@ -200,6 +201,20 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
         onChange={(v) => patch({ gmOnly: v })}
       />
 
+      <VisibleToField
+        value={token.visibleTo}
+        blockedHint={
+          token.ownerPlayerId
+            ? 'Um token com dono nao pode ser alucinacao: tire o dono em "Controlado por" primeiro.'
+            : undefined
+        }
+        onChange={(next) =>
+          changeVisibleTo(token.visibleTo, next, 'token', (visibleTo) =>
+            rpc('token:update', { sceneId, tokenId: token.id, patch: { visibleTo } }),
+          )
+        }
+      />
+
       <div className="grid-2">
         <NumberField
           label="Tamanho"
@@ -246,6 +261,7 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
 
       <SelectField
         label="Controlado por"
+        disabled={token.visibleTo !== null}
         value={token.ownerPlayerId ?? ''}
         options={[
           { value: '', label: 'Mestre' },
@@ -285,8 +301,9 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
         />
       </div>
       <span className="hint">
-        A visao serve ao dono do token. A luz revela para todos os jogadores — e a tocha na mao de
-        alguem iluminando a sala inteira.
+        {token.visibleTo
+          ? 'Alucinacoes nao emitem luz nem visao: os valores ficam guardados e voltam a valer quando o token for visivel para todos.'
+          : 'A visao serve ao dono do token. A luz revela para todos os jogadores — e a tocha na mao de alguem iluminando a sala inteira.'}
       </span>
 
       <div className="divider" />
@@ -626,6 +643,7 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
           <span className="sub"> · {anchorLabel}</span>
         </span>
         {effect.gmOnly && <span className="tag gm">MJ</span>}
+        {effect.visibleTo && <span className="tag hallucination">alucinacao</span>}
         <button
           className="btn ghost sm"
           onClick={(e) => {
@@ -780,8 +798,109 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
             checked={effect.gmOnly}
             onChange={(v) => patch({ gmOnly: v })}
           />
+
+          <VisibleToField
+            value={effect.visibleTo}
+            onChange={(next) =>
+              changeVisibleTo(effect.visibleTo, next, 'efeito', (visibleTo) =>
+                rpc('effect:update', { sceneId, effectId: effect.id, patch: { visibleTo } }),
+              )
+            }
+          />
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Troca quem enxerga um token ou efeito, com desfazer.
+ *
+ * So entra no historico depois que o servidor aceitou: um token com dono
+ * recusa virar alucinacao, e desfazer uma recusa nao faria sentido.
+ */
+function changeVisibleTo(
+  before: string[] | null,
+  next: string[] | null,
+  what: string,
+  send: (visibleTo: string[] | null) => Promise<unknown>,
+): void {
+  const state = useStore.getState();
+  send(next)
+    .then(() =>
+      state.pushUndo({
+        label: `mudar quem ve o ${what}`,
+        undo: () => void send(before).catch((err: Error) => state.notify('error', err.message)),
+        redo: () => void send(next).catch((err: Error) => state.notify('error', err.message)),
+      }),
+    )
+    .catch((err: Error) => state.notify('error', err.message));
+}
+
+/**
+ * "Visivel para": todos, ou apenas os jogadores marcados.
+ *
+ * E o que transforma um token ou efeito em alucinacao. Quem nao esta marcado
+ * nao recebe o objeto — nem pelo inspecionador de rede.
+ */
+function VisibleToField({
+  value,
+  onChange,
+  blockedHint,
+}: {
+  value: string[] | null;
+  onChange: (next: string[] | null) => void;
+  /** Motivo para nao poder restringir agora; so vale enquanto nao restrito. */
+  blockedHint?: string;
+}): JSX.Element {
+  const table = useStore((s) => s.table);
+  const players = table?.players.filter((p) => p.role === 'PLAYER') ?? [];
+  const restricted = value !== null;
+  const blocked = !restricted && Boolean(blockedHint);
+
+  return (
+    <>
+      <SelectField
+        label="Visivel para"
+        value={restricted ? 'some' : 'all'}
+        disabled={blocked}
+        options={[
+          { value: 'all', label: 'Todos' },
+          { value: 'some', label: 'Apenas...' },
+        ]}
+        onChange={(v) => onChange(v === 'all' ? null : [])}
+      />
+      {blocked && <span className="hint">{blockedHint}</span>}
+      {restricted && (
+        <>
+          {players.length === 0 ? (
+            <span className="hint">Nenhum jogador na mesa ainda.</span>
+          ) : (
+            <div className="row wrap">
+              {players.map((p) => {
+                const on = value.includes(p.id);
+                return (
+                  <label key={p.id} className={`chip-check${on ? ' on' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => onChange(on ? value.filter((id) => id !== p.id) : [...value, p.id])}
+                    />
+                    <span className="swatch" style={{ background: p.color }} />
+                    {p.name}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <span className="hint">
+            Alucinacao: so os marcados recebem o objeto; sem ninguem marcado, so voce o ve. Ela nao
+            emite luz nem visao e nao pode ter dono, para que a neblina dos outros nao a denuncie.
+          </span>
+        </>
+      )}
+    </>
   );
 }

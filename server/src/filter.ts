@@ -1,12 +1,15 @@
 import {
+  canPlayerSeeEffect,
   canPlayerSeeToken,
   computeVision,
+  inVisibleTo,
   filterSheetForRole,
   filterTemplateForRole,
   type Asset,
   type ChatMessage,
   type Handout,
   type InitiativeState,
+  type MapEffect,
   type Player,
   type Role,
   type Scene,
@@ -47,10 +50,25 @@ export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionRes
   return out;
 }
 
-/** Aplica a semitransparencia de `dim` no que sai para o jogador. */
+/**
+ * Como o token sai para o jogador.
+ *
+ * `dim` vira semitransparencia. Uma alucinacao chega como um token comum: a
+ * lista ficaria no payload de quem a enxerga e contaria que ela e alucinacao —
+ * e quem mais a ve. Luz e visao saem zeradas pelo mesmo motivo, e para que o
+ * calculo local de visao (sem `strictVision`) de o mesmo resultado que o do
+ * servidor, que ignora as duas.
+ */
 function presentToken(token: Token): Token {
-  if (token.visibility === 'dim') return { ...token, opacity: Math.min(token.opacity, 0.45) };
-  return token;
+  let out = token;
+  if (token.visibility === 'dim') out = { ...out, opacity: Math.min(token.opacity, 0.45) };
+  if (token.visibleTo) out = { ...out, visibleTo: null, lightRadius: 0, visionRadius: 0 };
+  return out;
+}
+
+/** Efeito como sai para o jogador: sem a lista de quem o ve. */
+export function presentEffect(effect: MapEffect): MapEffect {
+  return effect.visibleTo ? { ...effect, visibleTo: null } : effect;
 }
 
 export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene {
@@ -64,7 +82,9 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
     .map(presentToken);
 
   const tiles = scene.tiles.filter((t) => !t.gmOnly);
-  const effects = scene.effects.filter((e) => !e.gmOnly && e.visibility !== 'hidden');
+  const effects = scene.effects
+    .filter((e) => canPlayerSeeEffect(scene, e, viewer.playerId))
+    .map(presentEffect);
 
   // Com strictVision as paredes ficam no servidor: elas descrevem a planta do
   // mapa e apareceriam inteiras no inspecionador de rede do navegador. O que
@@ -232,9 +252,32 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
   return handout.sharedWith.includes(viewer.playerId) ? handout : null;
 }
 
-function initiativeForViewer(initiative: InitiativeState, viewer: Viewer): InitiativeState {
+/**
+ * Ordem de iniciativa sem o que o jogador nao pode saber: entradas marcadas
+ * pelo mestre e as que apontam para uma alucinacao destinada a outra pessoa —
+ * a entrada carrega o nome e o id do token.
+ */
+export function initiativeForViewer(room: Room, viewer: Viewer): InitiativeState {
+  const initiative = room.state.initiative;
   if (viewer.role === 'GM') return initiative;
-  return { ...initiative, entries: initiative.entries.filter((e) => !e.hiddenFromPlayers) };
+
+  const restricted = new Map<string, Token>();
+  for (const scene of room.state.scenes) {
+    for (const token of scene.tokens) if (token.visibleTo) restricted.set(token.id, token);
+  }
+
+  const entries = initiative.entries.filter((e) => {
+    if (e.hiddenFromPlayers) return false;
+    const token = e.tokenId ? restricted.get(e.tokenId) : undefined;
+    return !token || inVisibleTo(token, viewer.role, viewer.playerId);
+  });
+
+  // A vez de uma entrada que ficou de fora nao pode apontar para ela.
+  const activeEntryId = entries.some((e) => e.id === initiative.activeEntryId)
+    ? initiative.activeEntryId
+    : null;
+
+  return { ...initiative, entries, activeEntryId };
 }
 
 function chatForViewer(chat: ChatMessage[], viewer: Viewer): ChatMessage[] {
@@ -269,7 +312,7 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
       .filter((h): h is Handout => h !== null),
     assets: assetsForViewer(room, viewer, scene, sheets, players),
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
-    initiative: initiativeForViewer(s.initiative, viewer),
+    initiative: initiativeForViewer(room, viewer),
     chat: chatForViewer(s.chat, viewer),
   };
 }

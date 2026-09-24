@@ -1586,3 +1586,139 @@ textarea {
     width: auto;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Mensagem individual do mestre
+   Camada de interface acima do mapa e fora da camera: o texto nao acompanha o
+   pan nem o zoom. O estilo muda so a tipografia e a cor.
+   --------------------------------------------------------------------------- */
+.screen-msgs {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  pointer-events: none;
+  z-index: 20;
+}
+.screen-msg {
+  max-width: min(720px, 90%);
+  padding: 18px 30px;
+  text-align: center;
+  border-radius: var(--radius-lg);
+  background: radial-gradient(ellipse at center, rgba(5, 6, 10, 0.78) 0%, rgba(5, 6, 10, 0.5) 70%, transparent 100%);
+  animation: screen-msg-in 900ms ease both;
+  transition: opacity 700ms ease, filter 700ms ease;
+}
+.screen-msg.still {
+  animation: none;
+}
+.screen-msg.leaving {
+  opacity: 0;
+  filter: blur(3px);
+}
+.screen-msg p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.screen-msg.neutral p {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1.35;
+  color: var(--ink);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+.screen-msg.whisper p {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 21px;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  color: #b9c3d6;
+  opacity: 0.88;
+  text-shadow: 0 0 18px rgba(150, 170, 210, 0.35), 0 2px 10px rgba(0, 0, 0, 0.9);
+}
+.screen-msg.threat p {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 30px;
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  color: #e0463c;
+  text-shadow: 0 0 22px rgba(170, 20, 20, 0.55), 0 2px 10px rgba(0, 0, 0, 0.95);
+}
+.screen-msg-close {
+  pointer-events: auto;
+  margin-top: 12px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(18, 20, 26, 0.85);
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.screen-msg-close:hover {
+  color: var(--ink);
+}
+@keyframes screen-msg-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(6px);
+  }
+}
+/* Previa dentro da janela do mestre: sem o fundo transparente do mapa. */
+.screen-msg-preview {
+  display: grid;
+  place-items: center;
+  min-height: 110px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--void);
+}
+.screen-msg-preview .screen-msg p {
+  font-size: 19px;
+}
+
+/* Caixa de marcar em forma de pilula, para listas curtas de pessoas. */
+.chip-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.chip-check input {
+  display: none;
+}
+.chip-check .swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.chip-check.on {
+  border-color: var(--brass-dim);
+  background: var(--brass-glow);
+  color: var(--ink);
+}
+
+/* Alucinacao: visivel so para alguns jogadores. */
+.tag.hallucination {
+  background: rgba(181, 139, 232, 0.12);
+  border-color: #58437a;
+  color: #b58be8;
+}

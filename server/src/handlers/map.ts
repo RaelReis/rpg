@@ -6,6 +6,7 @@ import {
   createWall,
   movementBlocked,
   newlyExploredCells,
+  sanitizeVisibleTo,
   snapTokenPosition,
   type Ack,
   type FogPaintPayload,
@@ -22,6 +23,7 @@ import {
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import {
   emitEffects,
+  emitInitiative,
   emitTiles,
   emitTokenMove,
   emitTokenRemoved,
@@ -54,6 +56,15 @@ function asLayer(v: unknown, fallback: Layer): Layer {
   return v === 1 || v === 2 || v === 3 || v === 4 ? v : fallback;
 }
 
+/** Lista de quem ve uma alucinacao, reduzida a jogadores desta mesa. */
+function visibleToOf(ctx: Ctx, raw: unknown): string[] | null {
+  const players = ctx.room.state.players.filter((p) => p.role === 'PLAYER').map((p) => p.id);
+  return sanitizeVisibleTo(raw, players);
+}
+
+const HALLUCINATION_OWNER_ERROR =
+  'Uma alucinacao nao pode ter dono: a visao e a neblina do dono denunciariam o token aos outros.';
+
 /**
  * Durante um arraste o cliente emite dezenas de posicoes por segundo. Recalcular
  * a visao a cada uma delas seria desperdicio, entao o fog do jogador que
@@ -78,6 +89,9 @@ export function createTokenHandler(
   if (atCapacity(scene.tokens, 'tokens')) return fail(ack, LIMIT_MESSAGES.tokens);
 
   const t = payload.token ?? {};
+  const visibleTo = visibleToOf(ctx, t.visibleTo);
+  if (visibleTo && t.ownerPlayerId) return fail(ack, HALLUCINATION_OWNER_ERROR);
+
   const token = createToken({
     name: safeString(t.name, 60, 'Token'),
     assetId: ownedAsset(ctx, t.assetId),
@@ -98,6 +112,7 @@ export function createTokenHandler(
     bars: Array.isArray(t.bars) ? t.bars.slice(0, 4) : [],
     label: safeString(t.label, 40, ''),
     conditions: Array.isArray(t.conditions) ? t.conditions.slice(0, 12) : [],
+    visibleTo,
   });
 
   if (scene.grid.snap && scene.grid.type !== 'none') {
@@ -131,6 +146,22 @@ export function updateToken(
 
   const p = payload.patch ?? {};
   let visionAffected = false;
+  let perceptionChanged = false;
+
+  // A regra da alucinacao vale para o resultado do patch inteiro: dono e
+  // lista podem chegar juntos, e checar um de cada vez deixaria passar a
+  // combinacao proibida.
+  if (gm && (p.visibleTo !== undefined || p.ownerPlayerId !== undefined)) {
+    const nextVisibleTo = p.visibleTo !== undefined ? visibleToOf(ctx, p.visibleTo) : token.visibleTo;
+    const nextOwner = p.ownerPlayerId !== undefined ? p.ownerPlayerId : token.ownerPlayerId;
+    if (nextVisibleTo && nextOwner) return fail(ack, HALLUCINATION_OWNER_ERROR);
+    if (p.visibleTo !== undefined && JSON.stringify(nextVisibleTo) !== JSON.stringify(token.visibleTo)) {
+      token.visibleTo = nextVisibleTo;
+      perceptionChanged = true;
+      // Deixa de emitir (ou volta a emitir) luz e visao.
+      visionAffected = true;
+    }
+  }
 
   // Fora do papel de mestre, o jogador so ajusta a apresentacao do proprio
   // token: nada que mude visibilidade, camada, dono ou alcance de visao.
@@ -183,6 +214,13 @@ export function updateToken(
 
   ctx.room.touchScene(scene.id);
   emitTokenUpsert(ctx.room, scene, token);
+  if (perceptionChanged) {
+    // O que depende do token acompanha a lista dele: efeitos presos a ele e
+    // a entrada na iniciativa, que carrega o nome e o id.
+    const anchored = scene.effects.filter((e) => e.anchor === 'token' && e.tokenId === token.id);
+    if (anchored.length) emitEffects(ctx.room, scene, anchored);
+    if (ctx.room.state.initiative.entries.some((e) => e.tokenId === token.id)) emitInitiative(ctx.room);
+  }
   if (visionAffected) {
     applyExploration(ctx, scene);
     refreshVision(ctx.room, scene);
@@ -566,6 +604,7 @@ export function createEffectHandler(
     style: EFFECT_STYLES.includes(e.style as never) ? e.style : 'flat',
     colorAlt: safeString(e.colorAlt, 32, '#ffffff'),
     speed: clampNumber(e.speed, 0, 4, 1),
+    visibleTo: gm ? visibleToOf(ctx, e.visibleTo) : null,
   });
 
   scene.effects.push(effect);
@@ -617,6 +656,7 @@ export function updateEffect(
       effect.visibility = p.visibility;
     }
     if (p.gmOnly !== undefined) effect.gmOnly = Boolean(p.gmOnly);
+    if (p.visibleTo !== undefined) effect.visibleTo = visibleToOf(ctx, p.visibleTo);
   }
 
   ctx.room.touchScene(scene.id);

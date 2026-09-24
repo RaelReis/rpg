@@ -55,7 +55,7 @@ Outros comandos:
 | Comando | O que faz |
 | --- | --- |
 | `npm run share` | Publica a mesa para os amigos por um Cloudflare Tunnel |
-| `npm test` | Testes unitários do pacote compartilhado (grade, visão, dados, fichas) |
+| `npm test` | Testes unitários do pacote compartilhado (grade, visão, percepção, dados, fichas) |
 | `npm run typecheck` | Verifica os três pacotes com o TypeScript |
 | `npm run test:e2e` | Teste ponta a ponta com dois clientes reais (exige o servidor no ar) |
 | `npm run bench:fog` | Mede as recomposições da textura de neblina numa sessão típica |
@@ -94,6 +94,7 @@ A regra do projeto é **não enviar e depois esconder na interface**. Se o jogad
 não deveria saber de algo, aquilo não entra no payload dele:
 
 - tokens marcados como ocultos ou exclusivos do mestre;
+- **alucinações** destinadas a outros jogadores — nem o id, nem o nome;
 - tokens dentro da neblina (quando a visão estrita está ligada);
 - as **paredes** da cena — elas descrevem a planta do mapa e apareceriam
   inteiras no inspecionador de rede do navegador;
@@ -299,7 +300,8 @@ na visão de uma pessoa específica (abaixo).
 
 Em *Mesa → Participantes*, o botão 👁 ao lado de um jogador faz o mapa passar a
 ser desenhado como ele o vê: mesma neblina, sem os tokens ocultos, sem as
-camadas exclusivas do mestre, sem as paredes. Uma faixa no alto lembra de quem
+camadas exclusivas do mestre, sem as paredes, e só com as alucinações
+destinadas a ele. Uma faixa no alto lembra de quem
 é a perspectiva, e `Esc` sai.
 
 O mestre recebe tudo do servidor, então o filtro que normalmente acontece lá é
@@ -325,6 +327,53 @@ Na prática o token **desliza até encostar** na parede e para lá, alinhado à
 grade. O teste é sobre a linha reta entre origem e destino, a mesma
 simplificação dos VTTs consagrados: contornar uma quina pode exigir mover em
 duas etapas.
+
+---
+
+## Percepção individual
+
+Recursos para criar clima e surpresa: coisas que só uma pessoa da mesa vê.
+
+### Alucinações
+
+No inspetor de um token ou de um efeito de mapa, **Visível para** troca
+*Todos* por *Apenas…*, e o mestre marca quem enxerga. Quem não está marcado
+**não recebe o objeto** — nem o id, nem o nome, nem a entrada dele na
+iniciativa; um efeito preso a uma alucinação segue a restrição dela. Mudar a
+lista tira o objeto da tela de quem saiu e o entrega a quem entrou. Sem
+ninguém marcado, só o mestre o vê.
+
+No mapa do mestre, a alucinação ganha um contorno tracejado lilás e um
+pequeno olho no canto.
+
+A regra que sustenta isso: **uma alucinação não emite luz nem visão e não
+pode ter dono.** Uma tocha que só Alice enxerga iluminaria a sala para Bruno
+também, e ele veria o chão clarear sem nada ali. Um dono enxergaria pelo
+token e revelaria neblina que o resto do grupo não entende. Por isso:
+
+- luz e raio de visão ficam guardados, mas são ignorados enquanto o token for
+  alucinação, e voltam a valer quando ele for visível para todos;
+- o servidor recusa dar dono a uma alucinação, e recusa restringir um token
+  que tem dono — tire o dono antes;
+- para quem enxerga, a alucinação chega como um token comum: o payload não diz
+  que ela é restrita, nem quem mais a vê.
+
+### Mensagem individual
+
+O botão ✉ no trilho, ou o ✉ ao lado do jogador em *Mesa → Participantes*
+(também no botão direito sobre a linha), abre a mensagem individual: um texto
+que aparece no centro da tela das pessoas escolhidas — *"Você ouve alguém
+chamar seu nome."*
+
+- **Estilo**: neutro, sussurro ou ameaça. Muda só a tipografia e a cor.
+- **Duração**: alguns segundos, ou até o jogador fechar.
+- Entra e sai com fade, acima do mapa e fora da câmera: não acompanha pan
+  nem zoom.
+
+É efêmera de propósito: não entra no chat e não fica guardada. O mestre vê a
+quem a mensagem foi **entregue** (a tela do jogador confirma). Quem está
+offline **não** recebe depois — o mestre é avisado na hora, porque uma voz que
+chama o nome de alguém uma hora mais tarde já não assusta ninguém.
 
 ---
 
@@ -390,6 +439,10 @@ fichas, materiais, tokens, paredes e neblina. Há duas versões — **com imagen
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
 
+O arquivo tem um campo `format` com a versão. A importação aceita a versão
+atual e as anteriores; um arquivo de versão mais nova que o servidor é
+recusado, em vez de importado pela metade.
+
 O arquivo **não carrega a senha de mestre nem as sessões dos jogadores**. Um
 backup circula por e-mail e drive; se levasse credenciais, quem o recebesse
 assumiria a mesa original.
@@ -398,7 +451,9 @@ Para restaurar, use **Importar mesa** na tela de entrada. A importação **sempr
 cria uma mesa nova**, com código novo: sobrescrever uma existente destruiria
 material sem volta, e comparar as duas antes de descartar é decisão de quem
 importou. As fichas voltam sem dono e os materiais sem compartilhamento — os
-jogadores entram de novo pelo código, e o mestre reatribui.
+jogadores entram de novo pelo código, e o mestre reatribui. Alucinações
+continuam alucinações, mas com a lista vazia: ninguém as vê até o mestre
+escolher de novo, em vez de aparecerem para todos.
 
 O banco (`server/prisma/dev.db`) e a pasta `server/uploads/` continuam sendo o
 backup completo para quem tem acesso ao servidor.

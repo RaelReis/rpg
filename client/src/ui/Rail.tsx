@@ -57,6 +57,7 @@ export function Rail(): JSX.Element {
   const undoDepth = useStore((s) => s.undoStack.length);
   const redo = useStore((s) => s.redo);
   const redoDepth = useStore((s) => s.redoStack.length);
+  const openMessageComposer = useStore((s) => s.openMessageComposer);
 
   const painting = tool === 'fog-reveal' || tool === 'fog-hide';
 
@@ -184,6 +185,14 @@ export function Rail(): JSX.Element {
             onClick={togglePartyVision}
           >
             👁
+          </button>
+
+          <button
+            className="tool"
+            data-tip="Mensagem individual — um texto no centro da tela de quem voce escolher"
+            onClick={() => openMessageComposer([])}
+          >
+            ✉
           </button>
 
           <button

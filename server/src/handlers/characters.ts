@@ -102,6 +102,8 @@ export function syncCharacterOwner(room: Room, sheet: Sheet): void {
     let changed = false;
     for (const token of scene.tokens) {
       if (token.sheetId !== sheet.id || token.ownerPlayerId === sheet.ownerPlayerId) continue;
+      // Alucinacao nao tem dono, nem quando a ficha ligada a ela muda de mao.
+      if (token.visibleTo) continue;
       token.ownerPlayerId = sheet.ownerPlayerId;
       const owner = room.player(sheet.ownerPlayerId);
       if (owner) token.color = owner.color;
