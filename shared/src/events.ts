@@ -5,6 +5,7 @@ import type {
   ScreenEffectParams,
   SceneCard,
 } from './screen.js';
+import type { Trigger, TriggerFiring } from './triggers.js';
 import type {
   Asset,
   Cell,
@@ -206,6 +207,14 @@ export interface ClientToServerEvents {
   'wall:update': (payload: { sceneId: string; wallId: string; patch: Partial<Wall> }, ack: Ack<null>) => void;
   'wall:delete': (payload: { sceneId: string; wallId: string }, ack: Ack<null>) => void;
 
+  /** Gatilhos: so o mestre cria, ve e edita. */
+  'trigger:create': (payload: { sceneId: string; trigger: Partial<Trigger> }, ack: Ack<Trigger>) => void;
+  'trigger:update': (payload: { sceneId: string; triggerId: string; patch: Partial<Trigger> }, ack: Ack<null>) => void;
+  'trigger:delete': (payload: { sceneId: string; triggerId: string }, ack: Ack<null>) => void;
+  /** Volta a armar um gatilho "uma vez" que ja disparou. */
+  'trigger:rearm': (payload: { sceneId: string; triggerId: string }, ack: Ack<null>) => void;
+  'trigger:clear-log': (payload: { sceneId: string }, ack: Ack<null>) => void;
+
   'fog:paint': (payload: FogPaintPayload, ack?: Ack<null>) => void;
   'fog:reset': (payload: FogResetPayload, ack: Ack<null>) => void;
 
@@ -290,6 +299,10 @@ export interface ServerToClientEvents {
   'effects:patch': (payload: { sceneId: string; upsert?: MapEffect[]; remove?: string[] }) => void;
   'walls:patch': (payload: { sceneId: string; upsert?: Wall[]; remove?: string[] }) => void;
   'fog:patch': (payload: FogPatch) => void;
+  /** Gatilhos e disparos: so o mestre recebe. */
+  'triggers:patch': (payload: { sceneId: string; upsert?: Trigger[]; remove?: string[] }) => void;
+  'trigger:fired': (payload: { sceneId: string; firing: TriggerFiring; notify: boolean }) => void;
+  'trigger-log:patch': (payload: { sceneId: string; log: TriggerFiring[] }) => void;
 
   'sheets:patch': (payload: { upsert?: Sheet[]; remove?: string[] }) => void;
   'template:patch': (template: SheetTemplate) => void;

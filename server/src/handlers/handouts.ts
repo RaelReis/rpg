@@ -20,7 +20,7 @@ const MAX_HANDOUTS = 200;
 const MAX_TEXT = 20000;
 
 /** Envia o material a cada socket, ou o remove de quem perdeu o acesso. */
-function emitHandout(room: Room, handout: Handout): void {
+export function emitHandout(room: Room, handout: Handout): void {
   for (const socket of socketsOf(room)) {
     const visible = handoutForViewer(handout, socket.data.viewer);
     if (visible) {
@@ -109,9 +109,19 @@ export function presentHandout(ctx: Ctx, payload: { handoutId: string }, ack: Ac
     return fail(ack, 'Compartilhe o material antes de apresenta-lo.');
   }
 
-  for (const socket of socketsOf(ctx.room)) {
-    if (!handoutForViewer(handout, socket.data.viewer)) continue;
+  showHandout(ctx.room, handout, null);
+  ok(ack, null);
+}
+
+/**
+ * Abre o material na tela de quem tem acesso — de todos eles, ou so dos
+ * jogadores listados. Tambem usada pelos gatilhos do mapa.
+ */
+export function showHandout(room: Room, handout: Handout, onlyPlayerIds: string[] | null): void {
+  for (const socket of socketsOf(room)) {
+    const viewer = socket.data.viewer;
+    if (!handoutForViewer(handout, viewer)) continue;
+    if (onlyPlayerIds && viewer.role !== 'GM' && !onlyPlayerIds.includes(viewer.playerId)) continue;
     socket.emit('handout:presented', { handoutId: handout.id });
   }
-  ok(ack, null);
 }

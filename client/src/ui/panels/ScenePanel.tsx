@@ -14,6 +14,7 @@ import {
   Toggle,
 } from '../common';
 import { CardsSection } from './CardsSection';
+import { TriggersSection } from '../TriggerEditor';
 
 /** Painel do mestre: cenas, grid, fundo, neblina e iluminacao. */
 
@@ -98,6 +99,8 @@ export function ScenePanel(): JSX.Element {
       </Section>
 
       <CardsSection />
+
+      <TriggersSection />
 
       {!scene ? (
         <Section title="Cena ativa">

@@ -1890,3 +1890,30 @@ textarea {
   z-index: 60;
   animation: rise 160ms ease both;
 }
+
+/* ---------------------------------------------------------------------------
+   Gatilhos (so o mestre)
+   --------------------------------------------------------------------------- */
+.rail-pop.right {
+  left: auto;
+  right: 10px;
+}
+.trigger-action {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid #e0833a;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.trigger-fired {
+  padding: 6px 8px;
+  border: 1px dashed #7d7f88;
+  border-radius: var(--radius);
+}
+.trigger-log {
+  max-height: 180px;
+  overflow-y: auto;
+}

@@ -33,6 +33,7 @@ import {
   socketsOf,
 } from '../broadcast.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
+import { evaluateTriggers } from './triggers.js';
 
 /** Tokens, tiles, efeitos, paredes e neblina. */
 
@@ -255,6 +256,16 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
   y = Math.min(Math.max(y, -h), scene.height);
 
   /*
+   * Gatilhos: o trecho que o token REALMENTE percorreu neste passo, de centro
+   * a centro. Avaliado depois das paredes — se uma delas barrou o movimento,
+   * conta so ate onde o token chegou, e nao ate onde a pessoa arrastou.
+   */
+  const center = (p: { x: number; y: number }) => ({ x: p.x + w / 2, y: p.y + h / 2 });
+  const checkTriggers = () => {
+    if (token.x !== from.x || token.y !== from.y) evaluateTriggers(ctx, scene, token, center(from), center(token));
+  };
+
+  /*
    * Paredes barram o movimento a CADA passo do arraste, e nao apenas ao
    * soltar.
    *
@@ -273,7 +284,6 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
    * dentro de uma cripta fechada enquanto monta a cena.
    */
   if (!isGm(ctx) && ctx.room.state.settings.wallsBlockMovement) {
-    const center = (p: { x: number; y: number }) => ({ x: p.x + w / 2, y: p.y + h / 2 });
     if (movementBlocked(scene, center(from), center({ x, y }))) {
       // Durante o arraste a recusa e silenciosa: a previa local do cliente
       // segue o cursor, e avisar a cada quadro encheria a tela de erros.
@@ -293,6 +303,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
 
       emitTokenMove(ctx.room, scene, token);
       refreshVision(ctx.room, scene);
+      checkTriggers();
       return fail(ack, 'Ha uma parede no caminho.');
     }
   }
@@ -301,6 +312,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
   token.y = y;
 
   emitTokenMove(ctx.room, scene, token);
+  checkTriggers();
 
   if (dragging) {
     // Atualiza a neblina de quem esta arrastando, sem custear a mesa inteira.

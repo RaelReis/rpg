@@ -58,7 +58,7 @@ Outros comandos:
 | Comando | O que faz |
 | --- | --- |
 | `npm run share` | Publica a mesa para os amigos por um Cloudflare Tunnel |
-| `npm test` | Testes unitários do pacote compartilhado (grade, visão, percepção, dados, fichas) |
+| `npm test` | Testes unitários do pacote compartilhado (grade, visão, percepção, gatilhos, efeitos, dados, fichas) |
 | `npm run typecheck` | Verifica os três pacotes com o TypeScript |
 | `npm run test:e2e` | Teste ponta a ponta com dois clientes reais (exige o servidor no ar) |
 | `npm run bench:fog` | Mede as recomposições da textura de neblina numa sessão típica |
@@ -103,6 +103,7 @@ não deveria saber de algo, aquilo não entra no payload dele:
   inteiras no inspecionador de rede do navegador;
 - campos de ficha marcados como exclusivos do mestre;
 - cenas ainda não ativadas (material de preparação);
+- os **gatilhos** do mapa — nem as áreas, nem o registro de disparos;
 - **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem,
   nem a ligação com a cena que abre com elas;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
@@ -261,7 +262,8 @@ seleciona vários tokens por retângulo; `Shift` no clique soma à seleção.
 `Ctrl+D` duplica, `Delete` remove, e o grupo inteiro se move junto.
 
 **`Ctrl+Z` desfaz** e **`Ctrl+Y` refaz** (também `Ctrl+Shift+Z`) as ações de
-mapa do mestre — mover, criar, apagar, transformar, pintar neblina. O
+mapa do mestre — mover, criar, apagar, transformar, pintar neblina, criar,
+editar e apagar gatilhos, mudar quem vê uma alucinação. O
 histórico é local, e não colaborativo: desfazer uma exclusão recria um objeto
 equivalente, com id novo, e o refazer seguinte apaga esse novo. Qualquer ação
 nova depois de um desfazer descarta o que havia para refazer.
@@ -436,6 +438,49 @@ mestre e com a mesma validação por conteúdo.
 
 ---
 
+## Gatilhos no mapa
+
+Áreas invisíveis que disparam ações quando um token entra nelas: a
+armadilha do corredor, a voz que só se ouve no porão.
+
+**Desenhar.** A ferramenta ⚑ no trilho desenha a área como **retângulo**
+(arraste; os cantos encaixam na grade como as paredes), **círculo** (arraste
+do centro para fora, em meias células) ou **polígono** (um clique por vértice;
+`Enter`, duplo clique ou o primeiro ponto fecham). `Ctrl` solta da grade. As
+áreas aparecem só para o mestre, tracejadas em laranja, e o ⚑ junto das
+camadas as oculta da sua tela.
+
+**Editar.** Clicar numa área com a ferramenta ativa — ou no nome dela em
+*Cena → Gatilhos* — abre o editor:
+
+- nome, **ligado/desligado** e o modo **uma vez** (desarma depois de disparar,
+  com botão **Rearmar**) ou **toda vez**;
+- **quem dispara**: tokens de jogadores (padrão), qualquer token, ou tokens
+  escolhidos;
+- **meus movimentos também disparam** — desligado por padrão, porque o mestre
+  posiciona NPCs enquanto monta a cena;
+- **ações, em ordem** (reordenáveis): avisar o mestre, mensagem na tela
+  (para quem disparou ou para todos), efeito de tela, apresentar cartela,
+  compartilhar e/ou apresentar um material, revelar um token oculto.
+
+Criar, editar e apagar gatilhos entra no `Ctrl+Z`. O **disparo não**: ele já
+aconteceu na tela dos jogadores.
+
+**Como o servidor decide.** O gatilho é avaliado a cada passo de movimento,
+no mesmo ponto em que as paredes são checadas. O teste usa o **segmento**
+entre a posição anterior e a nova do centro do token, e não só o ponto final
+— um arraste rápido manda posições espaçadas, e um token que salta por cima
+de um corredor estreito nunca teria uma posição registrada dentro dele. Se
+uma parede barra o movimento, conta só o trecho efetivamente percorrido.
+Entrar é passar de fora para dentro: andar dentro da área não dispara de
+novo, e sair e voltar é uma entrada nova.
+
+**Os jogadores nunca recebem gatilhos** — nem as áreas, que entregariam onde
+o mapa guarda uma surpresa. Os disparos entram num **registro** que só o
+mestre vê, em *Cena → Gatilhos*.
+
+---
+
 ## Fichas
 
 O mestre monta o modelo em *Fichas → Editar modelo de ficha*: seções e campos
@@ -497,6 +542,9 @@ Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
 fichas, materiais, cartelas de cena, tokens, paredes e neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
+
+O arquivo inclui também os gatilhos de cada cena; o registro de disparos
+volta vazio, porque cita jogadores que não existem na mesa nova.
 
 O arquivo tem um campo `format` com a versão. A importação aceita a versão
 atual e as anteriores; um arquivo de versão mais nova que o servidor é
@@ -561,10 +609,10 @@ na verdade é outra coisa é recusado.
 | `P` | Ping (com `Alt`, puxa a câmera da mesa) |
 | `F` | Enquadrar o mapa |
 | `Esc` | Limpar seleção |
-| `Delete` | Remover o que está selecionado (mestre) |
+| `Delete` | Remover o que está selecionado, inclusive o gatilho aberto (mestre) |
 | `Ctrl+Z` | Desfazer a última ação de mapa (mestre) |
 | `Ctrl+D` | Duplicar a seleção (mestre) |
-| `Enter` | Encerrar a parede em polilinha |
+| `Enter` | Encerrar a parede em polilinha, ou fechar o polígono de gatilho |
 | Botão direito / do meio | Move o mapa, em qualquer ferramenta |
 | `Shift` + clique | Soma o token à seleção |
 | `Ctrl` ao soltar | Ignora o encaixe na grid |

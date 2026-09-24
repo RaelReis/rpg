@@ -1,4 +1,5 @@
 import type { LiveState, SceneCard } from './screen.js';
+import type { Trigger, TriggerFiring } from './triggers.js';
 
 /**
  * Modelo de dominio compartilhado entre servidor e cliente.
@@ -284,6 +285,12 @@ export interface Scene {
    * sai do payload do jogador, que so ve a cartela quando ela aparece.
    */
   introCardId: string | null;
+  /**
+   * Gatilhos da cena e o registro dos disparos. Exclusivos do mestre: saem
+   * vazios no payload do jogador, sempre.
+   */
+  triggers: Trigger[];
+  triggerLog: TriggerFiring[];
 }
 
 // ---------------------------------------------------------------------------

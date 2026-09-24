@@ -10,6 +10,7 @@ import {
 } from '@rpg/shared';
 
 import { socketsOf } from '../broadcast.js';
+import type { Room } from '../room.js';
 import { clampNumber, fail, ok, safeString, type Ctx } from './context.js';
 
 /**
@@ -49,8 +50,20 @@ export async function sendScreenMessage(
   if (targets.length === 0) return fail(ack, 'Escolha ao menos um jogador.');
 
   const message: ScreenMessage = { id: generateId('msg'), text, style, durationMs };
+  ok(ack, await deliverScreenMessage(ctx.room, targets, message));
+}
+
+/**
+ * Entrega a mensagem na tela de cada jogador e conta o que aconteceu.
+ * Tambem usada pelos gatilhos do mapa, que nao esperam a resposta.
+ */
+export async function deliverScreenMessage(
+  room: Room,
+  targets: string[],
+  message: ScreenMessage,
+): Promise<ScreenMessageReport> {
   const report: ScreenMessageReport = { delivered: [], offline: [], unconfirmed: [] };
-  const sockets = socketsOf(ctx.room);
+  const sockets = socketsOf(room);
 
   await Promise.all(
     targets.map(async (playerId) => {
@@ -74,5 +87,5 @@ export async function sendScreenMessage(
     }),
   );
 
-  ok(ack, report);
+  return report;
 }

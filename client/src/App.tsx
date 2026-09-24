@@ -11,6 +11,7 @@ import { Rail } from './ui/Rail';
 import { CardPresentationView, ScreenEffectsLayer } from './ui/ScreenEffects';
 import { ScreenFxPanel } from './ui/ScreenFxPanel';
 import { ScreenMessages } from './ui/ScreenMessages';
+import { TriggerEditor } from './ui/TriggerEditor';
 import { Side } from './ui/Side';
 import { SheetModal } from './ui/SheetModal';
 import { TemplateEditor } from './ui/TemplateEditor';
@@ -72,6 +73,7 @@ export function App(): JSX.Element {
           <TurnBanner />
           <ScreenMessages />
           {screenFxOpen && session.role === 'GM' && <ScreenFxPanel />}
+          {session.role === 'GM' && <TriggerEditor />}
           <SideToggle />
         </div>
         <Side />

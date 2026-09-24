@@ -50,28 +50,41 @@ export function applyScreenEffect(
   const playerIds = recipients(ctx.room, payload.playerIds);
   if (playerIds === undefined) return fail(ack, 'Escolha para quem aplicar o efeito.');
 
-  const live = ctx.room.live;
+  const effect = startScreenEffect(ctx.room, payload.kind, payload.params ?? {}, playerIds);
+  if (!effect) return fail(ack, 'Flashes muito seguidos: no maximo 3 por segundo.');
+  ok(ack, effect);
+}
+
+/**
+ * Poe o efeito no ar e avisa os destinatarios. Devolve null quando e um flash
+ * cedo demais: luz piscando mais de 3 vezes por segundo pode desencadear
+ * crises. Tambem usada pelos gatilhos do mapa.
+ */
+export function startScreenEffect(
+  room: Room,
+  kind: ScreenEffectKind,
+  raw: Partial<ScreenEffectParams>,
+  playerIds: string[] | null,
+): ScreenEffect | null {
+  const live = room.live;
   const now = Date.now();
-  if (payload.kind === 'flash') {
-    // Luz piscando mais de 3 vezes por segundo pode desencadear crises.
-    if (!flashAllowed(live.lastFlashAt, now)) {
-      return fail(ack, 'Flashes muito seguidos: no maximo 3 por segundo.');
-    }
+  if (kind === 'flash') {
+    if (!flashAllowed(live.lastFlashAt, now)) return null;
     live.lastFlashAt = now;
   }
 
-  const params = sanitizeScreenEffect(payload.kind, payload.params ?? {});
-  const effect = live.addEffect({ id: generateId('sfx'), kind: payload.kind, ...params }, playerIds, () => {
+  const params = sanitizeScreenEffect(kind, raw);
+  const effect = live.addEffect({ id: generateId('sfx'), kind, ...params }, playerIds, () => {
     // O cliente encerra os temporizados sozinho; o painel do mestre tambem.
   });
 
-  for (const socket of socketsOf(ctx.room)) {
+  for (const socket of socketsOf(room)) {
     const viewer = socket.data.viewer;
     if (!targets(playerIds, viewer)) continue;
     // O jogador nao recebe a lista de quem mais esta sob o efeito.
     socket.emit('screen:applied', viewer.role === 'GM' ? effect : { ...effect, playerIds: undefined });
   }
-  ok(ack, effect);
+  return effect;
 }
 
 export function stopScreenEffect(ctx: Ctx, payload: { effectId?: string }, ack: Ack<null>): void {

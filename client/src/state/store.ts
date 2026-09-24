@@ -25,6 +25,8 @@ import {
   type TableState,
   type Tile,
   type Token,
+  type Trigger,
+  type TriggerFiring,
   type Wall,
 } from '@rpg/shared';
 
@@ -50,7 +52,8 @@ export type Tool =
   | 'fog-hide'
   | 'wall'
   | 'effect'
-  | 'tile';
+  | 'tile'
+  | 'trigger';
 
 export type SideTab =
   | 'scene'
@@ -81,6 +84,9 @@ export interface UndoEntry {
   undo: () => void | Promise<void>;
   redo: () => void | Promise<void>;
 }
+
+/** Forma que a ferramenta de gatilho desenha. */
+export type TriggerShape = 'rect' | 'circle' | 'polygon';
 
 /** O que a ferramenta de parede desenha a cada clique. */
 export type WallKind = 'wall' | 'door' | 'window';
@@ -179,6 +185,14 @@ interface AppState {
   wallDraft: Point[];
   /** O que o proximo trecho vira. Alt no clique faz uma porta avulsa. */
   wallKind: WallKind;
+  /** Forma do proximo gatilho. */
+  triggerShape: TriggerShape;
+  /** Vertices do poligono de gatilho em construcao. */
+  triggerDraft: Point[];
+  /** Gatilho aberto no editor. */
+  selectedTriggerId: string | null;
+  /** Camada de gatilhos visivel na tela do mestre (so muda o que ELE ve). */
+  showTriggers: boolean;
   /** Ficha ou imagem sendo arrastada sobre o mapa, se houver. */
   dragging: DragPayload | null;
   /** Pincel livre ou area retangular. */
@@ -242,6 +256,13 @@ interface AppState {
   upsertTiles(sceneId: string, tiles: Tile[], remove: string[]): void;
   upsertEffects(sceneId: string, effects: MapEffect[], remove: string[]): void;
   upsertWalls(sceneId: string, walls: Wall[], remove: string[]): void;
+  upsertTriggers(sceneId: string, triggers: Trigger[], remove: string[]): void;
+  addTriggerFiring(sceneId: string, firing: TriggerFiring): void;
+  setTriggerLog(sceneId: string, log: TriggerFiring[]): void;
+  setTriggerShape(shape: TriggerShape): void;
+  setTriggerDraft(points: Point[]): void;
+  selectTrigger(id: string | null): void;
+  toggleTriggers(): void;
   applyFogPatch(patch: FogPatch): void;
   upsertSheets(sheets: Sheet[], remove: string[]): void;
   setTemplate(template: SheetTemplate): void;
@@ -344,6 +365,10 @@ export const useStore = create<AppState>((set, get) => ({
   fogSeal: false,
   wallDraft: [],
   wallKind: 'wall',
+  triggerShape: 'rect',
+  triggerDraft: [],
+  selectedTriggerId: null,
+  showTriggers: true,
   dragging: null,
   undoStack: [],
   redoStack: [],
@@ -391,6 +416,8 @@ export const useStore = create<AppState>((set, get) => ({
       undoStack: [],
       redoStack: [],
       wallDraft: [],
+      triggerDraft: [],
+      selectedTriggerId: null,
       screenMessages: [],
       messageComposer: null,
       screenEffects: [],
@@ -429,6 +456,8 @@ export const useStore = create<AppState>((set, get) => ({
         undoStack: changed ? [] : s.undoStack,
         redoStack: changed ? [] : s.redoStack,
         wallDraft: changed ? [] : s.wallDraft,
+        triggerDraft: changed ? [] : s.triggerDraft,
+        selectedTriggerId: changed ? null : s.selectedTriggerId,
         selectedTokenIds: changed ? [] : s.selectedTokenIds,
         selectedTileId: changed ? null : s.selectedTileId,
         selectedWallId: changed ? null : s.selectedWallId,
@@ -492,6 +521,39 @@ export const useStore = create<AppState>((set, get) => ({
       });
       return changed ? { rev: s.rev + 1 } : {};
     }),
+
+  upsertTriggers: (sceneId, triggers, remove) =>
+    set((s) => {
+      const changed = withScene(s.table, sceneId, (scene) => {
+        scene.triggers = mergeById(scene.triggers ?? [], triggers, remove);
+      });
+      if (!changed) return {};
+      return {
+        rev: s.rev + 1,
+        selectedTriggerId: remove.includes(s.selectedTriggerId ?? '') ? null : s.selectedTriggerId,
+      };
+    }),
+
+  addTriggerFiring: (sceneId, firing) =>
+    set((s) => {
+      const changed = withScene(s.table, sceneId, (scene) => {
+        scene.triggerLog = [...(scene.triggerLog ?? []), firing].slice(-50);
+      });
+      return changed ? { rev: s.rev + 1 } : {};
+    }),
+
+  setTriggerLog: (sceneId, log) =>
+    set((s) => {
+      const changed = withScene(s.table, sceneId, (scene) => {
+        scene.triggerLog = log;
+      });
+      return changed ? { rev: s.rev + 1 } : {};
+    }),
+
+  setTriggerShape: (triggerShape) => set({ triggerShape, triggerDraft: [] }),
+  setTriggerDraft: (triggerDraft) => set({ triggerDraft }),
+  selectTrigger: (selectedTriggerId) => set({ selectedTriggerId }),
+  toggleTriggers: () => set((s) => ({ showTriggers: !s.showTriggers })),
 
   applyFogPatch: (patch) =>
     set((s) => {

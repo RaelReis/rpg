@@ -112,6 +112,8 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     globalLight: partial.globalLight ?? 1,
     weather: { ...DEFAULT_WEATHER, ...(partial.weather ?? {}) },
     introCardId: partial.introCardId ?? null,
+    triggers: partial.triggers ?? [],
+    triggerLog: partial.triggerLog ?? [],
   };
 }
 

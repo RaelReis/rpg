@@ -42,8 +42,9 @@ import { saveImage } from './uploads.js';
  * 1 — formato original.
  * 2 — tokens e efeitos com `visibleTo` (alucinacoes).
  * 3 — cartelas de cena (`sceneCards`) e `introCardId` nas cenas.
+ * 4 — gatilhos nas cenas (`triggers`, `triggerLog`).
  */
-export const BACKUP_FORMAT = 3;
+export const BACKUP_FORMAT = 4;
 const MIN_BACKUP_FORMAT = 1;
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
@@ -257,9 +258,10 @@ async function buildImportedTable(
   room.state.settings = { ...DEFAULT_SETTINGS, ...(backup.settings ?? {}) };
   room.state.initiative = { ...DEFAULT_INITIATIVE, ...(backup.initiative ?? {}) };
 
+  const handoutIdMap = new Map<string, string>();
   room.state.handouts = (backup.handouts ?? []).map((h) => ({
     ...h,
-    id: generateId('hnd'),
+    id: remember(handoutIdMap, h.id, generateId('hnd')),
     assetId: remap(h.assetId),
     // Os jogadores do backup nao existem nesta mesa; o acesso recomeca do zero.
     sharedWith: [],
@@ -319,6 +321,7 @@ async function buildImportedTable(
       }),
     );
     scene.effects = scene.effects.map(unseen);
+    remapTriggers(scene, cardIdMap, handoutIdMap);
     room.touchScene(scene.id);
   }
 
@@ -332,6 +335,32 @@ async function buildImportedTable(
     gmPlayerId: created.gmPlayerId,
     missingAssets,
   };
+}
+
+/** Guarda a correspondencia entre o id do backup e o novo, e devolve o novo. */
+function remember(map: Map<string, string>, oldId: string | undefined, fresh: string): string {
+  if (oldId) map.set(oldId, fresh);
+  return fresh;
+}
+
+/**
+ * Gatilhos importados: as acoes apontam para cartelas e materiais, que ganham
+ * ids novos na importacao. Tokens mantem o id, entao "revelar token" e a
+ * lista de tokens que disparam continuam valendo. O registro de disparos cita
+ * jogadores do backup, que nao existem nesta mesa, e comeca vazio.
+ */
+function remapTriggers(scene: Scene, cards: Map<string, string>, handouts: Map<string, string>): void {
+  scene.triggers = (scene.triggers ?? []).map((trigger) => ({
+    ...trigger,
+    actions: (trigger.actions ?? []).map((action) => {
+      if (action.type === 'card') return { ...action, cardId: action.cardId ? (cards.get(action.cardId) ?? null) : null };
+      if (action.type === 'handout') {
+        return { ...action, handoutId: action.handoutId ? (handouts.get(action.handoutId) ?? null) : null };
+      }
+      return action;
+    }),
+  }));
+  scene.triggerLog = [];
 }
 
 /** Lê um backup vindo do corpo da requisicao, com mensagem util em caso de erro. */

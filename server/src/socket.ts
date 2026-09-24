@@ -49,6 +49,13 @@ import {
 } from './handlers/scene.js';
 import { sendScreenMessage } from './handlers/messages.js';
 import {
+  clearTriggerLog,
+  createTriggerHandler,
+  deleteTriggerHandler,
+  rearmTrigger,
+  updateTriggerHandler,
+} from './handlers/triggers.js';
+import {
   applyScreenEffect,
   closeCard,
   createCard,
@@ -225,6 +232,12 @@ export function registerSocketHandlers(io: TypedServer): void {
     socket.on('effect:create', member(createEffectHandler));
     socket.on('effect:update', member(updateEffect));
     socket.on('effect:delete', member(deleteEffect));
+
+    socket.on('trigger:create', gm(createTriggerHandler));
+    socket.on('trigger:update', gm(updateTriggerHandler));
+    socket.on('trigger:delete', gm(deleteTriggerHandler));
+    socket.on('trigger:rearm', gm(rearmTrigger));
+    socket.on('trigger:clear-log', gm(clearTriggerLog));
 
     socket.on('wall:create', gm(createWallHandler));
     socket.on('wall:update', member(updateWall)); // jogador so abre/fecha portas

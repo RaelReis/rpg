@@ -10,6 +10,7 @@ import {
   isHex,
   isRestricted,
   parseCellKey,
+  pointInArea,
   tokenCell,
   type Layer,
   type MapEffect,
@@ -20,6 +21,8 @@ import {
   type SheetTemplate,
   type Tile,
   type Token,
+  type Trigger,
+  type TriggerArea,
   type VisionResult,
   type Wall,
 } from '@rpg/shared';
@@ -36,7 +39,7 @@ import { getImage } from './images';
  * desenhado, em vez de so escurece-lo por cima.
  */
 
-export type MarqueeKind = 'select' | 'fog-reveal' | 'fog-hide' | 'tile';
+export type MarqueeKind = 'select' | 'fog-reveal' | 'fog-hide' | 'tile' | 'trigger';
 
 /** Caixa orientada de um objeto do mapa, base do desenho de alcas. */
 export interface Box {
@@ -101,6 +104,17 @@ export interface RenderInput {
   previewPlayerId: string | null;
   /** Token de quem esta em turno, destacado no mapa. */
   activeTokenId: string | null;
+  /**
+   * Camada de gatilhos, so do mestre. `null` quando nao deve aparecer: papel
+   * de jogador, previa pelos olhos de alguem, ou camada oculta pelo mestre.
+   */
+  triggers: {
+    selectedId: string | null;
+    /** Area em construcao (retangulo e circulo pelo arraste, poligono pelos cliques). */
+    draft: TriggerArea | null;
+    /** Vertices ja fixados do poligono, mais o ponto sob o cursor. */
+    path: Point[] | null;
+  } | null;
   sheets: Map<string, Sheet>;
   template: SheetTemplate;
   showBars: boolean;
@@ -214,6 +228,7 @@ export function renderScene(input: RenderInput): void {
   drawLayer(input, 3);
   drawLayer(input, 4);
   drawWalls(input);
+  drawTriggers(input);
   drawPartyOverlay(input);
   drawDrafts(input);
   drawWeather(input, dpr);
@@ -1889,6 +1904,7 @@ function drawMarquee(input: RenderInput): void {
     'fog-reveal': '#d9a441',
     'fog-hide': '#8a8f9c',
     tile: '#5cc98a',
+    trigger: TRIGGER_COLOR,
   };
   const color = palette[marquee.kind];
 
@@ -2164,3 +2180,120 @@ export function tokensInRect(
 }
 
 export { isHex, worldToScreen };
+
+// ---------------------------------------------------------------------------
+// Gatilhos (so o mestre)
+// ---------------------------------------------------------------------------
+
+const TRIGGER_COLOR = '#e0833a';
+
+/** Traca o contorno de uma area de gatilho no contexto. */
+function traceArea(ctx: CanvasRenderingContext2D, area: TriggerArea): void {
+  ctx.beginPath();
+  if (area.kind === 'circle') {
+    ctx.arc(area.x, area.y, area.radius, 0, Math.PI * 2);
+    return;
+  }
+  if (area.kind === 'rect') {
+    ctx.rect(area.x, area.y, area.width, area.height);
+    return;
+  }
+  area.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+}
+
+/** Ponto onde o nome do gatilho e escrito: o canto de cima da area. */
+function areaLabelPoint(area: TriggerArea): Point {
+  if (area.kind === 'circle') return { x: area.x, y: area.y - area.radius };
+  if (area.kind === 'rect') return { x: area.x + area.width / 2, y: area.y };
+  const top = area.points.reduce((a, b) => (b.y < a.y ? b : a));
+  return top;
+}
+
+/**
+ * Areas de gatilho: contorno tracejado e um veu leve, com o nome.
+ *
+ * Cor cheia quando pode disparar; apagada quando esta desligada ou ja
+ * disparou (modo "uma vez"). E desenho estatico de proposito — nada aqui pede
+ * quadros ao laco de desenho.
+ */
+function drawTriggers(input: RenderInput): void {
+  const layer = input.triggers;
+  if (!layer || input.role !== 'GM') return;
+  const { ctx, camera } = input;
+
+  for (const trigger of input.scene.triggers ?? []) drawTrigger(input, trigger, trigger.id === layer.selectedId);
+
+  if (layer.draft) {
+    ctx.save();
+    traceArea(ctx, layer.draft);
+    ctx.fillStyle = TRIGGER_COLOR;
+    ctx.globalAlpha = 0.16;
+    ctx.fill();
+    ctx.globalAlpha = 0.95;
+    ctx.strokeStyle = TRIGGER_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (layer.path && layer.path.length > 0) {
+    ctx.save();
+    ctx.strokeStyle = TRIGGER_COLOR;
+    ctx.fillStyle = TRIGGER_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    ctx.beginPath();
+    layer.path.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // O primeiro vertice fecha o poligono quando clicado de novo.
+    layer.path.forEach((p, i) => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, (i === 0 ? 5 : 3) / camera.zoom, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  }
+}
+
+function drawTrigger(input: RenderInput, trigger: Trigger, selected: boolean): void {
+  const { ctx, camera } = input;
+  const live = trigger.enabled && (trigger.mode === 'always' || trigger.armed);
+  const color = live ? TRIGGER_COLOR : '#7d7f88';
+
+  ctx.save();
+  traceArea(ctx, trigger.area);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = selected ? 0.16 : 0.08;
+  ctx.fill();
+  ctx.globalAlpha = live ? 0.9 : 0.6;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = (selected ? 2.5 : 1.5) / camera.zoom;
+  ctx.setLineDash([8 / camera.zoom, 5 / camera.zoom]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const at = areaLabelPoint(trigger.area);
+  const label = `⚑ ${trigger.name}${!trigger.enabled ? ' (desligado)' : !live ? ' (disparado)' : ''}`;
+  ctx.globalAlpha = 1;
+  ctx.font = `600 ${12 / camera.zoom}px Archivo, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 3 / camera.zoom;
+  ctx.strokeStyle = 'rgba(5,6,10,0.85)';
+  ctx.strokeText(label, at.x, at.y - 3 / camera.zoom);
+  ctx.fillStyle = color;
+  ctx.fillText(label, at.x, at.y - 3 / camera.zoom);
+  ctx.restore();
+}
+
+/** Gatilho sob o ponto, o de cima primeiro (o ultimo desenhado). */
+export function triggerAtPoint(scene: Scene, world: Point): Trigger | null {
+  const list = scene.triggers ?? [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (pointInArea(world, list[i].area)) return list[i];
+  }
+  return null;
+}

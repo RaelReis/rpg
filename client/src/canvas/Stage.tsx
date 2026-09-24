@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CHARACTER_VISION_RADIUS,
   cellAt,
+  cellCenter,
   cellCorners,
   cellKey,
   cellsWithinRadius,
@@ -12,11 +13,13 @@ import {
   type Scene,
   type Tile,
   type Token,
+  type Trigger,
+  type TriggerArea,
   type Wall,
 } from '@rpg/shared';
 
 import { act, emit } from '../net/socket';
-import { activeScene, findAsset, findSheet, useStore, type WallKind } from '../state/store';
+import { activeScene, findAsset, findSheet, useStore, type TriggerShape, type WallKind } from '../state/store';
 import {
   centerOn,
   clampCamera,
@@ -36,6 +39,7 @@ import {
   tileAtPoint,
   tokenAtPoint,
   tokensInRect,
+  triggerAtPoint,
   wallAtPoint,
   type Box,
   type HandleId,
@@ -61,6 +65,7 @@ type GestureKind =
   | 'fog-rect'
   | 'marquee'
   | 'tile'
+  | 'trigger'
   | 'handle';
 
 interface Gesture {
@@ -177,6 +182,8 @@ export function Stage(): JSX.Element {
   // Rascunhos que o renderizador le a cada quadro, sem passar pelo React.
   const measureRef = useRef<{ from: Point; to: Point } | null>(null);
   const marqueeRef = useRef<{ from: Point; to: Point; kind: MarqueeKind } | null>(null);
+  /** Arraste de gatilho retangular ou circular em curso. */
+  const triggerDragRef = useRef<{ from: Point; to: Point; free: boolean } | null>(null);
   const hoverRef = useRef<Point | null>(null);
   /** Ctrl segurado sob o cursor: a previa da parede solta da grade tambem. */
   const hoverFreeRef = useRef(false);
@@ -196,6 +203,7 @@ export function Stage(): JSX.Element {
 
   const wallDraft = useStore((s) => s.wallDraft);
   const wallKind = useStore((s) => s.wallKind);
+  const triggerDraft = useStore((s) => s.triggerDraft);
   const previewPlayerId = useStore((s) => s.previewPlayerId);
   const previewName = useStore(
     (s) => s.table?.players.find((p) => p.id === s.previewPlayerId)?.name ?? null,
@@ -298,6 +306,24 @@ export function Stage(): JSX.Element {
     const path = state.wallDraft;
     const wallPath = path.length > 0 ? (hover ? [...path, hover.point] : path) : null;
 
+    // Gatilhos: camada exclusiva do mestre, fora da previa pelos olhos de
+    // alguem, e ocultavel como as outras camadas.
+    const triggerLayer =
+      state.session?.role === 'GM' && !preview && state.showTriggers
+        ? {
+            selectedId: state.selectedTriggerId,
+            draft: triggerDragRef.current
+              ? dragArea(currentScene, state.triggerShape, triggerDragRef.current)
+              : null,
+            path:
+              state.triggerDraft.length > 0
+                ? hoverRef.current
+                  ? [...state.triggerDraft, gridVertexOrFree(currentScene, hoverRef.current, hoverFreeRef.current)]
+                  : state.triggerDraft
+                : null,
+          }
+        : null;
+
     const startedAt = performance.now();
 
     /*
@@ -315,6 +341,8 @@ export function Stage(): JSX.Element {
       state.selectedWallId !== null ||
       state.pings.length > 0 ||
       state.wallDraft.length > 0 ||
+      // O poligono de gatilho em construcao acompanha o cursor.
+      state.triggerDraft.length > 0 ||
       // O anel de encaixe segue o cursor enquanto a ferramenta esta ativa.
       walling ||
       marqueeRef.current !== null ||
@@ -334,6 +362,7 @@ export function Stage(): JSX.Element {
       let key = `${state.rev}|${cam.x.toFixed(1)},${cam.y.toFixed(1)},${cam.zoom.toFixed(4)}`;
       key += `|${viewportRef.current.width}x${viewportRef.current.height}`;
       key += `|${state.hiddenLayers.join(',')}|${state.showPartyVision ? 1 : 0}`;
+      key += `|${state.showTriggers ? 1 : 0}|${state.selectedTriggerId ?? ''}`;
       // Movimento de token nao passa por `rev` de proposito; entra aqui.
       for (const t of currentScene.tokens) key += `|${Math.round(t.x)},${Math.round(t.y)}`;
 
@@ -366,6 +395,7 @@ export function Stage(): JSX.Element {
       tool: state.tool,
       fogSeal: state.fogSeal,
       activeTokenId: activeEntry?.tokenId ?? null,
+      triggers: triggerLayer,
       sheets,
       template: state.table?.sheetTemplate ?? { name: '', sections: [], fields: [] },
       showBars: state.table?.settings.showPartyBars ?? true,
@@ -525,6 +555,20 @@ export function Stage(): JSX.Element {
       } else if (state.tool === 'tile') {
         gesture.kind = 'tile';
         marqueeRef.current = { from: world, to: world, kind: 'tile' };
+      } else if (state.tool === 'trigger' && gm) {
+        if (state.triggerShape === 'polygon') {
+          // Sem poligono em curso, clicar num gatilho existente abre o editor.
+          const hit = state.triggerDraft.length === 0 ? triggerAtPoint(currentScene, world) : null;
+          if (hit) {
+            state.selectTrigger(hit.id);
+          } else {
+            addTriggerVertex(currentScene, world, cameraRef.current.zoom, e.ctrlKey);
+          }
+          gestureRef.current = gesture;
+          return;
+        }
+        gesture.kind = 'trigger';
+        triggerDragRef.current = { from: world, to: world, free: e.ctrlKey };
       } else {
         // Ferramenta de selecao: alca, token, ou retangulo de selecao.
         const selection = gm
@@ -717,6 +761,10 @@ export function Stage(): JSX.Element {
           if (marqueeRef.current) marqueeRef.current = { ...marqueeRef.current, to: world };
           break;
 
+        case 'trigger':
+          if (triggerDragRef.current) triggerDragRef.current = { ...triggerDragRef.current, to: world, free: e.ctrlKey };
+          break;
+
         default:
           break;
       }
@@ -875,6 +923,22 @@ export function Stage(): JSX.Element {
         case 'measure':
           measureRef.current = null;
           break;
+
+        case 'trigger': {
+          const drag = triggerDragRef.current;
+          triggerDragRef.current = null;
+          if (!drag) break;
+
+          // Clique seco: seleciona o gatilho sob o cursor (ou nenhum).
+          if (!gesture.moved) {
+            state.selectTrigger(triggerAtPoint(currentScene, world)?.id ?? null);
+            break;
+          }
+
+          const area = dragArea(currentScene, state.triggerShape, { ...drag, to: world, free: e.ctrlKey });
+          if (area && areaIsUsable(area)) void createTriggerWithUndo(currentScene, { area });
+          break;
+        }
 
         default:
           break;
@@ -1061,10 +1125,16 @@ export function Stage(): JSX.Element {
         case 'enter':
           // Os trechos ja estao gravados; encerrar so solta a ponta.
           if (state.tool === 'wall') state.setWallDraft([]);
+          if (state.tool === 'trigger' && currentScene) closeTriggerPolygon(currentScene);
           break;
         case 'delete':
         case 'backspace': {
           if (!gm || !currentScene) break;
+          const trigger = currentScene.triggers?.find((t) => t.id === state.selectedTriggerId);
+          if (trigger) {
+            void deleteTriggerWithUndo(currentScene, trigger);
+            break;
+          }
           void deleteSelection(currentScene);
           break;
         }
@@ -1076,6 +1146,14 @@ export function Stage(): JSX.Element {
           }
           if (state.wallDraft.length > 0) {
             state.setWallDraft([]);
+            break;
+          }
+          if (state.triggerDraft.length > 0) {
+            state.setTriggerDraft([]);
+            break;
+          }
+          if (state.selectedTriggerId) {
+            state.selectTrigger(null);
             break;
           }
           state.selectToken(null);
@@ -1101,6 +1179,7 @@ export function Stage(): JSX.Element {
       case 'measure':
       case 'wall':
       case 'tile':
+      case 'trigger':
         return 'crosshair';
       case 'ping':
         return 'cell';
@@ -1139,6 +1218,8 @@ export function Stage(): JSX.Element {
         onDoubleClick={() => {
           // O duplo clique ja gravou os trechos; so encerra a sequencia.
           if (tool === 'wall') useStore.getState().setWallDraft([]);
+          const current = activeScene(useStore.getState());
+          if (tool === 'trigger' && current) closeTriggerPolygon(current);
         }}
         onContextMenu={(e) => e.preventDefault()}
       />
@@ -1195,6 +1276,21 @@ export function Stage(): JSX.Element {
           Desenhando <strong>{WALL_LABELS[wallKind].many}</strong> · cada clique grava um trecho ·{' '}
           <strong>Enter</strong>, <strong>Esc</strong> ou duplo clique encerra · <strong>Ctrl+Z</strong> desfaz o
           ultimo
+        </div>
+      )}
+
+      {tool === 'trigger' && (
+        <div className="stage-tip">
+          {triggerDraft.length > 0 ? (
+            <>
+              Poligono de gatilho · clique no primeiro ponto, <strong>Enter</strong> ou duplo clique fecha ·{' '}
+              <strong>Esc</strong> cancela
+            </>
+          ) : (
+            <>
+              Arraste para desenhar a area · clique num gatilho para editar · <strong>Ctrl</strong> solta da grade
+            </>
+          )}
         </div>
       )}
 
@@ -1811,4 +1907,114 @@ function PingMark({ x, y, color }: { x: number; y: number; color: string }): JSX
       </circle>
     </svg>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Gatilhos
+// ---------------------------------------------------------------------------
+
+/** Encaixa no vertice da grade, como as paredes; `free` (Ctrl) solta. */
+function gridVertexOrFree(scene: Scene, world: Point, free: boolean): Point {
+  return free ? world : snapToGridVertex(scene, world);
+}
+
+/**
+ * Area desenhada por um arraste.
+ *
+ * O retangulo encaixa nos vertices da grade, como as paredes: cercar uma sala
+ * sao quatro cantos exatos. O circulo centra na celula e cresce em meias
+ * celulas, que e como o mestre pensa um raio ("tres casas em volta").
+ */
+function dragArea(
+  scene: Scene,
+  shape: TriggerShape,
+  drag: { from: Point; to: Point; free: boolean },
+): TriggerArea | null {
+  if (shape === 'circle') {
+    const snap = !drag.free && scene.grid.type !== 'none';
+    const center = snap ? cellCenter(scene.grid, cellAt(scene.grid, drag.from)) : drag.from;
+    const raw = Math.hypot(drag.to.x - center.x, drag.to.y - center.y);
+    const half = scene.grid.size / 2;
+    const radius = snap ? Math.max(half, Math.round(raw / half) * half) : raw;
+    return { kind: 'circle', x: center.x, y: center.y, radius };
+  }
+  const a = gridVertexOrFree(scene, drag.from, drag.free);
+  const b = gridVertexOrFree(scene, drag.to, drag.free);
+  return { kind: 'rect', ...normalizeRect(a, b) };
+}
+
+function areaIsUsable(area: TriggerArea): boolean {
+  if (area.kind === 'rect') return area.width >= 4 && area.height >= 4;
+  if (area.kind === 'circle') return area.radius >= 4;
+  return area.points.length >= 3;
+}
+
+/** Clique da ferramenta de gatilho em modo poligono. */
+function addTriggerVertex(scene: Scene, world: Point, zoom: number, free: boolean): void {
+  const state = useStore.getState();
+  const point = gridVertexOrFree(scene, world, free);
+  const draft = state.triggerDraft;
+
+  // Clicar de novo no primeiro vertice fecha o poligono.
+  const first = draft[0];
+  if (first && draft.length >= 3 && Math.hypot(first.x - point.x, first.y - point.y) <= WALL_SNAP_PX / zoom) {
+    closeTriggerPolygon(scene);
+    return;
+  }
+  // Duplo clique chega como dois cliques no mesmo ponto.
+  const last = draft[draft.length - 1];
+  if (last && last.x === point.x && last.y === point.y) return;
+  state.setTriggerDraft([...draft, point]);
+}
+
+function closeTriggerPolygon(scene: Scene): void {
+  const state = useStore.getState();
+  const points = state.triggerDraft;
+  state.setTriggerDraft([]);
+  if (points.length < 3) return;
+  void createTriggerWithUndo(scene, { area: { kind: 'polygon', points } });
+}
+
+/** Cria o gatilho, abre o editor dele e registra desfazer e refazer. */
+async function createTriggerWithUndo(scene: Scene, trigger: Partial<Trigger>): Promise<void> {
+  let triggerId: string | null = null;
+  const create = async () => {
+    const created = await act<Trigger>('trigger:create', { sceneId: scene.id, trigger });
+    triggerId = created?.id ?? null;
+    return created;
+  };
+
+  const created = await create();
+  if (!created) return;
+  const state = useStore.getState();
+  state.selectTrigger(created.id);
+  state.pushUndo({
+    label: 'criar gatilho',
+    undo: () => {
+      if (triggerId) void act('trigger:delete', { sceneId: scene.id, triggerId });
+    },
+    redo: () => void create(),
+  });
+}
+
+/** Apaga o gatilho; desfazer recria um igual, com id novo. */
+export async function deleteTriggerWithUndo(scene: Scene, trigger: Trigger): Promise<void> {
+  const { id: _omit, ...rest } = trigger;
+  void _omit;
+  let triggerId: string | null = trigger.id;
+
+  const remove = () => {
+    if (triggerId) void act('trigger:delete', { sceneId: scene.id, triggerId });
+  };
+
+  remove();
+  const state = useStore.getState();
+  state.selectTrigger(null);
+  state.pushUndo({
+    label: `excluir gatilho ${trigger.name}`,
+    undo: async () => {
+      triggerId = (await act<Trigger>('trigger:create', { sceneId: scene.id, trigger: rest }))?.id ?? null;
+    },
+    redo: remove,
+  });
 }

@@ -282,6 +282,19 @@ function registerListeners(s: ClientSocket): void {
   );
   s.on('fog:patch', (patch) => store().applyFogPatch(patch));
 
+  s.on('triggers:patch', ({ sceneId, upsert, remove }) =>
+    store().upsertTriggers(sceneId, upsert ?? [], remove ?? []),
+  );
+  s.on('trigger-log:patch', ({ sceneId, log }) => store().setTriggerLog(sceneId, log));
+  // Todo disparo entra no registro; o aviso na tela so quando o gatilho pede.
+  s.on('trigger:fired', ({ sceneId, firing, notify }) => {
+    store().addTriggerFiring(sceneId, firing);
+    if (notify) {
+      const who = store().table?.players.find((p) => p.id === firing.playerId)?.name;
+      store().notify('warn', `Gatilho "${firing.triggerName}": ${firing.tokenName}${who ? ` (${who})` : ''} entrou.`);
+    }
+  });
+
   s.on('sheets:patch', ({ upsert, remove }) => store().upsertSheets(upsert ?? [], remove ?? []));
   s.on('template:patch', (template) => store().setTemplate(template));
   s.on('players:patch', (players) => store().setPlayers(players));

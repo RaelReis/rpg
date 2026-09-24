@@ -848,7 +848,7 @@ async function main() {
   check('mestre exporta a mesa', exportRes.ok);
   const backup = await exportRes.json();
   check('backup traz as cenas', Array.isArray(backup.scenes) && backup.scenes.length > 0);
-  check('backup declara a versao do formato', backup.format === 3, `format=${backup.format}`);
+  check('backup declara a versao do formato', backup.format === 4, `format=${backup.format}`);
   check('backup traz as fichas', Array.isArray(backup.sheets) && backup.sheets.length > 0);
   check(
     'backup NAO carrega credenciais',
@@ -1426,7 +1426,7 @@ async function main() {
       headers: { 'x-session-token': fresh.session.token },
     })
   ).json();
-  check('backup no formato 3', cardBackup.format === 3, String(cardBackup.format));
+  check('backup de cartelas no formato atual', cardBackup.format === 4, String(cardBackup.format));
   check('backup leva as cartelas', cardBackup.sceneCards?.some((c) => c.title === 'Capitulo 3'));
   const cardImport = await fetch(`${BASE}/api/tables/import`, {
     method: 'POST',
@@ -1446,6 +1446,152 @@ async function main() {
     s3.disconnect();
   } else {
     check('importacao com cartelas', false, JSON.stringify(cardImported));
+  }
+
+  console.log('\n== 27. Gatilhos no mapa ==');
+  await rpc(gm2, 'settings:update', { wallsBlockMovement: false });
+  // Alice na linha 12, a tres celulas da area; a area ocupa a celula (5,12).
+  const startAt = { x: 2 * G, y: 12 * G };
+  await rpc(gm2, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, ...startAt, dragging: false });
+  await sleep(150);
+
+  const aliceTriggerTraffic = [];
+  const recordAliceTriggers = (event, ...args) => aliceTriggerTraffic.push(JSON.stringify([event, args]));
+  alice.onAny(recordAliceTriggers);
+  const aliceFx = [];
+  const onAliceFx = (e) => aliceFx.push(e);
+  alice.on('screen:applied', onAliceFx);
+  const aliceMsgs = [];
+  const onAliceMsg = (m, cb) => {
+    aliceMsgs.push(m);
+    cb?.(true);
+  };
+  alice.on('message:shown', onAliceMsg);
+  const gmFirings = [];
+  const onGmFired = (p) => gmFirings.push(p);
+  gm2.on('trigger:fired', onGmFired);
+
+  const trap = await rpc(gm2, 'trigger:create', {
+    sceneId: scene2,
+    trigger: {
+      name: 'Armadilha do corredor',
+      area: { kind: 'rect', x: 5 * G, y: 12 * G, width: G, height: G },
+      actions: [
+        { type: 'notify-gm' },
+        { type: 'message', to: 'triggerer', text: 'O chao range sob seus pes.', style: 'threat', durationMs: 5000 },
+        { type: 'screen-effect', to: 'triggerer', kind: 'shake', params: { durationMs: 800, intensity: 0.7 } },
+        { type: 'card', to: 'all', cardId: card.id },
+      ],
+    },
+  });
+  check('mestre cria gatilho', !!trap?.id && trap.mode === 'once' && trap.armed === true);
+  check('acoes validadas e na ordem', trap.actions.map((a) => a.type).join(',') === 'notify-gm,message,screen-effect,card');
+
+  let playerTriggerRefused = false;
+  try {
+    await rpc(alice, 'trigger:create', { sceneId: scene2, trigger: { area: { kind: 'circle', x: 0, y: 0, radius: 50 } } });
+  } catch {
+    playerTriggerRefused = true;
+  }
+  check('jogador nao cria gatilho', playerTriggerRefused);
+
+  // O mestre arrastando o token do jogador pela area nao dispara.
+  await rpc(gm2, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 8 * G, y: 12 * G, dragging: false });
+  await rpc(gm2, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, ...startAt, dragging: false });
+  await sleep(250);
+  check('movimento do mestre nao dispara', gmFirings.length === 0);
+
+  // Arraste rapido: um unico passo salta por cima da area, sem parar dentro.
+  const bobCard = waitFor(bob, 'card:presented', (p) => p.cardId === card.id, 2000);
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 8 * G, y: 12 * G, dragging: true });
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 8 * G, y: 12 * G, dragging: false });
+  await sleep(400);
+  check('arraste que atravessa a area dispara', gmFirings.length === 1, `disparos=${gmFirings.length}`);
+  check('o mestre e avisado com o nome do gatilho e de quem entrou', gmFirings[0]?.notify === true && gmFirings[0]?.firing.tokenId === aliceToken.id);
+  check('mensagem para quem disparou', aliceMsgs.some((m) => m.text === 'O chao range sob seus pes.'));
+  check('efeito de tela para quem disparou', aliceFx.some((e) => e.kind === 'shake'));
+  check('cartela para todos', !!(await bobCard));
+
+  // "Uma vez": ida e volta de novo nao dispara.
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, ...startAt, dragging: false });
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 5 * G, y: 12 * G, dragging: false });
+  await sleep(300);
+  check('gatilho "uma vez" desarma depois do disparo', gmFirings.length === 1, `disparos=${gmFirings.length}`);
+
+  const gmTrig = (await rpc(gm2, 'session:resume', { token: fresh.session.token })).state.scenes.find((sc) => sc.id === scene2);
+  check('o disparo entra no registro do mestre', gmTrig.triggerLog.length === 1 && gmTrig.triggerLog[0].triggerId === trap.id);
+  check('e o gatilho aparece desarmado', gmTrig.triggers.find((t) => t.id === trap.id)?.armed === false);
+
+  // Rearmar + "toda vez": cada entrada dispara; andar dentro da area nao.
+  await rpc(gm2, 'card:close', {});
+  await rpc(gm2, 'trigger:update', {
+    sceneId: scene2,
+    triggerId: trap.id,
+    patch: { mode: 'always', actions: [{ type: 'notify-gm' }] },
+  });
+  await rpc(gm2, 'trigger:rearm', { sceneId: scene2, triggerId: trap.id });
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, ...startAt, dragging: false });
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 5 * G, y: 12 * G, dragging: false });
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 5 * G + 10, y: 12 * G + 10, dragging: true });
+  await sleep(300);
+  check('"toda vez" dispara a cada entrada, e nao a cada passo la dentro', gmFirings.length === 2, `disparos=${gmFirings.length}`);
+
+  // Parede no caminho: o movimento e barrado e o trecho percorrido e zero.
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, ...startAt, dragging: false });
+  await rpc(gm2, 'settings:update', { wallsBlockMovement: true });
+  const trapWall = await rpc(gm2, 'wall:create', { sceneId: scene2, wall: { x1: 4 * G, y1: 11 * G, x2: 4 * G, y2: 14 * G } });
+  let wallStopped = false;
+  try {
+    await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 8 * G, y: 12 * G, dragging: false });
+  } catch {
+    wallStopped = true;
+  }
+  await rpc(alice, 'token:move', { sceneId: scene2, tokenId: aliceToken.id, x: 8 * G, y: 12 * G, dragging: true }).catch(() => {});
+  await sleep(300);
+  check('parede barra o movimento', wallStopped);
+  check('e o gatilho alem dela nao dispara', gmFirings.length === 2, `disparos=${gmFirings.length}`);
+  await rpc(gm2, 'wall:delete', { sceneId: scene2, wallId: trapWall.id });
+  await rpc(gm2, 'settings:update', { wallsBlockMovement: false });
+
+  const aliceTrigState = await rpc(alice, 'session:resume', { token: aliceJoin.session.token });
+  const aliceTrigWire = aliceTriggerTraffic.join('\n') + JSON.stringify(aliceTrigState);
+  check('o gatilho NUNCA aparece no trafego do jogador (id)', !aliceTrigWire.includes(trap.id));
+  check('nem o nome', !aliceTrigWire.includes('Armadilha do corredor'));
+  check('nem o registro de disparos', aliceTrigState.state.scenes.every((sc) => sc.triggers.length === 0 && sc.triggerLog.length === 0));
+  alice.offAny(recordAliceTriggers);
+  alice.off('screen:applied', onAliceFx);
+  alice.off('message:shown', onAliceMsg);
+  gm2.off('trigger:fired', onGmFired);
+
+  // Backup leva os gatilhos e religa a cartela da acao; o registro recomeca.
+  await rpc(gm2, 'trigger:update', {
+    sceneId: scene2,
+    triggerId: trap.id,
+    patch: { actions: [{ type: 'card', to: 'all', cardId: card.id }] },
+  });
+  const trigBackup = await (
+    await fetch(`${BASE}/api/tables/${fresh.session.tableId}/export?assets=0`, {
+      headers: { 'x-session-token': fresh.session.token },
+    })
+  ).json();
+  check('backup no formato 4', trigBackup.format === 4, String(trigBackup.format));
+  const trigImport = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: trigBackup, gmName: 'Mestre dos gatilhos' }),
+  });
+  const trigImported = await trigImport.json();
+  if (trigImport.ok) {
+    const s4 = await connect();
+    const st4 = (await rpc(s4, 'session:resume', { token: trigImported.session.token })).state;
+    const restoredTrap = st4.scenes.flatMap((sc) => sc.triggers).find((t) => t.name === 'Armadilha do corredor');
+    const restoredCard = st4.sceneCards.find((c) => c.title === 'Capitulo 3');
+    check('gatilho restaurado', !!restoredTrap);
+    check('a acao aponta para a cartela restaurada', restoredTrap?.actions[0]?.cardId === restoredCard?.id && !!restoredCard);
+    check('registro restaurado vazio', st4.scenes.every((sc) => sc.triggerLog.length === 0));
+    s4.disconnect();
+  } else {
+    check('importacao com gatilhos', false, JSON.stringify(trigImported));
   }
 
   alice.disconnect();

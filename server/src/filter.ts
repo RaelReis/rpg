@@ -113,7 +113,9 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
         };
 
   // A cartela de abertura da cena e surpresa: sai do payload ate aparecer.
-  return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null };
+  // Gatilhos e o registro deles nunca saem: a area ja entregaria onde o mapa
+  // guarda uma surpresa.
+  return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null, triggers: [], triggerLog: [] };
 }
 
 /**
