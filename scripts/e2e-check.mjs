@@ -848,7 +848,7 @@ async function main() {
   check('mestre exporta a mesa', exportRes.ok);
   const backup = await exportRes.json();
   check('backup traz as cenas', Array.isArray(backup.scenes) && backup.scenes.length > 0);
-  check('backup declara a versao do formato', backup.format === 2, `format=${backup.format}`);
+  check('backup declara a versao do formato', backup.format === 3, `format=${backup.format}`);
   check('backup traz as fichas', Array.isArray(backup.sheets) && backup.sheets.length > 0);
   check(
     'backup NAO carrega credenciais',
@@ -1256,6 +1256,197 @@ async function main() {
   check('jogador nao envia mensagem individual', playerMessageRefused);
   const chatAfter = (await rpc(gm2, 'session:resume', { token: fresh.session.token })).state.chat;
   check('a mensagem nao entra no chat', !chatAfter.some((m) => m.text.includes('chamar seu nome')));
+
+  console.log('\n== 25. Efeitos de tela ==');
+  const bobEffects = [];
+  const onBobEffect = (e) => bobEffects.push(e);
+  bob.on('screen:applied', onBobEffect);
+
+  const aliceBlackout = waitFor(alice, 'screen:applied', (e) => e.kind === 'blackout');
+  const blackout = await rpc(gm2, 'screen:apply', {
+    kind: 'blackout',
+    params: { durationMs: null, fadeMs: 600 },
+    playerIds: [aliceId],
+  });
+  const received = await aliceBlackout;
+  check('efeito chega ao destinatario', received?.id === blackout.id);
+  check('apagao fixo continua fixo', received?.durationMs === null && received?.fadeMs === 600);
+  check('o jogador nao recebe a lista de destinatarios', received && !('playerIds' in received));
+  await sleep(200);
+  check('quem nao e destinatario nao recebe', !bobEffects.some((e) => e.id === blackout.id));
+
+  await sleep(300);
+  const aliceBack = (await rpc(alice, 'session:resume', { token: aliceJoin.session.token })).state;
+  const stillDark = aliceBack.live?.screenEffects.find((e) => e.id === blackout.id);
+  check('efeito fixo sobrevive a reconexao', !!stillDark);
+  check('com o tempo ja decorrido', (stillDark?.elapsedMs ?? 0) >= 300, String(stillDark?.elapsedMs));
+  const bobBack = (await rpc(bob, 'session:resume', { token: bobJoin.session.token })).state;
+  check('e nao aparece para quem nao era destinatario', !bobBack.live?.screenEffects.some((e) => e.id === blackout.id));
+  const gmBack = (await rpc(gm2, 'session:resume', { token: fresh.session.token })).state;
+  check(
+    'o mestre ve o efeito no ar, com os destinatarios',
+    JSON.stringify(gmBack.live?.screenEffects.find((e) => e.id === blackout.id)?.playerIds) === JSON.stringify([aliceId]),
+  );
+
+  const bobFlash = waitFor(bob, 'screen:applied', (e) => e.kind === 'flash', 800);
+  const flashOk = await rpc(gm2, 'screen:apply', { kind: 'flash', params: { durationMs: 200 }, playerIds: null });
+  // Logo em seguida, antes de passar o intervalo minimo entre flashes.
+  let flashRefused = '';
+  try {
+    await rpc(gm2, 'screen:apply', { kind: 'flash', params: { durationMs: 200 }, playerIds: null });
+  } catch (err) {
+    flashRefused = err.message;
+  }
+  check('flash para todos chega a todos', (await bobFlash)?.id === flashOk.id);
+  check('flash seguido demais e recusado (max. 3 por segundo)', flashRefused.includes('3 por segundo'), flashRefused || 'aceitou');
+
+  const shake = await rpc(gm2, 'screen:apply', { kind: 'shake', params: { durationMs: null, intensity: 5 }, playerIds: null });
+  check('tremor nunca e fixo e a intensidade e limitada', shake.durationMs !== null && shake.intensity === 1);
+
+  let playerFxRefused = false;
+  try {
+    await rpc(alice, 'screen:apply', { kind: 'flash', params: {}, playerIds: null });
+  } catch {
+    playerFxRefused = true;
+  }
+  check('jogador nao aplica efeitos de tela', playerFxRefused);
+
+  const aliceStopped = waitFor(alice, 'screen:stopped', (p) => p.ids.includes(blackout.id));
+  const bobStopped = waitFor(bob, 'screen:stopped', (p) => p.ids.includes(blackout.id), 600);
+  await rpc(gm2, 'screen:stop', {});
+  check('parar todos remove o efeito fixo de quem o via', !!(await aliceStopped));
+  check('e nao anuncia o efeito a quem nao o via', (await bobStopped) === null);
+  const afterStop = (await rpc(alice, 'session:resume', { token: aliceJoin.session.token })).state;
+  check('depois de parar, nada fica no ar', (afterStop.live?.screenEffects ?? []).length === 0);
+  bob.off('screen:applied', onBobEffect);
+
+  console.log('\n== 26. Cartelas de cena ==');
+  const aliceCardTraffic = [];
+  const recordAliceCards = (event, ...args) => aliceCardTraffic.push(JSON.stringify([event, args]));
+  alice.onAny(recordAliceCards);
+
+  const cardArt = await sharp({
+    create: { width: 64, height: 36, channels: 4, background: { r: 20, g: 20, b: 30, alpha: 1 } },
+  })
+    .png()
+    .toBuffer();
+  const cardForm = new FormData();
+  cardForm.append('kind', 'card');
+  cardForm.append('file', new Blob([cardArt], { type: 'image/png' }), 'porao.png');
+  const cardUpload = await fetch(`${BASE}/api/assets`, {
+    method: 'POST',
+    headers: { 'x-session-token': fresh.session.token },
+    body: cardForm,
+  });
+  const cardAsset = (await cardUpload.json()).asset;
+  check('mestre envia imagem de cartela', cardUpload.ok && !!cardAsset?.id);
+
+  const playerCardForm = new FormData();
+  playerCardForm.append('kind', 'card');
+  playerCardForm.append('file', new Blob([cardArt], { type: 'image/png' }), 'x.png');
+  const playerCardUpload = await fetch(`${BASE}/api/assets`, {
+    method: 'POST',
+    headers: { 'x-session-token': aliceJoin.session.token },
+    body: playerCardForm,
+  });
+  check('jogador nao envia imagem de cartela', playerCardUpload.status === 403);
+
+  const card = await rpc(gm2, 'card:create', { title: 'Capitulo 3', subtitle: 'O Porao', assetId: cardAsset.id });
+  await rpc(gm2, 'card:update', { cardId: card.id, patch: { durationMs: null } });
+  const cellar = await rpc(gm2, 'scene:create', { name: 'Porao' });
+  await rpc(gm2, 'scene:update', { sceneId: cellar.id, patch: { introCardId: card.id } });
+  // Uma cena ja ativa com cartela: o campo circula no payload da cena ativa.
+  await rpc(gm2, 'scene:update', { sceneId: scene2, patch: { introCardId: card.id } });
+
+  let playerCardRefused = false;
+  try {
+    await rpc(alice, 'card:present', { cardId: card.id, playerIds: null, durationMs: null });
+  } catch {
+    playerCardRefused = true;
+  }
+  check('jogador nao apresenta cartela', playerCardRefused);
+
+  await sleep(300);
+  const alicePrep = await rpc(alice, 'session:resume', { token: aliceJoin.session.token });
+  const aliceWireCards = aliceCardTraffic.join('\n') + JSON.stringify(alicePrep);
+  check('cartela preparada NAO chega ao jogador (id)', !aliceWireCards.includes(card.id));
+  check('nem o titulo', !aliceWireCards.includes('Capitulo 3') && !aliceWireCards.includes('O Porao'));
+  check('nem a imagem', !aliceWireCards.includes(cardAsset.id));
+  check('a lista de cartelas do jogador vem vazia', alicePrep.state.sceneCards.length === 0);
+  const gmCards = (await rpc(gm2, 'session:resume', { token: fresh.session.token })).state;
+  check('o mestre recebe a cartela', gmCards.sceneCards.some((c) => c.id === card.id));
+  check('e o vinculo com a cena', gmCards.scenes.find((sc) => sc.id === cellar.id)?.introCardId === card.id);
+  await rpc(gm2, 'scene:update', { sceneId: scene2, patch: { introCardId: null } });
+
+  // Apresentar: a imagem chega antes da cartela, e so a quem e destinatario.
+  const order = [];
+  const trackOrder = (event, payload) => {
+    if (event === 'assets:patch' && payload?.upsert?.some((a) => a.id === cardAsset.id)) order.push('asset');
+    if (event === 'card:presented') order.push('card');
+  };
+  alice.onAny(trackOrder);
+  const bobCards = [];
+  const onBobCard = (p) => bobCards.push(p);
+  bob.on('card:presented', onBobCard);
+  const alicePresented = waitFor(alice, 'card:presented');
+  await rpc(gm2, 'card:present', { cardId: card.id, playerIds: [aliceId], durationMs: null });
+  const shownCard = await alicePresented;
+  check('apresentar mostra a cartela ao destinatario', shownCard?.title === 'Capitulo 3' && shownCard?.subtitle === 'O Porao');
+  check('a imagem chega antes da cartela', order.join(',') === 'asset,card', order.join(','));
+  await sleep(200);
+  check('quem nao e destinatario nao recebe a cartela', bobCards.length === 0);
+  alice.offAny(trackOrder);
+
+  await sleep(200);
+  const aliceMid = (await rpc(alice, 'session:resume', { token: aliceJoin.session.token })).state;
+  check('cartela aberta sobrevive a reconexao', aliceMid.live?.presentation?.cardId === card.id);
+  check('com a imagem disponivel', aliceMid.assets.some((a) => a.id === cardAsset.id));
+
+  const aliceClosed = waitFor(alice, 'card:closed', (p) => p.presentationId === shownCard.id);
+  await rpc(gm2, 'card:close', {});
+  check('o mestre fecha a cartela', !!(await aliceClosed));
+
+  // Ativar a cena que abre com a cartela apresenta a todos.
+  const bobIntro = waitFor(bob, 'card:presented', (p) => p.cardId === card.id, 2500);
+  await rpc(gm2, 'scene:activate', { sceneId: cellar.id });
+  check('ativar a cena apresenta a cartela dela', !!(await bobIntro));
+  const bobInCellar = (await rpc(bob, 'session:resume', { token: bobJoin.session.token })).state;
+  check(
+    'a cena ativa nao entrega o id da cartela no payload',
+    bobInCellar.scenes.every((sc) => sc.introCardId === null),
+  );
+  await rpc(gm2, 'card:close', {});
+  await rpc(gm2, 'scene:activate', { sceneId: scene2 });
+  bob.off('card:presented', onBobCard);
+  alice.offAny(recordAliceCards);
+
+  // Backup leva as cartelas e religa a cena que abre com elas.
+  const cardBackup = await (
+    await fetch(`${BASE}/api/tables/${fresh.session.tableId}/export?assets=0`, {
+      headers: { 'x-session-token': fresh.session.token },
+    })
+  ).json();
+  check('backup no formato 3', cardBackup.format === 3, String(cardBackup.format));
+  check('backup leva as cartelas', cardBackup.sceneCards?.some((c) => c.title === 'Capitulo 3'));
+  const cardImport = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: cardBackup, gmName: 'Mestre das cartelas' }),
+  });
+  const cardImported = await cardImport.json();
+  if (cardImport.ok) {
+    const s3 = await connect();
+    const st3 = (await rpc(s3, 'session:resume', { token: cardImported.session.token })).state;
+    const restoredCard = st3.sceneCards.find((c) => c.title === 'Capitulo 3');
+    check('cartela restaurada com id novo', !!restoredCard && restoredCard.id !== card.id);
+    check(
+      'a cena restaurada abre com a cartela restaurada',
+      st3.scenes.find((sc) => sc.name === 'Porao')?.introCardId === restoredCard?.id,
+    );
+    s3.disconnect();
+  } else {
+    check('importacao com cartelas', false, JSON.stringify(cardImported));
+  }
 
   alice.disconnect();
   bob.disconnect();

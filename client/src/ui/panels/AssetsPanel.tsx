@@ -14,6 +14,7 @@ const KIND_LABELS: Record<AssetKind, string> = {
   token: 'Tokens',
   portrait: 'Retratos',
   item: 'Itens',
+  card: 'Cartelas',
   effect: 'Efeitos',
 };
 

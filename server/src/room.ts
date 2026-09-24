@@ -14,6 +14,7 @@ import {
   type Handout,
   type Player,
   type Scene,
+  type SceneCard,
   type Sheet,
   type SheetTemplate,
   type TableState,
@@ -23,6 +24,7 @@ import { CHAT_HISTORY_SIZE } from '@rpg/shared';
 import { generateSessionToken, hashPassword, hashToken, normalizeTableCode } from './auth.js';
 import { fromJson, prisma, toJson, withRetry } from './db.js';
 import { PERSIST_DEBOUNCE_MS, ROOM_IDLE_TIMEOUT_MS } from './env.js';
+import { LiveScreen } from './live.js';
 import { assetUrl } from './uploads.js';
 
 /**
@@ -61,6 +63,8 @@ export class Room {
 
   /** Sockets conectados, para saber quando a sala pode sair da memoria. */
   readonly sockets = new Set<string>();
+  /** Efeitos de tela e cartela no ar. So memoria: ver `live.ts`. */
+  readonly live = new LiveScreen();
   lastActivity = Date.now();
 
   constructor(state: TableState) {
@@ -243,6 +247,7 @@ export class Room {
             initiative: toJson(s.initiative),
             chat: toJson(s.chat.slice(-CHAT_HISTORY_SIZE)),
             handouts: toJson(s.handouts),
+            sceneCards: toJson(s.sceneCards),
           },
         });
       }
@@ -507,6 +512,7 @@ class RoomManager {
         }),
       ),
       handouts: fromJson<Handout[]>(row.handouts, []),
+      sceneCards: fromJson<SceneCard[]>(row.sceneCards, []),
       chat: fromJson<ChatMessage[]>(row.chat, []),
       createdAt: row.createdAt.getTime(),
       updatedAt: row.updatedAt.getTime(),

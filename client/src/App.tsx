@@ -8,6 +8,8 @@ import { HandoutModal } from './ui/HandoutModal';
 import { MessageComposer } from './ui/MessageComposer';
 import { Notices } from './ui/Notices';
 import { Rail } from './ui/Rail';
+import { CardPresentationView, ScreenEffectsLayer } from './ui/ScreenEffects';
+import { ScreenFxPanel } from './ui/ScreenFxPanel';
 import { ScreenMessages } from './ui/ScreenMessages';
 import { Side } from './ui/Side';
 import { SheetModal } from './ui/SheetModal';
@@ -22,6 +24,7 @@ export function App(): JSX.Element {
   const sheetModalId = useStore((s) => s.sheetModalId);
   const openHandoutId = useStore((s) => s.openHandoutId);
   const messageComposer = useStore((s) => s.messageComposer);
+  const screenFxOpen = useStore((s) => s.screenFxOpen);
   const [restoring, setRestoring] = useState(true);
 
   /**
@@ -65,8 +68,10 @@ export function App(): JSX.Element {
         <Rail />
         <div className="stage-wrap">
           <Stage />
+          <ScreenEffectsLayer />
           <TurnBanner />
           <ScreenMessages />
+          {screenFxOpen && session.role === 'GM' && <ScreenFxPanel />}
           <SideToggle />
         </div>
         <Side />
@@ -76,6 +81,7 @@ export function App(): JSX.Element {
       {sheetModalId && <SheetModal sheetId={sheetModalId} />}
       {openHandoutId && <HandoutModal handoutId={openHandoutId} />}
       {messageComposer && session.role === 'GM' && <MessageComposer initial={messageComposer} />}
+      <CardPresentationView />
       <Notices />
     </div>
   );

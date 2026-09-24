@@ -1722,3 +1722,171 @@ textarea {
   border-color: #58437a;
   color: #b58be8;
 }
+
+/* ---------------------------------------------------------------------------
+   Efeitos de tela
+   Camadas acima do mapa e fora da camera, animadas pelo navegador (Web
+   Animations). Nada aqui pede quadro ao canvas.
+   --------------------------------------------------------------------------- */
+.screen-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 15;
+  overflow: hidden;
+}
+.screen-fx-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Painel flutuante ao lado do trilho. */
+.rail-pop {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: min(340px, calc(100% - 20px));
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 40;
+  animation: rise 180ms ease both;
+}
+.rail-pop > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+.fx-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tool-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--brass);
+  color: #1a1508;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+}
+
+/* ---------------------------------------------------------------------------
+   Cartela de cena: tela cheia, com fade de entrada e saida.
+   --------------------------------------------------------------------------- */
+.card-presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  background: #000;
+  animation: card-in 1100ms ease both;
+  transition: opacity 1100ms ease;
+  cursor: default;
+}
+.card-presentation.closing {
+  opacity: 0;
+}
+.card-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  animation: card-drift 24s ease-out both;
+}
+.card-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0.1) 0%, rgba(0, 0, 0, 0.72) 100%),
+    linear-gradient(180deg, transparent 45%, rgba(0, 0, 0, 0.65) 100%);
+}
+.card-text {
+  position: relative;
+  max-width: min(900px, 88vw);
+  text-align: center;
+  padding: 24px;
+  animation: card-text-in 1600ms 250ms ease both;
+}
+.card-text h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(32px, 6vw, 68px);
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  color: #f1ebdd;
+  text-shadow: 0 4px 28px rgba(0, 0, 0, 0.9);
+}
+.card-text p {
+  margin: 14px 0 0;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: clamp(18px, 2.4vw, 28px);
+  color: #cfc6b3;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.9);
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes card-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(3px);
+  }
+}
+@keyframes card-drift {
+  from {
+    transform: scale(1.06);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-bg,
+  .card-text {
+    animation: none;
+  }
+}
+.card-live {
+  padding: 6px 8px;
+  border: 1px solid #38542f;
+  border-radius: var(--radius);
+  background: rgba(111, 174, 114, 0.08);
+}
+
+/* Preferencias no cabecalho. */
+.prefs {
+  position: relative;
+}
+.prefs-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+  animation: rise 160ms ease both;
+}

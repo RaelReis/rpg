@@ -112,7 +112,8 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
           computedExplored: [...vision.explored],
         };
 
-  return { ...scene, tokens, tiles, effects, walls, fog };
+  // A cartela de abertura da cena e surpresa: sai do payload ate aparecer.
+  return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null };
 }
 
 /**
@@ -237,6 +238,8 @@ function assetsForViewer(
   for (const handout of room.state.handouts) {
     if (handoutForViewer(handout, viewer)) ids.add(handout.assetId);
   }
+  // A imagem da cartela no ar; as preparadas nao entregam a arte.
+  ids.add(room.live.forViewer(viewer).presentation?.assetId);
 
   return room.state.assets.filter((a) => ids.has(a.id));
 }
@@ -293,7 +296,12 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
   const s = room.state;
 
   if (viewer.role === 'GM') {
-    return { ...s, players: playersWithPortraits(room), sheetTemplate: s.sheetTemplate };
+    return {
+      ...s,
+      players: playersWithPortraits(room),
+      sheetTemplate: s.sheetTemplate,
+      live: room.live.forViewer(viewer),
+    };
   }
 
   const active = room.activeScene();
@@ -314,6 +322,10 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
     initiative: initiativeForViewer(room, viewer),
     chat: chatForViewer(s.chat, viewer),
+    // Cartelas preparadas sao material do mestre; o jogador so ve a que esta
+    // no ar, por `live`.
+    sceneCards: [],
+    live: room.live.forViewer(viewer),
   };
 }
 

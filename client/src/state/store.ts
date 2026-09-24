@@ -11,9 +11,13 @@ import {
   type MapEffect,
   type MapPing,
   type Player,
+  type CardPresentation,
   type Point,
   type Scene,
+  type SceneCard,
+  type ScreenEffect,
   type ScreenMessage,
+  FLASH_MIN_INTERVAL_MS,
   type Session,
   type Sheet,
   type SheetTemplate,
@@ -91,6 +95,37 @@ export interface Camera {
   y: number;
   zoom: number;
 }
+
+/**
+ * Efeito de tela ou cartela no ar, com o instante local em que comecou.
+ *
+ * O servidor manda o tempo ja decorrido, e nao um horario: o relogio deste
+ * navegador nao precisa bater com o dele.
+ */
+export type LiveEffect = ScreenEffect & { startedAt: number; stopping?: boolean };
+export type LivePresentation = CardPresentation & { startedAt: number; closing?: boolean };
+
+const REDUCE_EFFECTS_KEY = 'rpg-vtt:reduce-effects';
+
+/**
+ * "Reduzir efeitos de tela", guardado neste navegador.
+ *
+ * Sem escolha salva, segue o pedido de menos movimento do sistema
+ * operacional — quem ja pediu isso ao computador nao deveria ter de pedir de
+ * novo a cada mesa.
+ */
+function initialReduceEffects(): boolean {
+  try {
+    const saved = localStorage.getItem(REDUCE_EFFECTS_KEY);
+    if (saved !== null) return saved === '1';
+  } catch {
+    // Storage bloqueado: cai na preferencia do sistema.
+  }
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Instante do ultimo flash aceito aqui; ver `FLASH_MIN_INTERVAL_MS`. */
+let lastFlashAt: number | null = null;
 
 export interface ActivePing extends MapPing {
   id: number;
@@ -174,6 +209,14 @@ interface AppState {
   openHandoutId: string | null;
   /** Mensagens de chat chegadas enquanto a aba estava em outro painel. */
   unreadChat: number;
+  /** Efeitos de tela no ar (o mestre os ve so no painel, nao na tela). */
+  screenEffects: LiveEffect[];
+  /** Cartela no ar. */
+  presentation: LivePresentation | null;
+  /** Preferencia deste navegador: troca flash por vinheta e tira o tremor. */
+  reduceEffects: boolean;
+  /** Painel de efeitos de tela aberto no trilho (mestre). */
+  screenFxOpen: boolean;
   /** Mensagens individuais do mestre na tela deste jogador. Nao persistem. */
   screenMessages: ScreenMessage[];
   /**
@@ -242,6 +285,17 @@ interface AppState {
   openTemplateEditor(open: boolean): void;
   openSheetModal(sheetId: string | null): void;
   openHandout(handoutId: string | null): void;
+  applyScreenEffect(effect: ScreenEffect): void;
+  stopScreenEffects(ids: string[]): void;
+  removeScreenEffect(id: string): void;
+  /** Tira da lista os temporizados que ja acabaram. */
+  expireLive(): void;
+  showPresentation(presentation: CardPresentation): void;
+  closePresentation(presentationId: string): void;
+  clearPresentation(): void;
+  upsertCards(cards: SceneCard[], remove: string[]): void;
+  setReduceEffects(reduce: boolean): void;
+  setScreenFxOpen(open: boolean): void;
   showScreenMessage(message: ScreenMessage): void;
   dismissScreenMessage(id: string): void;
   openMessageComposer(playerIds: string[] | null): void;
@@ -301,6 +355,10 @@ export const useStore = create<AppState>((set, get) => ({
   unreadChat: 0,
   screenMessages: [],
   messageComposer: null,
+  screenEffects: [],
+  presentation: null,
+  reduceEffects: initialReduceEffects(),
+  screenFxOpen: false,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -310,6 +368,9 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({
       table,
       rev: s.rev + 1,
+      // O estado completo traz o que esta no ar agora: e o que devolve o
+      // apagao fixo a quem reconectou no meio dele.
+      ...liveFrom(table),
       // A ficha propria e o ponto de partida natural para o jogador.
       selectedSheetId:
         s.selectedSheetId && table.sheets.some((sh) => sh.id === s.selectedSheetId)
@@ -332,6 +393,9 @@ export const useStore = create<AppState>((set, get) => ({
       wallDraft: [],
       screenMessages: [],
       messageComposer: null,
+      screenEffects: [],
+      presentation: null,
+      screenFxOpen: false,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -624,7 +688,82 @@ export const useStore = create<AppState>((set, get) => ({
   dismissScreenMessage: (id) =>
     set((s) => ({ screenMessages: s.screenMessages.filter((m) => m.id !== id) })),
   openMessageComposer: (messageComposer) => set({ messageComposer }),
+
+  applyScreenEffect: (effect) => {
+    if (effect.kind === 'flash') {
+      // Segunda trava do limite de 3 flashes por segundo; a primeira e o
+      // servidor, e nenhuma das duas deve ser a unica.
+      const now = Date.now();
+      if (lastFlashAt !== null && now - lastFlashAt < FLASH_MIN_INTERVAL_MS) return;
+      lastFlashAt = now;
+    }
+    set((s) => ({
+      screenEffects: [
+        ...s.screenEffects.filter((e) => e.id !== effect.id),
+        { ...effect, startedAt: Date.now() - effect.elapsedMs },
+      ],
+    }));
+  },
+
+  // Na tela do jogador, o efeito removido sai com fade; no painel do mestre,
+  // que nao desenha nada, sai na hora.
+  stopScreenEffects: (ids) =>
+    set((s) => {
+      const gone = new Set(ids);
+      if (s.session?.role === 'GM') return { screenEffects: s.screenEffects.filter((e) => !gone.has(e.id)) };
+      return { screenEffects: s.screenEffects.map((e) => (gone.has(e.id) ? { ...e, stopping: true } : e)) };
+    }),
+
+  removeScreenEffect: (id) => set((s) => ({ screenEffects: s.screenEffects.filter((e) => e.id !== id) })),
+
+  expireLive: () =>
+    set((s) => {
+      const now = Date.now();
+      const alive = s.screenEffects.filter((e) => e.durationMs === null || now - e.startedAt < e.durationMs);
+      return alive.length === s.screenEffects.length ? {} : { screenEffects: alive };
+    }),
+
+  showPresentation: (presentation) =>
+    set({ presentation: { ...presentation, startedAt: Date.now() - presentation.elapsedMs } }),
+
+  closePresentation: (presentationId) =>
+    set((s) => {
+      if (s.presentation?.id !== presentationId) return {};
+      if (s.session?.role === 'GM') return { presentation: null };
+      return { presentation: { ...s.presentation, closing: true } };
+    }),
+
+  clearPresentation: () => set({ presentation: null }),
+
+  upsertCards: (cards, remove) =>
+    set((s) => {
+      if (!s.table) return {};
+      return {
+        table: { ...s.table, sceneCards: mergeById(s.table.sceneCards ?? [], cards, remove) },
+        rev: s.rev + 1,
+      };
+    }),
+
+  setReduceEffects: (reduceEffects) => {
+    try {
+      localStorage.setItem(REDUCE_EFFECTS_KEY, reduceEffects ? '1' : '0');
+    } catch {
+      // Sem storage a escolha vale ate fechar a aba.
+    }
+    set({ reduceEffects });
+  },
+
+  setScreenFxOpen: (screenFxOpen) => set({ screenFxOpen }),
 }));
+
+function liveFrom(table: TableState): Pick<AppState, 'screenEffects' | 'presentation'> {
+  const now = Date.now();
+  const live = table.live;
+  return {
+    screenEffects: (live?.screenEffects ?? []).map((e) => ({ ...e, startedAt: now - e.elapsedMs })),
+    presentation: live?.presentation ? { ...live.presentation, startedAt: now - live.presentation.elapsedMs } : null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Seletores

@@ -1,3 +1,5 @@
+import type { LiveState, SceneCard } from './screen.js';
+
 /**
  * Modelo de dominio compartilhado entre servidor e cliente.
  * O servidor e a autoridade: todo o estado abaixo vive no servidor e e
@@ -277,6 +279,11 @@ export interface Scene {
   /** 1 = dia claro; 0 = escuridao total, so a visao dos tokens ilumina. */
   globalLight: number;
   weather: WeatherConfig;
+  /**
+   * Cartela apresentada a todos quando a cena e ativada. Material do mestre:
+   * sai do payload do jogador, que so ve a cartela quando ela aparece.
+   */
+  introCardId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +445,7 @@ export interface TableSettings {
   diceEnabled: boolean;
 }
 
-export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile';
+export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card';
 
 export interface Asset {
   id: string;
@@ -509,7 +516,14 @@ export interface TableState {
   sheets: Sheet[];
   assets: Asset[];
   handouts: Handout[];
+  /** Cartelas de cena preparadas. So o mestre recebe. */
+  sceneCards: SceneCard[];
   chat: ChatMessage[];
+  /**
+   * Efeitos de tela e cartela no ar. Derivado no envio, nunca gravado: vive
+   * na memoria do servidor enquanto a mesa esta aberta.
+   */
+  live?: LiveState;
   createdAt: number;
   updatedAt: number;
 }

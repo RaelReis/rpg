@@ -13,6 +13,7 @@ import {
   TextField,
   Toggle,
 } from '../common';
+import { CardsSection } from './CardsSection';
 
 /** Painel do mestre: cenas, grid, fundo, neblina e iluminacao. */
 
@@ -95,6 +96,8 @@ export function ScenePanel(): JSX.Element {
           Cenas novas ficam so com voce. Os jogadores passam a ve-las quando forem ativadas.
         </span>
       </Section>
+
+      <CardsSection />
 
       {!scene ? (
         <Section title="Cena ativa">

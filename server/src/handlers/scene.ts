@@ -15,6 +15,7 @@ import {
   socketsOf,
 } from '../broadcast.js';
 import { clampNumber, fail, ok, ownedAsset, safeString, type Ctx } from './context.js';
+import { presentCardTo } from './screen.js';
 
 /** Cenas (mapas), configuracao de grid e ajustes gerais da mesa. */
 
@@ -56,6 +57,10 @@ export function updateScene(ctx: Ctx, payload: { sceneId: string; patch: Partial
   if (p.width !== undefined) scene.width = clampNumber(p.width, 100, 20000, scene.width);
   if (p.height !== undefined) scene.height = clampNumber(p.height, 100, 20000, scene.height);
   if (p.order !== undefined) scene.order = clampNumber(p.order, 0, 9999, scene.order);
+  if (p.introCardId !== undefined) {
+    const exists = ctx.room.state.sceneCards.some((c) => c.id === p.introCardId);
+    scene.introCardId = exists ? (p.introCardId as string) : null;
+  }
 
   if (p.globalLight !== undefined) {
     scene.globalLight = clampNumber(p.globalLight, 0, 1, scene.globalLight);
@@ -158,6 +163,10 @@ export function activateScene(ctx: Ctx, payload: { sceneId: string }, ack: Ack<n
 
   sendFullStateToAll(ctx.room);
   for (const socket of socketsOf(ctx.room)) socket.emit('scene:activated', { sceneId: scene.id });
+
+  // A cena pode abrir com uma cartela: e a primeira coisa que o grupo ve.
+  const intro = ctx.room.state.sceneCards.find((c) => c.id === scene.introCardId);
+  if (intro) presentCardTo(ctx.room, intro, null, intro.durationMs);
   ok(ack, null);
 }
 

@@ -374,6 +374,16 @@ export async function deleteAsset(ctx: Ctx, payload: { assetId: string }, ack: A
     }
   }
 
+  // Cartelas sao do mestre: so ele precisa saber que perderam a imagem.
+  const cards = ctx.room.state.sceneCards.filter((c) => c.assetId === assetId);
+  for (const card of cards) card.assetId = null;
+  if (cards.length) {
+    ctx.room.touch('table');
+    for (const socket of socketsOf(ctx.room)) {
+      if (socket.data.viewer.role === 'GM') socket.emit('cards:patch', { upsert: cards });
+    }
+  }
+
   for (const socket of socketsOf(ctx.room)) socket.emit('assets:patch', { remove: [assetId] });
   ok(ack, null);
 }

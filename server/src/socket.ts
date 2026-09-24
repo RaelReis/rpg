@@ -48,6 +48,15 @@ import {
   updateSettings,
 } from './handlers/scene.js';
 import { sendScreenMessage } from './handlers/messages.js';
+import {
+  applyScreenEffect,
+  closeCard,
+  createCard,
+  deleteCard,
+  presentCard,
+  stopScreenEffect,
+  updateCard,
+} from './handlers/screen.js';
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
   assignSheet,
@@ -262,6 +271,15 @@ export function registerSocketHandlers(io: TypedServer): void {
     // -- social ------------------------------------------------------------
     socket.on('chat:send', member(sendChat));
     socket.on('message:send', gm(sendScreenMessage));
+
+    // -- efeitos de tela e cartelas ------------------------------------------
+    socket.on('screen:apply', gm(applyScreenEffect));
+    socket.on('screen:stop', gm(stopScreenEffect));
+    socket.on('card:create', gm(createCard));
+    socket.on('card:update', gm(updateCard));
+    socket.on('card:delete', gm(deleteCard));
+    socket.on('card:present', gm(presentCard));
+    socket.on('card:close', gm(closeCard));
     socket.on('player:update', member(updatePlayer));
     socket.on('player:kick', gm(kickPlayer));
     socket.on('player:promote', gm(promotePlayer));

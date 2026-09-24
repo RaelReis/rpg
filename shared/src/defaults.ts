@@ -111,6 +111,7 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     effects: (partial.effects ?? []).map((e) => createEffect(e)),
     globalLight: partial.globalLight ?? 1,
     weather: { ...DEFAULT_WEATHER, ...(partial.weather ?? {}) },
+    introCardId: partial.introCardId ?? null,
   };
 }
 

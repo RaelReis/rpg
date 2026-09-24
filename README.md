@@ -16,6 +16,9 @@ npm run dev       # sobe servidor (8787) e cliente (5173)
 
 Abra <http://localhost:5173>.
 
+Depois de atualizar o projeto, rode `npm run db:push`: ele aplica ao banco as
+colunas novas, sem apagar o que já existe.
+
 Em produção:
 
 ```bash
@@ -100,6 +103,8 @@ não deveria saber de algo, aquilo não entra no payload dele:
   inteiras no inspecionador de rede do navegador;
 - campos de ficha marcados como exclusivos do mestre;
 - cenas ainda não ativadas (material de preparação);
+- **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem,
+  nem a ligação com a cena que abre com elas;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
 
@@ -377,6 +382,60 @@ chama o nome de alguém uma hora mais tarde já não assusta ninguém.
 
 ---
 
+## Efeitos de tela e cartelas de cena
+
+### Efeitos de tela
+
+O botão ✺ no trilho abre um painel compacto: o mestre escolhe o efeito, os
+destinatários (todos, ou jogadores marcados) e aplica.
+
+| Efeito | Parâmetros |
+| --- | --- |
+| Tremor | intensidade, duração |
+| Flash | cor, duração |
+| Vinheta | cor, intensidade, duração ou fixa |
+| Desfoque | intensidade, duração ou fixo |
+| Apagão | duração ou fixo, com fade de entrada e saída |
+
+Abaixo fica o que está **no ar**, com o destinatário e o tempo restante de
+cada efeito, e o botão **Parar todos**.
+
+Os efeitos são camadas de interface acima do mapa, fora da câmera: o tremor
+sacode a tela, e não o terreno. Quem os anima é o próprio navegador — o mapa
+não redesenha nenhum quadro por causa deles, e a textura da neblina continua
+em cache. O mestre não vê os efeitos na própria tela, só no painel.
+
+São efêmeros: não vão para o banco. Um efeito **fixo** fica até o mestre
+removê-lo e sobrevive à reconexão do jogador — quem cai no meio de um apagão
+volta para o apagão. O estado vive na memória do servidor; reiniciar o
+servidor encerra todos os efeitos.
+
+**Acessibilidade.** No ⚙ do cabeçalho, cada pessoa pode ligar **Reduzir
+efeitos de tela**: o flash vira uma vinheta suave da mesma cor e o tremor não
+acontece. A escolha fica no navegador, e começa ligada para quem já pediu
+menos movimento ao sistema operacional. Nenhum flash pisca mais de 3 vezes
+por segundo: o servidor recusa flashes mais próximos que isso, e o cliente
+também os ignora.
+
+### Cartelas de cena
+
+Uma tela cheia com imagem de fundo, título e subtítulo — *"Capítulo 3 — O
+Porão"* —, com fade de entrada e saída. Ficam em *Cena → Cartelas de cena*.
+
+O mestre prepara as cartelas com antecedência, e **nenhuma parte delas chega
+ao jogador antes de ser apresentada**: nem o título, nem a imagem. **Apresentar**
+mostra a cartela a todos, ou a jogadores escolhidos, pela duração definida ou
+até o mestre fechar. Uma cartela aberta sobrevive à reconexão.
+
+Cada cena pode abrir com uma cartela: em *Mostrar cartela ao ativar a cena*,
+o mestre escolhe qual. Ao ativar a cena, ela aparece para todos. A ligação
+também é segredo — o payload da cena ativa não a carrega.
+
+A imagem usa o envio de imagens da mesa, na categoria *Cartela*, só pelo
+mestre e com a mesma validação por conteúdo.
+
+---
+
 ## Fichas
 
 O mestre monta o modelo em *Fichas → Editar modelo de ficha*: seções e campos
@@ -435,7 +494,7 @@ que já entregaria a surpresa. Retirar o acesso o remove da tela dele.
 ## Backup
 
 Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
-fichas, materiais, tokens, paredes e neblina. Há duas versões — **com imagens**,
+fichas, materiais, cartelas de cena, tokens, paredes e neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
 
@@ -481,6 +540,7 @@ regras é do mestre.
 | Token | 5 MB | todos |
 | Retrato | 5 MB | todos |
 | Efeito | 5 MB | mestre |
+| Cartela | 10 MB | mestre |
 | Item | 2 MB | todos |
 
 Formatos: PNG, JPEG, WebP, GIF, AVIF; até 8192 px por lado.

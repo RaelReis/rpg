@@ -304,6 +304,12 @@ function registerListeners(s: ClientSocket): void {
 
   s.on('chat:message', (message) => store().addChatMessage(message));
 
+  s.on('screen:applied', (effect) => store().applyScreenEffect(effect));
+  s.on('screen:stopped', ({ ids }) => store().stopScreenEffects(ids));
+  s.on('cards:patch', ({ upsert, remove }) => store().upsertCards(upsert ?? [], remove ?? []));
+  s.on('card:presented', (presentation) => store().showPresentation(presentation));
+  s.on('card:closed', ({ presentationId }) => store().closePresentation(presentationId));
+
   // O ack e a confirmacao de entrega que o mestre ve: so responde depois de
   // a mensagem estar no estado que a tela desenha.
   s.on('message:shown', (message, ack) => {

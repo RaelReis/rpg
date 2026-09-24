@@ -58,6 +58,9 @@ export function Rail(): JSX.Element {
   const redo = useStore((s) => s.redo);
   const redoDepth = useStore((s) => s.redoStack.length);
   const openMessageComposer = useStore((s) => s.openMessageComposer);
+  const screenFxOpen = useStore((s) => s.screenFxOpen);
+  const setScreenFxOpen = useStore((s) => s.setScreenFxOpen);
+  const liveEffects = useStore((s) => s.screenEffects.length);
 
   const painting = tool === 'fog-reveal' || tool === 'fog-hide';
 
@@ -193,6 +196,19 @@ export function Rail(): JSX.Element {
             onClick={() => openMessageComposer([])}
           >
             ✉
+          </button>
+
+          <button
+            className={`tool${screenFxOpen ? ' active' : ''}`}
+            data-tip={
+              liveEffects > 0
+                ? `Efeitos de tela — ${liveEffects} no ar`
+                : 'Efeitos de tela — tremor, flash, vinheta, desfoque, apagao'
+            }
+            onClick={() => setScreenFxOpen(!screenFxOpen)}
+          >
+            ✺
+            {liveEffects > 0 && <span className="tool-badge">{liveEffects}</span>}
           </button>
 
           <button

@@ -8,8 +8,10 @@ import {
   createScene,
   generateId,
   normalizeTemplate,
+  sanitizeCardDuration,
   type Handout,
   type Scene,
+  type SceneCard,
   type Sheet,
   type TableState,
 } from '@rpg/shared';
@@ -39,8 +41,9 @@ import { saveImage } from './uploads.js';
  *
  * 1 — formato original.
  * 2 — tokens e efeitos com `visibleTo` (alucinacoes).
+ * 3 — cartelas de cena (`sceneCards`) e `introCardId` nas cenas.
  */
-export const BACKUP_FORMAT = 2;
+export const BACKUP_FORMAT = 3;
 const MIN_BACKUP_FORMAT = 1;
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
@@ -65,6 +68,8 @@ export interface TableBackup {
   sheetTemplate: TableState['sheetTemplate'];
   initiative: TableState['initiative'];
   handouts: Handout[];
+  /** Desde o formato 3. */
+  sceneCards?: SceneCard[];
   scenes: Scene[];
   sheets: Sheet[];
   /** Apenas para reconstruir a autoria; sem credenciais. */
@@ -111,6 +116,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
     sheetTemplate: s.sheetTemplate,
     initiative: s.initiative,
     handouts: s.handouts,
+    sceneCards: s.sceneCards,
     scenes: s.scenes,
     sheets: s.sheets,
     players: s.players.map((p) => ({ id: p.id, name: p.name, color: p.color, role: p.role })),
@@ -219,6 +225,22 @@ async function buildImportedTable(
     return idMap.get(id) ?? null;
   };
 
+  // Cartelas ganham ids novos; as cenas que abriam com elas sao religadas.
+  const cardIdMap = new Map<string, string>();
+  room.state.sceneCards = (Array.isArray(backup.sceneCards) ? backup.sceneCards : []).map((card) => {
+    const id = generateId('crd');
+    if (card?.id) cardIdMap.set(card.id, id);
+    return {
+      id,
+      title: String(card?.title ?? 'Cartela').slice(0, 120),
+      subtitle: String(card?.subtitle ?? '').slice(0, 200),
+      assetId: remap(card?.assetId),
+      durationMs: sanitizeCardDuration(card?.durationMs),
+      createdAt: Number(card?.createdAt) || Date.now(),
+      updatedAt: Date.now(),
+    };
+  });
+
   // Cenas: a primeira do backup vira a ativa.
   room.state.scenes = (backup.scenes ?? []).map((raw, index) => {
     const scene = createScene({ ...raw, id: generateId('scn'), order: index });
@@ -226,6 +248,7 @@ async function buildImportedTable(
     scene.tokens = scene.tokens.map((t) => ({ ...t, assetId: remap(t.assetId) }));
     scene.tiles = scene.tiles.map((t) => ({ ...t, assetId: remap(t.assetId) }));
     scene.effects = scene.effects.map((e) => ({ ...e, assetId: remap(e.assetId) }));
+    scene.introCardId = raw.introCardId ? (cardIdMap.get(raw.introCardId) ?? null) : null;
     return scene;
   });
   room.state.activeSceneId = room.state.scenes[0]?.id ?? null;

@@ -1,4 +1,11 @@
 import type {
+  CardPresentation,
+  ScreenEffect,
+  ScreenEffectKind,
+  ScreenEffectParams,
+  SceneCard,
+} from './screen.js';
+import type {
   Asset,
   Cell,
   ChatMessage,
@@ -240,6 +247,27 @@ export interface ClientToServerEvents {
    */
   'handout:present': (payload: { handoutId: string }, ack: Ack<null>) => void;
 
+  /**
+   * Efeito de tela para todos (`playerIds` nulo) ou para jogadores escolhidos.
+   * Efemero: nao fica gravado, mas os fixos sobrevivem a reconexao.
+   */
+  'screen:apply': (
+    payload: { kind: ScreenEffectKind; params: Partial<ScreenEffectParams>; playerIds: string[] | null },
+    ack: Ack<ScreenEffect>,
+  ) => void;
+  /** Remove um efeito, ou todos quando `effectId` vem vazio. */
+  'screen:stop': (payload: { effectId?: string }, ack: Ack<null>) => void;
+
+  'card:create': (payload: { title: string; subtitle?: string; assetId?: string | null }, ack: Ack<SceneCard>) => void;
+  'card:update': (payload: { cardId: string; patch: Partial<SceneCard> }, ack: Ack<null>) => void;
+  'card:delete': (payload: { cardId: string }, ack: Ack<null>) => void;
+  /** Mostra a cartela em tela cheia. So neste momento ela chega ao jogador. */
+  'card:present': (
+    payload: { cardId: string; playerIds: string[] | null; durationMs: number | null },
+    ack: Ack<null>,
+  ) => void;
+  'card:close': (payload: Record<string, never>, ack: Ack<null>) => void;
+
   'chat:send': (payload: ChatSendPayload, ack: Ack<null>) => void;
   /** Mensagem individual na tela de jogadores escolhidos (so o mestre). */
   'message:send': (payload: ScreenMessageRequest, ack: Ack<ScreenMessageReport>) => void;
@@ -274,6 +302,13 @@ export interface ServerToClientEvents {
   'table:renamed': (name: string) => void;
 
   'chat:message': (message: ChatMessage) => void;
+
+  'screen:applied': (effect: ScreenEffect) => void;
+  'screen:stopped': (payload: { ids: string[] }) => void;
+  /** Cartelas preparadas: so o mestre recebe. */
+  'cards:patch': (payload: { upsert?: SceneCard[]; remove?: string[] }) => void;
+  'card:presented': (presentation: CardPresentation) => void;
+  'card:closed': (payload: { presentationId: string }) => void;
   /** O cliente confirma pelo ack que a mensagem apareceu na tela. */
   'message:shown': (message: ScreenMessage, ack: (shown: boolean) => void) => void;
   'map:ping': (ping: MapPing) => void;
@@ -294,6 +329,7 @@ export const UPLOAD_LIMITS = {
   portrait: 5 * 1024 * 1024,
   item: 2 * 1024 * 1024,
   effect: 5 * 1024 * 1024,
+  card: 10 * 1024 * 1024,
 } as const;
 
 export const ALLOWED_IMAGE_MIMES = [

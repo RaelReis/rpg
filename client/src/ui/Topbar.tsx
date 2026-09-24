@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import type { Player } from '@rpg/shared';
 
 import { act, leaveTable } from '../net/socket';
 import { findAsset, isGm, useStore } from '../state/store';
+import { Toggle } from './common';
 
 /** Acima disto, os demais viram um contador para o cabecalho nao estourar. */
 const MAX_AVATARS = 7;
@@ -73,6 +75,8 @@ export function Topbar(): JSX.Element {
 
       {gm && <span className="tag gm">Mestre</span>}
 
+      <Preferences />
+
       <span className="topbar-sep" aria-hidden="true" />
 
       <button
@@ -85,6 +89,41 @@ export function Topbar(): JSX.Element {
         Sair
       </button>
     </header>
+  );
+}
+
+/**
+ * Preferencias deste navegador.
+ *
+ * Ficam no cabecalho porque valem para qualquer papel — o jogador nao tem a
+ * aba Mesa, e e ele quem mais precisa desta opcao.
+ */
+function Preferences(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const reduce = useStore((s) => s.reduceEffects);
+  const setReduce = useStore((s) => s.setReduceEffects);
+
+  return (
+    <div className="prefs">
+      <button
+        className={`btn ghost sm${open ? ' active' : ''}`}
+        onClick={() => setOpen(!open)}
+        title="Preferencias"
+        aria-expanded={open}
+      >
+        ⚙
+      </button>
+      {open && (
+        <div className="prefs-pop" role="dialog" aria-label="Preferencias">
+          <Toggle
+            label="Reduzir efeitos de tela"
+            hint="O flash vira uma vinheta suave e o tremor deixa de acontecer. Vale so neste navegador."
+            checked={reduce}
+            onChange={setReduce}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
