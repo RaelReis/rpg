@@ -20,6 +20,8 @@ import type {
   Session,
   Sheet,
   SheetTemplate,
+  Trigger,
+  TriggerLogEntry,
   TableSettings,
   TableState,
   Tile,
@@ -262,6 +264,11 @@ export interface ClientToServerEvents {
   'card:delete': (payload: { cardId: string }, ack: Ack<null>) => void;
   'card:present': (payload: CardPresentRequest, ack: Ack<null>) => void;
   'card:close': (payload: Record<string, never>, ack: Ack<null>) => void;
+
+  /** Gatilhos de mapa (so o mestre). O disparo e decidido no movimento. */
+  'trigger:create': (payload: { sceneId: string; trigger: Partial<Trigger> }, ack: Ack<Trigger>) => void;
+  'trigger:update': (payload: { sceneId: string; triggerId: string; patch: Partial<Trigger> }, ack: Ack<null>) => void;
+  'trigger:delete': (payload: { sceneId: string; triggerId: string }, ack: Ack<null>) => void;
   'map:ping': (payload: Omit<MapPing, 'playerName' | 'color'>) => void;
   // Nao ha evento de cursor: ninguem, nem o mestre, ve o ponteiro dos outros.
   // O ping continua sendo o jeito deliberado de apontar algo no mapa.
@@ -306,6 +313,11 @@ export interface ServerToClientEvents {
   'cards:patch': (payload: { upsert?: SceneCard[]; remove?: string[] }) => void;
   /** Cartela entra na tela (ou sai, com `null`). */
   'card:presented': (card: PresentedCard | null) => void;
+
+  /** Gatilhos de uma cena (so o mestre recebe). */
+  'triggers:patch': (payload: { sceneId: string; upsert?: Trigger[]; remove?: string[] }) => void;
+  /** Um gatilho disparou (so o mestre recebe). */
+  'trigger:fired': (entry: TriggerLogEntry) => void;
   'map:ping': (ping: MapPing) => void;
 
   'notice': (payload: { level: 'info' | 'warn' | 'error'; message: string }) => void;

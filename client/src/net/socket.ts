@@ -317,6 +317,10 @@ function registerListeners(s: ClientSocket): void {
   s.on('screen:active', (effects) => store().setActiveScreenEffects(effects));
   s.on('cards:patch', ({ upsert, remove }) => store().upsertCards(upsert ?? [], remove ?? []));
   s.on('card:presented', (card) => store().setPresentedCard(card));
+  s.on('triggers:patch', ({ sceneId, upsert, remove }) =>
+    store().upsertTriggers(sceneId, upsert ?? [], remove ?? []),
+  );
+  s.on('trigger:fired', (entry) => store().addTriggerLog(entry));
 
   s.on('notice', ({ level, message }) => store().notify(level, message));
 

@@ -18,8 +18,11 @@ import {
   type Scene,
   type Sheet,
   type SheetTemplate,
+  areaBounds,
   type Tile,
   type Token,
+  type Trigger,
+  type TriggerArea,
   type VisionResult,
   type Wall,
 } from '@rpg/shared';
@@ -107,6 +110,17 @@ export interface RenderInput {
   assetUrlOf: (assetId: string | null) => string | null;
   measure: { from: Point; to: Point } | null;
   now: number;
+  /**
+   * Gatilhos, so no mapa do mestre: as areas, qual esta selecionado e a area
+   * em desenho. Nada disso existe no cliente do jogador.
+   */
+  triggers: {
+    show: boolean;
+    selectedId: string | null;
+    draft: TriggerArea | null;
+    /** Poligono em construcao, ja com o vertice sob o cursor. */
+    path: Point[] | null;
+  };
 }
 
 const FOG_COLOR = '#05060a';
@@ -214,6 +228,7 @@ export function renderScene(input: RenderInput): void {
   drawLayer(input, 3);
   drawLayer(input, 4);
   drawWalls(input);
+  drawTriggers(input);
   drawPartyOverlay(input);
   drawDrafts(input);
   drawWeather(input, dpr);
@@ -969,6 +984,103 @@ function drawEffect(input: RenderInput, effect: MapEffect): void {
   }
 
   drawEffectLabelAndAnchor(input, effect, origin);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Gatilhos
+// ---------------------------------------------------------------------------
+
+const TRIGGER_COLOR = '#e8c547';
+const TRIGGER_OFF_COLOR = '#7d7f88';
+
+function traceArea(ctx: CanvasRenderingContext2D, area: TriggerArea): void {
+  ctx.beginPath();
+  if (area.kind === 'circle') {
+    ctx.arc(area.x, area.y, area.radius, 0, Math.PI * 2);
+  } else if (area.kind === 'rect') {
+    ctx.rect(area.x, area.y, area.width, area.height);
+  } else {
+    area.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+  }
+}
+
+/**
+ * Areas de gatilho, com contorno tracejado, so para o mestre e fora da previa
+ * pelos olhos do jogador. Desenho estatico: nao entra na lista do que anima,
+ * entao o mapa parado continua sem redesenhar.
+ */
+function drawTriggers(input: RenderInput): void {
+  const { ctx, camera, scene, triggers } = input;
+  if (input.role !== 'GM' || input.previewPlayerId !== null) return;
+
+  const z = camera.zoom;
+  if (triggers.show) {
+    for (const trigger of scene.triggers ?? []) drawTriggerArea(input, trigger, trigger.id === triggers.selectedId);
+  }
+
+  // Area em desenho: sempre visivel, mesmo com a camada oculta.
+  if (triggers.draft) {
+    ctx.save();
+    traceArea(ctx, triggers.draft);
+    ctx.fillStyle = 'rgba(232,197,71,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = TRIGGER_COLOR;
+    ctx.lineWidth = 1.5 / z;
+    ctx.setLineDash([7 / z, 5 / z]);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (triggers.path && triggers.path.length > 0) {
+    ctx.save();
+    ctx.beginPath();
+    triggers.path.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.strokeStyle = TRIGGER_COLOR;
+    ctx.lineWidth = 1.5 / z;
+    ctx.setLineDash([7 / z, 5 / z]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const [i, p] of triggers.path.entries()) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, (i === 0 ? 5 : 3) / z, 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? TRIGGER_COLOR : '#12141a';
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawTriggerArea(input: RenderInput, trigger: Trigger, selected: boolean): void {
+  const { ctx, camera } = input;
+  const z = camera.zoom;
+  // Desligado ou ja disparado (modo "uma vez") aparece apagado: continua no
+  // mapa, mas o mestre ve de relance que ali nada mais acontece.
+  const live = trigger.enabled && (trigger.mode === 'always' || trigger.armed);
+  const color = live ? TRIGGER_COLOR : TRIGGER_OFF_COLOR;
+
+  ctx.save();
+  traceArea(ctx, trigger.area);
+  ctx.fillStyle = live ? 'rgba(232,197,71,0.07)' : 'rgba(125,127,136,0.06)';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = selected ? 1 : 0.8;
+  ctx.lineWidth = (selected ? 2.5 : 1.5) / z;
+  ctx.setLineDash([7 / z, 5 / z]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const box = areaBounds(trigger.area);
+  const label = `⚡ ${trigger.name}`;
+  ctx.font = `600 ${12 / z}px Archivo, sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 3 / z;
+  ctx.strokeStyle = 'rgba(5,6,10,0.85)';
+  ctx.strokeText(label, box.x + 4 / z, box.y - 3 / z);
+  ctx.fillStyle = color;
+  ctx.fillText(label, box.x + 4 / z, box.y - 3 / z);
   ctx.restore();
 }
 

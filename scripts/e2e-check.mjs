@@ -1096,6 +1096,7 @@ async function main() {
 
   await immersionPerception();
   await immersionScreen();
+  await immersionTriggers();
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`${checks - failures}/${checks} verificacoes passaram`);
@@ -1421,7 +1422,7 @@ async function immersionScreen() {
   const exported = await (
     await fetch(`${BASE}/api/tables/${gmState.id}/export?assets=0`, { headers: { 'x-session-token': gmToken } })
   ).json();
-  check('backup tem versao 2', exported.format === 2);
+  check('backup tem versao atual', exported.format >= 2);
   check('backup leva as cartelas', exported.sceneCards?.length === 1 && exported.scenes[0].introCardId === card.id);
 
   const reimport = await fetch(`${BASE}/api/tables/import`, {
@@ -1450,6 +1451,144 @@ async function immersionScreen() {
 
   gm.disconnect();
   anaAgain.disconnect();
+  beto.socket.disconnect();
+}
+
+async function immersionTriggers() {
+  console.log('\n== I8. Gatilhos no mapa ==');
+  const { gm, gmToken, sceneId, players } = await freshTable(['Ana', 'Beto']);
+  const [ana, beto] = players;
+  const anaSees = recordTraffic(ana.socket);
+  const betoSees = recordTraffic(beto.socket);
+  const fired = [];
+  gm.on('trigger:fired', (entry) => fired.push(entry));
+
+  const C = 70;
+  const hero = await rpc(gm, 'token:create', {
+    sceneId,
+    token: { name: 'Heroi', x: C, y: 8 * C, ownerPlayerId: ana.id, visionRadius: 3 },
+  });
+  const lurker = await rpc(gm, 'token:create', {
+    sceneId,
+    token: { name: 'Espreitador', x: 12 * C, y: 12 * C, visibility: 'hidden' },
+  });
+
+  // Uma unica celula, bem no meio do caminho: (5,8).
+  const trap = await rpc(gm, 'trigger:create', {
+    sceneId,
+    trigger: {
+      name: 'Armadilha do corredor',
+      area: { kind: 'rect', x: 5 * C, y: 8 * C, width: C, height: C },
+      mode: 'once',
+      actions: [
+        { type: 'notify' },
+        { type: 'message', target: 'trigger', text: 'O chao cede sob seus pes.', style: 'threat', durationMs: 4000 },
+        { type: 'screen', target: 'trigger', effect: { kind: 'shake', intensity: 0.7, durationMs: 800 } },
+        { type: 'reveal', tokenId: lurker.id },
+      ],
+    },
+  });
+  check('mestre cria o gatilho', !!trap?.id && trap.armed === true && trap.actions.length === 4);
+
+  let playerRefused = false;
+  try {
+    await rpc(ana.socket, 'trigger:create', { sceneId, trigger: { area: { kind: 'circle', x: 0, y: 0, radius: 50 } } });
+  } catch {
+    playerRefused = true;
+  }
+  check('jogador nao cria gatilho', playerRefused);
+
+  // Movimento do mestre nao dispara: ele esta montando a cena.
+  await rpc(gm, 'token:move', { sceneId, tokenId: hero.id, x: 10 * C, y: 8 * C, dragging: false });
+  await rpc(gm, 'token:move', { sceneId, tokenId: hero.id, x: C, y: 8 * C, dragging: false });
+  await sleep(200);
+  check('movimento do mestre nao dispara', fired.length === 0);
+
+  // Ana arrasta o proprio token de (1,8) a (10,8) num unico passo: a area de
+  // uma celula fica no meio do caminho, sem que origem ou destino a toquem.
+  const anaMessage = waitFor(ana.socket, 'message:show', (m) => m.text === 'O chao cede sob seus pes.');
+  const anaShake = waitFor(ana.socket, 'screen:effect', (e) => e.kind === 'shake');
+  const betoSeesLurker = waitFor(beto.socket, 'tokens:patch', (p) => p.upsert?.some((t) => t.id === lurker.id));
+  const gmNotice = waitFor(gm, 'notice', (n) => n.message.includes('Armadilha do corredor'));
+  await rpc(ana.socket, 'token:move', { sceneId, tokenId: hero.id, x: 10 * C, y: 8 * C, dragging: true });
+  await rpc(ana.socket, 'token:move', { sceneId, tokenId: hero.id, x: 10 * C, y: 8 * C, dragging: false });
+
+  check('arraste rapido atravessando a area dispara', !!(await gmNotice));
+  check('a mensagem chega a quem disparou', !!(await anaMessage));
+  check('o efeito de tela chega a quem disparou', !!(await anaShake));
+  check('o token oculto e revelado para a mesa', !!(await betoSeesLurker));
+  await sleep(200);
+  check('dispara uma vez so', fired.length === 1, `disparos: ${fired.length}`);
+  check('o registro diz quem entrou', fired[0]?.tokenName === 'Heroi' && fired[0]?.playerName === 'Ana');
+  check('quem nao disparou nao recebe a mensagem', !betoSees.contains('O chao cede'));
+
+  // Modo "uma vez": voltar pela area nao dispara de novo.
+  await sleep(1700);
+  await rpc(ana.socket, 'token:move', { sceneId, tokenId: hero.id, x: C, y: 8 * C, dragging: false });
+  await sleep(300);
+  check('desarmado, nao dispara de novo', fired.length === 1, `disparos: ${fired.length}`);
+
+  await rpc(gm, 'trigger:update', { sceneId, triggerId: trap.id, patch: { armed: true } });
+  await sleep(1700);
+  await rpc(ana.socket, 'token:move', { sceneId, tokenId: hero.id, x: 10 * C, y: 8 * C, dragging: false });
+  await sleep(300);
+  check('rearmado, dispara de novo', fired.length === 2, `disparos: ${fired.length}`);
+
+  console.log('\n== I9. Parede corta o caminho do gatilho ==');
+  // Parede vertical em x = 14 celulas; area logo atras dela, em (16,8).
+  await rpc(gm, 'wall:create', { sceneId, wall: { x1: 14 * C, y1: 6 * C, x2: 14 * C, y2: 11 * C } });
+  const behind = await rpc(gm, 'trigger:create', {
+    sceneId,
+    trigger: {
+      name: 'Atras da parede',
+      area: { kind: 'rect', x: 16 * C, y: 8 * C, width: C, height: C },
+      mode: 'always',
+      actions: [{ type: 'notify' }],
+    },
+  });
+  const before = fired.length;
+  let blocked = false;
+  try {
+    await rpc(ana.socket, 'token:move', { sceneId, tokenId: hero.id, x: 20 * C, y: 8 * C, dragging: false });
+  } catch {
+    blocked = true;
+  }
+  await sleep(300);
+  check('a parede barra o movimento', blocked);
+  check('so conta o trecho percorrido: a area atras da parede nao dispara', fired.length === before);
+
+  console.log('\n== I10. Gatilhos nunca chegam ao jogador ==');
+  const anaState = JSON.stringify((await rpc(ana.socket, 'session:resume', { token: ana.token })).state);
+  const needles = [trap.id, behind.id, 'Armadilha do corredor', 'Atras da parede'];
+  check('estado completo do jogador nao tem gatilho', needles.every((n) => !anaState.includes(n)));
+  check('nenhum evento do jogador trouxe gatilho', needles.every((n) => !anaSees.contains(n) && !betoSees.contains(n)));
+  check('o jogador nao recebe o registro de disparos', !anaState.includes('triggerName'));
+
+  await sleep(1500); // flush agrupado
+  const gmState = (await rpc(gm, 'session:resume', { token: gmToken })).state;
+  check('o registro de disparos persiste para o mestre', gmState.triggerLog.length === 2);
+  const scene = gmState.scenes.find((s) => s.id === sceneId);
+  check('o mestre recebe os gatilhos da cena', scene.triggers.length === 2);
+
+  const exported = await (
+    await fetch(`${BASE}/api/tables/${gmState.id}/export?assets=0`, { headers: { 'x-session-token': gmToken } })
+  ).json();
+  check('backup tem versao 3 e leva gatilhos e registro', exported.format === 3 && exported.scenes[0].triggers.length === 2 && exported.triggerLog.length === 2);
+  const reimport = await (
+    await fetch(`${BASE}/api/tables/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backup: exported, gmName: 'Mestre 2' }),
+    })
+  ).json();
+  const restoredSocket = await connect();
+  const restored = (await rpc(restoredSocket, 'session:resume', { token: reimport.session.token })).state;
+  const revealAction = restored.scenes[0].triggers.find((t) => t.name === 'Armadilha do corredor')?.actions.find((a) => a.type === 'reveal');
+  check('gatilhos voltam na importacao, apontando para os mesmos tokens', restored.scenes[0].tokens.some((t) => t.id === revealAction?.tokenId));
+  restoredSocket.disconnect();
+
+  gm.disconnect();
+  ana.socket.disconnect();
   beto.socket.disconnect();
 }
 

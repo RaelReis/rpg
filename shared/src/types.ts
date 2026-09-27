@@ -282,6 +282,81 @@ export interface Scene {
    * mestre: sai do payload do jogador, que nao pode saber nem o id.
    */
   introCardId: string | null;
+  /**
+   * Areas invisiveis que disparam acoes quando um token entra. Nunca chegam
+   * ao navegador do jogador — nem as areas, nem os nomes.
+   */
+  triggers: Trigger[];
+}
+
+// ---------------------------------------------------------------------------
+// Gatilhos
+// ---------------------------------------------------------------------------
+
+/** Area de um gatilho, em pixels do mapa. */
+export type TriggerArea =
+  | { kind: 'rect'; x: number; y: number; width: number; height: number }
+  | { kind: 'circle'; x: number; y: number; radius: number }
+  | { kind: 'polygon'; points: Point[] };
+
+/** Quem dispara: tokens de jogadores, qualquer token, ou tokens escolhidos. */
+export type TriggerWho = 'players' | 'any' | 'tokens';
+
+/** Destinatario de uma acao: quem disparou, ou todos os jogadores. */
+export type TriggerTarget = 'trigger' | 'all';
+
+export type TriggerAction =
+  | { id: string; type: 'notify' }
+  | {
+      id: string;
+      type: 'message';
+      target: TriggerTarget;
+      text: string;
+      style: ScreenMessageStyle;
+      durationMs: number | null;
+    }
+  | { id: string; type: 'screen'; target: TriggerTarget; effect: Omit<ScreenEffect, 'id'> }
+  | { id: string; type: 'card'; target: TriggerTarget; cardId: string; durationMs: number | null }
+  | {
+      id: string;
+      type: 'handout';
+      handoutId: string;
+      /** Dar acesso: nao mexer, a quem disparou, ou a todos. */
+      share: 'none' | 'trigger' | 'all';
+      present: boolean;
+    }
+  | { id: string; type: 'reveal'; tokenId: string };
+
+export interface Trigger {
+  id: string;
+  name: string;
+  area: TriggerArea;
+  /** Desligado nao dispara, mas continua no mapa do mestre. */
+  enabled: boolean;
+  /** `once` desarma depois de disparar; `always` dispara a cada entrada. */
+  mode: 'once' | 'always';
+  /** So conta no modo `once`: falso depois do disparo, ate o mestre rearmar. */
+  armed: boolean;
+  who: TriggerWho;
+  /** Para `who = 'tokens'`. */
+  tokenIds: string[];
+  /** Movimentos feitos pelo mestre tambem disparam. */
+  gmMoves: boolean;
+  /** Executadas em sequencia, na ordem da lista. */
+  actions: TriggerAction[];
+}
+
+/** Registro de um disparo, visivel apenas ao mestre. */
+export interface TriggerLogEntry {
+  id: string;
+  at: number;
+  sceneId: string;
+  triggerId: string;
+  triggerName: string;
+  tokenId: string;
+  tokenName: string;
+  /** Jogador que disparou (dono do token, ou quem o moveu), se houver. */
+  playerName: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +675,8 @@ export interface TableState {
   screenEffects: ActiveScreenEffect[];
   /** Cartela na tela agora, se este observador for destinatario. */
   presentedCard: PresentedCard | null;
+  /** Disparos de gatilho, mais recentes por ultimo. So o mestre recebe. */
+  triggerLog: TriggerLogEntry[];
   createdAt: number;
   updatedAt: number;
 }

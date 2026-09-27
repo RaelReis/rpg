@@ -26,6 +26,8 @@ import {
   type TableState,
   type Tile,
   type Token,
+  type Trigger,
+  type TriggerLogEntry,
   type Wall,
 } from '@rpg/shared';
 
@@ -51,7 +53,8 @@ export type Tool =
   | 'fog-hide'
   | 'wall'
   | 'effect'
-  | 'tile';
+  | 'tile'
+  | 'trigger';
 
 export type SideTab =
   | 'scene'
@@ -61,7 +64,8 @@ export type SideTab =
   | 'chat'
   | 'handouts'
   | 'assets'
-  | 'players';
+  | 'players'
+  | 'triggers';
 
 export interface Notice {
   id: number;
@@ -85,6 +89,9 @@ export interface UndoEntry {
 
 /** O que a ferramenta de parede desenha a cada clique. */
 export type WallKind = 'wall' | 'door' | 'window';
+
+/** Forma da proxima area de gatilho. */
+export type TriggerShapeKind = 'rect' | 'circle' | 'polygon';
 
 /** O que esta sendo arrastado para o mapa, para a previa de onde vai cair. */
 export type DragPayload =
@@ -206,6 +213,13 @@ interface AppState {
   lastFlashAt: number | undefined;
   /** Painel de imersao do mestre aberto no trilho. */
   immersionPanel: ImmersionPanel;
+  /** Forma que a ferramenta de gatilho desenha. */
+  triggerShape: TriggerShapeKind;
+  /** Vertices do poligono de gatilho em construcao. */
+  triggerDraft: Point[];
+  selectedTriggerId: string | null;
+  /** Mostra as areas de gatilho no mapa do mestre (como as camadas). */
+  showTriggers: boolean;
   prefsOpen: boolean;
 
   // --- acoes de sessao
@@ -280,6 +294,12 @@ interface AppState {
   setPresentedCard(card: PresentedCard | null): void;
   setImmersionPanel(panel: ImmersionPanel): void;
   setPrefsOpen(open: boolean): void;
+  setTriggerShape(shape: TriggerShapeKind): void;
+  setTriggerDraft(points: Point[]): void;
+  selectTrigger(id: string | null): void;
+  toggleTriggers(): void;
+  upsertTriggers(sceneId: string, upsert: Trigger[], remove: string[]): void;
+  addTriggerLog(entry: TriggerLogEntry): void;
 }
 
 let noticeSeq = 0;
@@ -340,6 +360,10 @@ export const useStore = create<AppState>((set, get) => ({
   lastFlashAt: undefined,
   immersionPanel: null,
   prefsOpen: false,
+  triggerShape: 'rect',
+  triggerDraft: [],
+  selectedTriggerId: null,
+  showTriggers: true,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -383,6 +407,8 @@ export const useStore = create<AppState>((set, get) => ({
       messageComposer: null,
       shownEffects: [],
       immersionPanel: null,
+      triggerDraft: [],
+      selectedTriggerId: null,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -419,6 +445,8 @@ export const useStore = create<AppState>((set, get) => ({
         selectedTokenIds: changed ? [] : s.selectedTokenIds,
         selectedTileId: changed ? null : s.selectedTileId,
         selectedWallId: changed ? null : s.selectedWallId,
+        selectedTriggerId: changed ? null : s.selectedTriggerId,
+        triggerDraft: changed ? [] : s.triggerDraft,
       };
     }),
 
@@ -714,6 +742,28 @@ export const useStore = create<AppState>((set, get) => ({
   setPresentedCard: (presentedCard) =>
     set((s) => (s.table ? { table: { ...s.table, presentedCard }, rev: s.rev + 1 } : {})),
   setImmersionPanel: (immersionPanel) => set({ immersionPanel }),
+  setTriggerShape: (triggerShape) => set({ triggerShape, triggerDraft: [] }),
+  setTriggerDraft: (triggerDraft) => set({ triggerDraft }),
+  selectTrigger: (selectedTriggerId) => set({ selectedTriggerId }),
+  toggleTriggers: () => set((s) => ({ showTriggers: !s.showTriggers })),
+  upsertTriggers: (sceneId, upsert, remove) =>
+    set((s) => {
+      const changed = withScene(s.table, sceneId, (scene) => {
+        scene.triggers = mergeById(scene.triggers ?? [], upsert, remove);
+      });
+      return changed
+        ? {
+            rev: s.rev + 1,
+            selectedTriggerId: remove.includes(s.selectedTriggerId ?? '') ? null : s.selectedTriggerId,
+          }
+        : {};
+    }),
+  addTriggerLog: (entry) =>
+    set((s) =>
+      s.table
+        ? { table: { ...s.table, triggerLog: [...s.table.triggerLog, entry].slice(-200) }, rev: s.rev + 1 }
+        : {},
+    ),
   setPrefsOpen: (prefsOpen) => set({ prefsOpen }),
 }));
 

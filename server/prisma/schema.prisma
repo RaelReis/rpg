@@ -35,6 +35,8 @@ model Table {
   handouts       String   @default("[]")
   /// Cartelas de cena preparadas pelo mestre (SceneCard[]).
   sceneCards     String   @default("[]")
+  /// Registro de disparos de gatilho (TriggerLogEntry[]), so do mestre.
+  triggerLog     String   @default("[]")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

@@ -1,6 +1,6 @@
 import { LAYER_NAMES, type Layer } from '@rpg/shared';
 
-import { isGm, useStore, type Tool, type WallKind } from '../state/store';
+import { isGm, useStore, type Tool, type TriggerShapeKind, type WallKind } from '../state/store';
 
 /**
  * Trilho de ferramentas.
@@ -29,6 +29,13 @@ const GM_TOOLS: ToolDef[] = [
   { id: 'fog-hide', icon: '🌫', tip: 'Cobrir com neblina' },
   { id: 'wall', icon: '▨', tip: 'Parede — cada clique grava um trecho; Enter ou Esc encerra, Ctrl solta da grade' },
   { id: 'tile', icon: '🧱', tip: 'Colocar tile — arraste a area; usa a imagem selecionada em Imagens' },
+  { id: 'trigger', icon: '⚡', tip: 'Gatilho — area invisivel que dispara acoes quando um token entra' },
+];
+
+const TRIGGER_SHAPES: { id: TriggerShapeKind; icon: string; tip: string }[] = [
+  { id: 'rect', icon: '▭', tip: 'Area retangular — arraste; os cantos encaixam na grade' },
+  { id: 'circle', icon: '◯', tip: 'Area circular — arraste do centro; o raio anda em meias celulas' },
+  { id: 'polygon', icon: '⬠', tip: 'Poligono — clique os vertices; Enter fecha' },
 ];
 
 const WALL_KINDS: { id: WallKind; icon: string; tip: string }[] = [
@@ -60,6 +67,10 @@ export function Rail(): JSX.Element {
   const openMessageComposer = useStore((s) => s.openMessageComposer);
   const immersionPanel = useStore((s) => s.immersionPanel);
   const setImmersionPanel = useStore((s) => s.setImmersionPanel);
+  const triggerShape = useStore((s) => s.triggerShape);
+  const setTriggerShape = useStore((s) => s.setTriggerShape);
+  const showTriggers = useStore((s) => s.showTriggers);
+  const toggleTriggers = useStore((s) => s.toggleTriggers);
 
   const painting = tool === 'fog-reveal' || tool === 'fog-hide';
 
@@ -103,6 +114,18 @@ export function Rail(): JSX.Element {
                 onClick={() => setWallKind(kind.id)}
               >
                 {kind.icon}
+              </button>
+            ))}
+
+          {tool === 'trigger' &&
+            TRIGGER_SHAPES.map((shape) => (
+              <button
+                key={shape.id}
+                className={`tool${triggerShape === shape.id ? ' active' : ''}`}
+                data-tip={shape.tip}
+                onClick={() => setTriggerShape(shape.id)}
+              >
+                {shape.icon}
               </button>
             ))}
 
@@ -178,6 +201,14 @@ export function Rail(): JSX.Element {
               {layer}
             </button>
           ))}
+          <button
+            className={`tool${showTriggers ? ' active' : ''}`}
+            data-tip="Areas de gatilho — mostrar/ocultar na sua tela"
+            onClick={toggleTriggers}
+            style={{ fontSize: 13 }}
+          >
+            ⚡
+          </button>
 
           <span className="sep" />
 

@@ -101,6 +101,7 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - **alucinações** destinadas a outros jogadores — nem o id chega;
 - cenas ainda não ativadas (material de preparação);
 - **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem;
+- **gatilhos** do mapa — nem as áreas, nem os nomes, nem o registro de disparos;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
 
@@ -481,12 +482,64 @@ Em *Cena → Cartela ao ativar*, uma cena pode abrir com uma cartela: ao ser
 ativada, ela aparece para todos por 6 segundos. A escolha também é material
 de preparação e não vai para o jogador.
 
+### Gatilhos no mapa
+
+Áreas invisíveis que disparam ações quando um token entra nelas: a armadilha
+do corredor, a voz que só aparece quando alguém pisa no porão.
+
+**Desenhar.** A ferramenta ⚡ do trilho desenha a área, na forma escolhida
+logo abaixo dela:
+
+- **retângulo** — arraste; os cantos encaixam nos vértices da grade;
+- **círculo** — arraste do centro; o centro vai para o meio da célula e o raio
+  anda em meias células;
+- **polígono** — clique os vértices (encaixam como as paredes); `Enter`, duplo
+  clique ou clique no primeiro ponto fecha, `Esc` cancela.
+
+`Ctrl` solta da grade, como nas paredes. Com a ferramenta ativa, um clique
+numa área existente a seleciona e abre a aba **Gatilhos**. As áreas aparecem
+só no mapa do mestre, com contorno tracejado amarelo — apagado quando o
+gatilho está desligado ou já disparou —, e o botão ⚡ junto das camadas as
+oculta na sua tela. Para mudar a forma de uma área, apague e desenhe de novo.
+
+**Configurar**, na aba *Gatilhos*:
+
+- **Ligado / desligado.**
+- **Dispara uma vez** (desarma depois, com botão *Rearmar*) ou **toda vez**.
+- **Quem dispara**: tokens de jogadores (padrão), qualquer token, ou tokens
+  escolhidos. **Movimentos feitos pelo mestre não disparam**, a menos que a
+  opção esteja marcada: o mestre posiciona NPCs enquanto monta a cena.
+- **Ações, em sequência** — reordenáveis com ↑ ↓:
+  - avisar o mestre (nome do gatilho e quem entrou);
+  - mensagem individual a quem disparou ou a todos;
+  - efeito de tela a quem disparou ou a todos;
+  - apresentar uma cartela;
+  - compartilhar e/ou apresentar um material;
+  - revelar um token oculto.
+
+"Quem disparou" é o dono do token ou, se ele não tiver dono, o jogador que o
+moveu.
+
+**Como o disparo é decidido.** Pelo servidor, a cada passo de movimento, no
+mesmo ponto em que ele já confere as paredes. O teste usa o **segmento** que o
+centro do token percorreu naquele passo, e não só onde ele parou: um arraste
+rápido não atravessa a área sem disparar. Entrar é começar fora e tocar a
+área em algum ponto do caminho — quem já está dentro e anda lá dentro não
+dispara de novo. Se uma parede barra o movimento, só conta o trecho
+efetivamente percorrido. A borda da área conta como dentro. Um mesmo token não
+dispara o mesmo gatilho duas vezes em menos de 1,5 s: sem isso, um arraste
+tremendo na borda de uma área "toda vez" viraria uma rajada.
+
+Os disparos entram num **registro** na aba *Gatilhos*, visível só ao mestre.
+Criar, editar e apagar gatilhos entra no `Ctrl+Z`; **o disparo, não** — ele
+aconteceu na mesa, e o susto de ninguém volta atrás.
+
 ---
 
 ## Backup
 
 Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
-fichas, materiais, cartelas, tokens, paredes e neblina. Há duas versões — **com imagens**,
+fichas, materiais, cartelas, gatilhos, tokens, paredes e neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
 
@@ -507,6 +560,7 @@ incrementa o número, e a importação continua aceitando as versões anteriores
 | --- | --- |
 | 1 | Cenas, fichas, materiais, imagens |
 | 2 | Cartelas de cena e a cartela de abertura de cada cena |
+| 3 | Gatilhos de cada cena e o registro de disparos |
 
 O banco (`server/prisma/dev.db`) e a pasta `server/uploads/` continuam sendo o
 backup completo para quem tem acesso ao servidor.
@@ -558,7 +612,7 @@ na verdade é outra coisa é recusado.
 | `Delete` | Remover o que está selecionado (mestre) |
 | `Ctrl+Z` | Desfazer a última ação de mapa (mestre) |
 | `Ctrl+D` | Duplicar a seleção (mestre) |
-| `Enter` | Encerrar a parede em polilinha |
+| `Enter` | Encerrar a parede em polilinha, ou fechar o polígono de gatilho |
 | Botão direito / do meio | Move o mapa, em qualquer ferramenta |
 | `Shift` + clique | Soma o token à seleção |
 | `Ctrl` ao soltar | Ignora o encaixe na grid |

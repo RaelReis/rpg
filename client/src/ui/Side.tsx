@@ -8,6 +8,7 @@ import { PlayersPanel } from './panels/PlayersPanel';
 import { ScenePanel } from './panels/ScenePanel';
 import { SheetPanel } from './panels/SheetPanel';
 import { TokensPanel } from './panels/TokensPanel';
+import { TriggersPanel } from './panels/TriggersPanel';
 
 /**
  * Painel lateral.
@@ -25,6 +26,7 @@ const GM_TABS: { id: SideTab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'handouts', label: 'Materiais' },
   { id: 'assets', label: 'Imagens' },
+  { id: 'triggers', label: 'Gatilhos' },
   { id: 'players', label: 'Mesa' },
 ];
 
@@ -74,6 +76,7 @@ export function Side(): JSX.Element {
           {current === 'handouts' && <HandoutsPanel />}
           {current === 'assets' && <AssetsPanel />}
           {current === 'players' && <PlayersPanel />}
+          {current === 'triggers' && <TriggersPanel />}
         </ErrorBoundary>
       </div>
     </aside>

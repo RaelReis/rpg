@@ -58,6 +58,7 @@ import {
   updateCard,
   updatePrefs,
 } from './handlers/immersion.js';
+import { createTriggerHandler, deleteTriggerHandler, updateTriggerHandler } from './handlers/triggers.js';
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
   assignSheet,
@@ -293,5 +294,8 @@ export function registerSocketHandlers(io: TypedServer): void {
     socket.on('card:delete', gm(deleteCard));
     socket.on('card:present', gm(presentCard));
     socket.on('card:close', gm(closeCard));
+    socket.on('trigger:create', gm(createTriggerHandler));
+    socket.on('trigger:update', gm(updateTriggerHandler));
+    socket.on('trigger:delete', gm(deleteTriggerHandler));
   });
 }

@@ -20,7 +20,7 @@ const MAX_HANDOUTS = 200;
 const MAX_TEXT = 20000;
 
 /** Envia o material a cada socket, ou o remove de quem perdeu o acesso. */
-function emitHandout(room: Room, handout: Handout): void {
+export function emitHandout(room: Room, handout: Handout): void {
   for (const socket of socketsOf(room)) {
     const visible = handoutForViewer(handout, socket.data.viewer);
     if (visible) {

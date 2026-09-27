@@ -4,18 +4,23 @@ import {
   cellAt,
   cellCorners,
   cellKey,
+  cellCenter,
   cellsWithinRadius,
   measureDistance,
+  pointInArea,
   snapTokenPosition,
   tokenBarFields,
   type Point,
   type Scene,
   type Tile,
   type Token,
+  type Trigger,
+  type TriggerArea,
   type Wall,
 } from '@rpg/shared';
 
 import { act, emit } from '../net/socket';
+import { createTriggerWithUndo } from '../state/triggerOps';
 import { activeScene, findAsset, findSheet, useStore, type WallKind } from '../state/store';
 import {
   centerOn,
@@ -61,7 +66,8 @@ type GestureKind =
   | 'fog-rect'
   | 'marquee'
   | 'tile'
-  | 'handle';
+  | 'handle'
+  | 'trigger';
 
 interface Gesture {
   kind: GestureKind;
@@ -177,6 +183,8 @@ export function Stage(): JSX.Element {
   // Rascunhos que o renderizador le a cada quadro, sem passar pelo React.
   const measureRef = useRef<{ from: Point; to: Point } | null>(null);
   const marqueeRef = useRef<{ from: Point; to: Point; kind: MarqueeKind } | null>(null);
+  /** Retangulo ou circulo de gatilho sendo arrastado. */
+  const triggerDragRef = useRef<{ from: Point; to: Point; free: boolean } | null>(null);
   const hoverRef = useRef<Point | null>(null);
   /** Ctrl segurado sob o cursor: a previa da parede solta da grade tambem. */
   const hoverFreeRef = useRef(false);
@@ -196,6 +204,7 @@ export function Stage(): JSX.Element {
 
   const wallDraft = useStore((s) => s.wallDraft);
   const wallKind = useStore((s) => s.wallKind);
+  const triggerShape = useStore((s) => s.triggerShape);
   const previewPlayerId = useStore((s) => s.previewPlayerId);
   const previewName = useStore(
     (s) => s.table?.players.find((p) => p.id === s.previewPlayerId)?.name ?? null,
@@ -252,9 +261,10 @@ export function Stage(): JSX.Element {
     cameraRef.current = centerOn(cameraRef.current, { x: last.x, y: last.y });
   }, [pings]);
 
-  // Trocar de ferramenta abandona a parede em construcao.
+  // Trocar de ferramenta abandona a parede (ou o poligono de gatilho) em construcao.
   useEffect(() => {
     if (tool !== 'wall') useStore.getState().setWallDraft([]);
+    if (tool !== 'trigger') useStore.getState().setTriggerDraft([]);
   }, [tool]);
 
   // -- laco de desenho ------------------------------------------------------
@@ -298,6 +308,19 @@ export function Stage(): JSX.Element {
     const path = state.wallDraft;
     const wallPath = path.length > 0 ? (hover ? [...path, hover.point] : path) : null;
 
+    // Gatilho em desenho: a previa ja mostra a area encaixada onde vai cair.
+    const gmSession = state.session?.role === 'GM';
+    const triggering = state.tool === 'trigger' && gmSession;
+    const drag = triggerDragRef.current;
+    const triggerDraftArea = triggering && drag ? triggerAreaFrom(currentScene, state.triggerShape, drag) : null;
+    const triggerPath =
+      triggering && state.triggerShape === 'polygon' && state.triggerDraft.length > 0
+        ? [
+            ...state.triggerDraft,
+            ...(hoverRef.current ? [snapTriggerPoint(currentScene, hoverRef.current, hoverFreeRef.current)] : []),
+          ]
+        : null;
+
     const startedAt = performance.now();
 
     /*
@@ -317,6 +340,8 @@ export function Stage(): JSX.Element {
       state.wallDraft.length > 0 ||
       // O anel de encaixe segue o cursor enquanto a ferramenta esta ativa.
       walling ||
+      // Idem para a previa da area de gatilho.
+      triggering ||
       marqueeRef.current !== null ||
       measureRef.current !== null ||
       fogCursor !== null ||
@@ -334,6 +359,7 @@ export function Stage(): JSX.Element {
       let key = `${state.rev}|${cam.x.toFixed(1)},${cam.y.toFixed(1)},${cam.zoom.toFixed(4)}`;
       key += `|${viewportRef.current.width}x${viewportRef.current.height}`;
       key += `|${state.hiddenLayers.join(',')}|${state.showPartyVision ? 1 : 0}`;
+      key += `|${state.showTriggers ? 1 : 0}|${state.selectedTriggerId ?? ''}`;
       // Movimento de token nao passa por `rev` de proposito; entra aqui.
       for (const t of currentScene.tokens) key += `|${Math.round(t.x)},${Math.round(t.y)}`;
 
@@ -372,6 +398,12 @@ export function Stage(): JSX.Element {
       assetUrlOf: (assetId) => findAsset(assetId)?.url ?? null,
       measure: measureRef.current,
       now: performance.now(),
+      triggers: {
+        show: state.showTriggers,
+        selectedId: state.selectedTriggerId,
+        draft: triggerDraftArea,
+        path: triggerPath,
+      },
     });
 
     // Amostra por segundo: o custo medio do desenho e quantos quadros sairam.
@@ -522,6 +554,14 @@ export function Stage(): JSX.Element {
         addWallSegment(currentScene, point, kind);
         gestureRef.current = gesture;
         return;
+      } else if (state.tool === 'trigger' && gm) {
+        if (state.triggerShape === 'polygon') {
+          addPolygonVertex(currentScene, world, cameraRef.current.zoom, e.ctrlKey, e.altKey);
+          gestureRef.current = gesture;
+          return;
+        }
+        gesture.kind = 'trigger';
+        triggerDragRef.current = { from: world, to: world, free: e.ctrlKey };
       } else if (state.tool === 'tile') {
         gesture.kind = 'tile';
         marqueeRef.current = { from: world, to: world, kind: 'tile' };
@@ -690,6 +730,12 @@ export function Stage(): JSX.Element {
           applyHandle(currentScene, gesture, world);
           break;
 
+        case 'trigger':
+          if (triggerDragRef.current) {
+            triggerDragRef.current = { ...triggerDragRef.current, to: world, free: e.ctrlKey };
+          }
+          break;
+
         case 'measure': {
           measureRef.current = { from: gesture.startWorld, to: world };
           const distance = measureDistance(currentScene.grid, gesture.startWorld, world);
@@ -812,6 +858,20 @@ export function Stage(): JSX.Element {
         case 'handle':
           commitHandle(currentScene, gesture);
           break;
+
+        case 'trigger': {
+          const drag = triggerDragRef.current;
+          triggerDragRef.current = null;
+          if (!drag) break;
+          // Clique seco sobre uma area: seleciona o gatilho para editar.
+          if (!gesture.moved) {
+            selectTriggerAt(currentScene, world);
+            break;
+          }
+          const area = triggerAreaFrom(currentScene, state.triggerShape, drag);
+          if (area) void createTriggerOn(currentScene, area);
+          break;
+        }
 
         case 'fog-brush':
           flushFog(fogAction(state.tool, state.fogSeal));
@@ -1061,6 +1121,7 @@ export function Stage(): JSX.Element {
         case 'enter':
           // Os trechos ja estao gravados; encerrar so solta a ponta.
           if (state.tool === 'wall') state.setWallDraft([]);
+          if (state.tool === 'trigger' && currentScene) finishPolygon(currentScene);
           break;
         case 'delete':
         case 'backspace': {
@@ -1076,6 +1137,10 @@ export function Stage(): JSX.Element {
           }
           if (state.wallDraft.length > 0) {
             state.setWallDraft([]);
+            break;
+          }
+          if (state.triggerDraft.length > 0) {
+            state.setTriggerDraft([]);
             break;
           }
           state.selectToken(null);
@@ -1101,6 +1166,7 @@ export function Stage(): JSX.Element {
       case 'measure':
       case 'wall':
       case 'tile':
+      case 'trigger':
         return 'crosshair';
       case 'ping':
         return 'cell';
@@ -1139,6 +1205,8 @@ export function Stage(): JSX.Element {
         onDoubleClick={() => {
           // O duplo clique ja gravou os trechos; so encerra a sequencia.
           if (tool === 'wall') useStore.getState().setWallDraft([]);
+          const current = activeScene(useStore.getState());
+          if (tool === 'trigger' && current) finishPolygon(current);
         }}
         onContextMenu={(e) => e.preventDefault()}
       />
@@ -1189,6 +1257,21 @@ export function Stage(): JSX.Element {
           return <PingMark key={ping.id} x={p.x} y={p.y} color={ping.color} />;
         })}
       </div>
+
+      {tool === 'trigger' && (
+        <div className="stage-tip">
+          {triggerShape === 'polygon' ? (
+            <>
+              Clique os vertices · <strong>Enter</strong>, duplo clique ou clique no primeiro ponto fecha ·{' '}
+              <strong>Esc</strong> cancela · <strong>Ctrl</strong> solta da grade
+            </>
+          ) : (
+            <>
+              Arraste para desenhar a area · clique numa area para edita-la · <strong>Ctrl</strong> solta da grade
+            </>
+          )}
+        </div>
+      )}
 
       {tool === 'wall' && wallDraft.length > 0 && (
         <div className="stage-tip">
@@ -1791,6 +1874,97 @@ function snapToGridVertex(scene: Scene, world: Point): Point {
     }
   }
   return best;
+}
+
+// ---------------------------------------------------------------------------
+// Gatilhos
+// ---------------------------------------------------------------------------
+
+/** Vertice de area de gatilho: encaixa na grade como as paredes; Ctrl solta. */
+function snapTriggerPoint(scene: Scene, world: Point, free: boolean): Point {
+  return free ? world : snapToGridVertex(scene, world);
+}
+
+/**
+ * Area desenhada por arraste. O retangulo encaixa os dois cantos nos vertices
+ * da grade; o circulo encaixa o centro no meio da celula e o raio em meias
+ * celulas — assim "a sala" e "o raio de 2 celulas" saem exatos sem digitar.
+ */
+function triggerAreaFrom(
+  scene: Scene,
+  shape: 'rect' | 'circle' | 'polygon',
+  drag: { from: Point; to: Point; free: boolean },
+): TriggerArea | null {
+  const snapOn = !drag.free && scene.grid.type !== 'none';
+  if (shape === 'circle') {
+    const center = snapOn ? cellCenter(scene.grid, cellAt(scene.grid, drag.from)) : drag.from;
+    const raw = Math.hypot(drag.to.x - center.x, drag.to.y - center.y);
+    const step = scene.grid.size / 2;
+    const radius = snapOn ? Math.max(step, Math.round(raw / step) * step) : raw;
+    return radius >= 4 ? { kind: 'circle', x: center.x, y: center.y, radius } : null;
+  }
+  const a = snapTriggerPoint(scene, drag.from, !snapOn);
+  const b = snapTriggerPoint(scene, drag.to, !snapOn);
+  const rect = normalizeRect(a, b);
+  if (rect.width < 4 || rect.height < 4) return null;
+  return { kind: 'rect', ...rect };
+}
+
+/** Gatilho sob o ponto, o de cima primeiro. */
+function triggerAt(scene: Scene, world: Point): Trigger | null {
+  const list = scene.triggers ?? [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (pointInArea(list[i].area, world)) return list[i];
+  }
+  return null;
+}
+
+function selectTriggerAt(scene: Scene, world: Point): boolean {
+  const state = useStore.getState();
+  if (!state.showTriggers) return false;
+  const hit = triggerAt(scene, world);
+  state.selectTrigger(hit?.id ?? null);
+  if (hit) state.setSideTab('triggers');
+  return hit !== null;
+}
+
+async function createTriggerOn(scene: Scene, area: TriggerArea): Promise<void> {
+  const state = useStore.getState();
+  const created = await createTriggerWithUndo(scene.id, {
+    name: `Gatilho ${(scene.triggers?.length ?? 0) + 1}`,
+    area,
+  });
+  if (created) state.setSideTab('triggers');
+}
+
+/** Distancia, em pixels de tela, para o clique no primeiro vertice fechar o poligono. */
+const CLOSE_POLYGON_PX = 12;
+
+function addPolygonVertex(scene: Scene, world: Point, zoom: number, free: boolean, force: boolean): void {
+  const state = useStore.getState();
+  const draft = state.triggerDraft;
+
+  // Sem poligono em andamento, clicar numa area existente a seleciona. Alt
+  // forca comecar um poligono ali mesmo.
+  if (draft.length === 0 && !force && selectTriggerAt(scene, world)) return;
+
+  const point = snapTriggerPoint(scene, world, free);
+  const first = draft[0];
+  if (first && draft.length >= 3 && Math.hypot(point.x - first.x, point.y - first.y) * zoom <= CLOSE_POLYGON_PX) {
+    finishPolygon(scene);
+    return;
+  }
+  const last = draft[draft.length - 1];
+  if (last && last.x === point.x && last.y === point.y) return;
+  state.setTriggerDraft([...draft, point]);
+}
+
+function finishPolygon(scene: Scene): void {
+  const state = useStore.getState();
+  const points = state.triggerDraft;
+  if (points.length < 3) return;
+  state.setTriggerDraft([]);
+  void createTriggerOn(scene, { kind: 'polygon', points });
 }
 
 /** Marca de ping: um alvo que pulsa e some sozinho. */

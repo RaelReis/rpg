@@ -98,7 +98,8 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
         };
 
   // A cartela de abertura e preparacao do mestre: nem o id sai daqui.
-  return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null };
+  // Gatilhos e cartela de abertura sao preparacao do mestre: nem o id sai.
+  return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null, triggers: [] };
 }
 
 /**
@@ -361,6 +362,7 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
     chat: chatForViewer(s.chat, viewer),
     // Cartelas em preparacao nunca saem: nem titulo, nem imagem, nem id.
     sceneCards: [],
+    triggerLog: [],
     screenEffects: screenEffectsForViewer(room, viewer),
     presentedCard: presentedCardForViewer(room, viewer),
   };

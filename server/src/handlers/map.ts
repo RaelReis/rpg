@@ -34,6 +34,7 @@ import {
   socketsOf,
 } from '../broadcast.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
+import { checkTriggers } from './triggers.js';
 
 /** Tokens, tiles, efeitos, paredes e neblina. */
 
@@ -277,6 +278,8 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
 
       emitTokenMove(ctx.room, scene, token);
       refreshVision(ctx.room, scene);
+      // So conta o trecho percorrido: da origem ate onde o token parou.
+      checkTriggers(ctx, scene, token, from);
       return fail(ack, 'Ha uma parede no caminho.');
     }
   }
@@ -285,6 +288,9 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
   token.y = y;
 
   emitTokenMove(ctx.room, scene, token);
+  // A cada passo, inclusive durante o arraste: e o segmento de cada passo que
+  // e testado, entao um arraste rapido nao atravessa a area sem disparar.
+  checkTriggers(ctx, scene, token, from);
 
   if (dragging) {
     // Atualiza a neblina de quem esta arrastando, sem custear a mesa inteira.

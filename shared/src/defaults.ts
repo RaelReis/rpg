@@ -1,6 +1,8 @@
 import { DEFAULT_GRID } from './grid.js';
 import type {
   FogConfig,
+  Trigger,
+  TriggerArea,
   InitiativeState,
   MapEffect,
   Scene,
@@ -112,6 +114,22 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     globalLight: partial.globalLight ?? 1,
     weather: { ...DEFAULT_WEATHER, ...(partial.weather ?? {}) },
     introCardId: partial.introCardId ?? null,
+    triggers: partial.triggers ?? [],
+  };
+}
+
+export function createTrigger(area: TriggerArea, partial: Partial<Trigger> = {}): Trigger {
+  return {
+    id: partial.id ?? generateId('trg'),
+    name: partial.name ?? 'Gatilho',
+    area,
+    enabled: partial.enabled ?? true,
+    mode: partial.mode ?? 'once',
+    armed: partial.armed ?? true,
+    who: partial.who ?? 'players',
+    tokenIds: partial.tokenIds ?? [],
+    gmMoves: partial.gmMoves ?? false,
+    actions: partial.actions ?? [{ id: 'notify', type: 'notify' }],
   };
 }
 

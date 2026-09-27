@@ -11,6 +11,7 @@ import {
   type Handout,
   type Scene,
   type SceneCard,
+  type TriggerLogEntry,
   type Sheet,
   type TableState,
 } from '@rpg/shared';
@@ -40,9 +41,10 @@ import { saveImage } from './uploads.js';
  *
  * 1 — cenas, fichas, materiais, imagens.
  * 2 — cartelas de cena (`sceneCards`) e a cartela de abertura de cada cena.
+ * 3 — gatilhos de cada cena e o registro de disparos (`triggerLog`).
  */
-export const BACKUP_FORMAT = 2;
-const SUPPORTED_FORMATS = [1, 2];
+export const BACKUP_FORMAT = 3;
+const SUPPORTED_FORMATS = [1, 2, 3];
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
 const MAX_EMBEDDED_BYTES = 120 * 1024 * 1024;
@@ -68,6 +70,8 @@ export interface TableBackup {
   handouts: Handout[];
   /** Desde o formato 2. */
   sceneCards?: SceneCard[];
+  /** Desde o formato 3. */
+  triggerLog?: TriggerLogEntry[];
   scenes: Scene[];
   sheets: Sheet[];
   /** Apenas para reconstruir a autoria; sem credenciais. */
@@ -115,6 +119,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
     initiative: s.initiative,
     handouts: s.handouts,
     sceneCards: s.sceneCards,
+    triggerLog: s.triggerLog,
     scenes: s.scenes,
     sheets: s.sheets,
     players: s.players.map((p) => ({ id: p.id, name: p.name, color: p.color, role: p.role })),
@@ -124,6 +129,12 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
 }
 
 export class BackupError extends Error {}
+
+/** Guarda a traducao de id antigo para novo e devolve o novo. */
+function remember(map: Map<string, string>, oldId: string | undefined, freshId: string): string {
+  if (oldId) map.set(oldId, freshId);
+  return freshId;
+}
 
 /**
  * Recria a mesa a partir de um backup, sempre como uma mesa NOVA.
@@ -245,14 +256,30 @@ async function buildImportedTable(
     scene.introCardId = scene.introCardId ? (cardIds.get(scene.introCardId) ?? null) : null;
   }
 
+  const handoutIds = new Map<string, string>();
   room.state.handouts = (backup.handouts ?? []).map((h) => ({
     ...h,
-    id: generateId('hnd'),
+    id: remember(handoutIds, h.id, generateId('hnd')),
     assetId: remap(h.assetId),
     // Os jogadores do backup nao existem nesta mesa; o acesso recomeca do zero.
     sharedWith: [],
     sharedWithAll: false,
   }));
+
+  // Gatilhos voltam com as acoes apontando para as cartelas e materiais novos.
+  // Os tokens mantem o id na importacao, entao "revelar token" e "tokens
+  // escolhidos" continuam valendo sem traducao.
+  for (const scene of room.state.scenes) {
+    scene.triggers = scene.triggers.map((trigger) => ({
+      ...trigger,
+      actions: trigger.actions.map((action) => {
+        if (action.type === 'card') return { ...action, cardId: cardIds.get(action.cardId) ?? '' };
+        if (action.type === 'handout') return { ...action, handoutId: handoutIds.get(action.handoutId) ?? '' };
+        return action;
+      }),
+    }));
+  }
+  room.state.triggerLog = Array.isArray(backup.triggerLog) ? backup.triggerLog.slice(-200) : [];
 
   // As fichas chegam sem dono: os jogadores entrarao com identidades novas, e
   // o mestre reatribui pela aba Fichas.

@@ -15,6 +15,7 @@ import {
   type Player,
   type Scene,
   type SceneCard,
+  type TriggerLogEntry,
   type Sheet,
   type SheetTemplate,
   type TableState,
@@ -71,6 +72,9 @@ export class Room {
 
   /** Quando a cartela atual entrou na tela, para quem reconecta ver o restante. */
   presentationStartedAt = 0;
+
+  /** Ultimo disparo de cada par gatilho:token, contra rajadas na borda da area. */
+  readonly triggerCooldown = new Map<string, number>();
   presentationTimer: NodeJS.Timeout | null = null;
   lastActivity = Date.now();
 
@@ -255,6 +259,7 @@ export class Room {
             chat: toJson(s.chat.slice(-CHAT_HISTORY_SIZE)),
             handouts: toJson(s.handouts),
             sceneCards: toJson(s.sceneCards),
+            triggerLog: toJson(s.triggerLog),
           },
         });
       }
@@ -529,6 +534,7 @@ class RoomManager {
       handouts: fromJson<Handout[]>(row.handouts, []),
       chat: fromJson<ChatMessage[]>(row.chat, []),
       sceneCards: fromJson<SceneCard[]>(row.sceneCards, []),
+      triggerLog: fromJson<TriggerLogEntry[]>(row.triggerLog, []),
       // Efeitos fixos e cartela na tela vivem so em memoria: um reinicio do
       // servidor encerra a apresentacao, como encerraria a sessao.
       screenEffects: [],
