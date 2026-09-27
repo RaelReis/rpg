@@ -57,6 +57,7 @@ export function Rail(): JSX.Element {
   const undoDepth = useStore((s) => s.undoStack.length);
   const redo = useStore((s) => s.redo);
   const redoDepth = useStore((s) => s.redoStack.length);
+  const openMessageComposer = useStore((s) => s.openMessageComposer);
 
   const painting = tool === 'fog-reveal' || tool === 'fog-hide';
 
@@ -175,6 +176,17 @@ export function Rail(): JSX.Element {
               {layer}
             </button>
           ))}
+
+          <span className="sep" />
+
+          {/* Imersao: o que aparece na tela dos jogadores, fora do mapa. */}
+          <button
+            className="tool"
+            data-tip="Mensagem individual — texto no centro da tela de alguns jogadores"
+            onClick={() => openMessageComposer([])}
+          >
+            ✉
+          </button>
 
           <span className="sep" />
 

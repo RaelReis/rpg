@@ -98,6 +98,7 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - as **paredes** da cena — elas descrevem a planta do mapa e apareceriam
   inteiras no inspecionador de rede do navegador;
 - campos de ficha marcados como exclusivos do mestre;
+- **alucinações** destinadas a outros jogadores — nem o id chega;
 - cenas ainda não ativadas (material de preparação);
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
@@ -380,6 +381,54 @@ tiraria a possibilidade de preparar material sem interromper a cena.
 
 Um material em preparação **não chega ao navegador do jogador** — nem o título,
 que já entregaria a surpresa. Retirar o acesso o remove da tela dele.
+
+---
+
+## Imersão
+
+Recursos para criar clima, surpresa e tensão sem passar pelo chat. Tudo o que
+aparece na tela do jogador é decidido no servidor; o cliente só desenha.
+
+### Alucinações
+
+No inspetor de um token ou de um efeito de mapa, **Visível para** escolhe
+entre *todos* (o normal) e *apenas…* alguns jogadores. Quem não está na lista
+não recebe o objeto: ele não é escondido na tela, ele não existe no payload
+daquela pessoa — nem como id, nem na ordem de iniciativa, nem no aviso de que
+foi apagado. Mudar a lista tira o objeto da tela de quem saiu e o entrega a
+quem entrou. Lista vazia vale: só o mestre vê, até marcar alguém.
+
+**Uma alucinação não emite luz, não enxerga e não tem dono.** A regra existe
+para a neblina não denunciar o fantasma: a tocha de algo que só a Alice vê
+abriria a sala para o Bruno também, e a visão "dele" exploraria o mapa de
+alguém. O servidor zera esses campos ao gravar, os controles ficam
+desabilitados no inspetor, e o cálculo de visão ignora alucinações como fonte
+mesmo em dados antigos. Quem não percebe a alucinação também não consegue
+movê-la.
+
+No mapa do mestre, objetos com visibilidade restrita ganham contorno
+tracejado lilás e um pequeno olho. A prévia **ver pelos olhos** aplica o
+mesmo filtro — efeitos presos a um token que o jogador não vê também somem.
+
+Num backup importado, as alucinações continuam alucinações, mas com a lista
+vazia: os jogadores de lá não existem na mesa nova.
+
+### Mensagem individual
+
+Um texto no centro da tela de um ou mais jogadores — *"Você ouve alguém
+chamar seu nome."* Abra pelo ✉ do trilho, pelo ✉ ao lado do jogador em
+*Mesa → Participantes*, ou com o botão direito no nome dele.
+
+- **Tom**: neutro, sussurro ou ameaça — muda só a tipografia e a cor.
+- **Na tela por** alguns segundos, ou **até o jogador fechar** (um clique na
+  mensagem também a fecha).
+- Aparece com *fade*, por cima do mapa e fora da câmera: arrastar o mapa não a
+  leva junto.
+- **Não entra no chat e não fica guardada.** O que foi dito ao pé do ouvido de
+  alguém não deveria ficar onde a mesa inteira pode rolar a tela e ler.
+- O mestre vê a **entrega**: cada navegador confirma quando recebe. Quem está
+  offline **não recebe depois** — fora de hora a mensagem perde o sentido —, e
+  o mestre é avisado para decidir se repete.
 
 ---
 

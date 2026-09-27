@@ -305,6 +305,13 @@ function registerListeners(s: ClientSocket): void {
   s.on('chat:message', (message) => store().addChatMessage(message));
   s.on('map:ping', (ping) => store().addPing(ping));
 
+  // A confirmacao sai assim que a mensagem chega: e ela que diz ao mestre que
+  // a pessoa recebeu, e nao que apenas estava conectada.
+  s.on('message:show', (message, ack) => {
+    store().showScreenMessage(message);
+    if (typeof ack === 'function') ack(true);
+  });
+
   s.on('notice', ({ level, message }) => store().notify(level, message));
 
   s.on('session:ended', ({ reason }) => {

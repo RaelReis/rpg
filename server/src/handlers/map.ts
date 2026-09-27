@@ -4,8 +4,10 @@ import {
   createTile,
   createToken,
   createWall,
+  enforceHallucinationRules,
   movementBlocked,
   newlyExploredCells,
+  sanitizeVisibleTo,
   snapTokenPosition,
   type Ack,
   type FogPaintPayload,
@@ -22,6 +24,7 @@ import {
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import {
   emitEffects,
+  emitInitiative,
   emitTiles,
   emitTokenMove,
   emitTokenRemoved,
@@ -49,6 +52,14 @@ const EFFECT_STYLES = [
   'embers',
   'static',
 ] as const;
+
+/** Lista de percepcao vinda do cliente, so com jogadores desta mesa. */
+function visibleToOf(ctx: Ctx, value: unknown): string[] | null {
+  return sanitizeVisibleTo(
+    value,
+    ctx.room.state.players.filter((p) => p.role === 'PLAYER').map((p) => p.id),
+  );
+}
 
 function asLayer(v: unknown, fallback: Layer): Layer {
   return v === 1 || v === 2 || v === 3 || v === 4 ? v : fallback;
@@ -98,7 +109,9 @@ export function createTokenHandler(
     bars: Array.isArray(t.bars) ? t.bars.slice(0, 4) : [],
     label: safeString(t.label, 40, ''),
     conditions: Array.isArray(t.conditions) ? t.conditions.slice(0, 12) : [],
+    visibleTo: visibleToOf(ctx, t.visibleTo),
   });
+  enforceHallucinationRules(token);
 
   if (scene.grid.snap && scene.grid.type !== 'none') {
     const snapped = snapTokenPosition(scene.grid, { x: token.x, y: token.y }, token.scale);
@@ -179,7 +192,15 @@ export function updateToken(
     if (p.locked !== undefined) token.locked = Boolean(p.locked);
     if (p.x !== undefined) token.x = clampNumber(p.x, -10000, 30000, token.x);
     if (p.y !== undefined) token.y = clampNumber(p.y, -10000, 30000, token.y);
+    if (p.visibleTo !== undefined) {
+      token.visibleTo = visibleToOf(ctx, p.visibleTo);
+      visionAffected = true;
+    }
   }
+
+  // Vale depois de qualquer patch: pedir dono ou luz para uma alucinacao e
+  // ignorado, em vez de abrir a neblina de alguem que nao devia perceber nada.
+  enforceHallucinationRules(token);
 
   ctx.room.touchScene(scene.id);
   emitTokenUpsert(ctx.room, scene, token);
@@ -187,6 +208,7 @@ export function updateToken(
     applyExploration(ctx, scene);
     refreshVision(ctx.room, scene);
   }
+  if (p.visibleTo !== undefined && gm) emitInitiative(ctx.room);
   ok(ack, null);
 }
 
@@ -566,6 +588,7 @@ export function createEffectHandler(
     style: EFFECT_STYLES.includes(e.style as never) ? e.style : 'flat',
     colorAlt: safeString(e.colorAlt, 32, '#ffffff'),
     speed: clampNumber(e.speed, 0, 4, 1),
+    visibleTo: gm ? visibleToOf(ctx, e.visibleTo) : null,
   });
 
   scene.effects.push(effect);
@@ -617,6 +640,7 @@ export function updateEffect(
       effect.visibility = p.visibility;
     }
     if (p.gmOnly !== undefined) effect.gmOnly = Boolean(p.gmOnly);
+    if (p.visibleTo !== undefined) effect.visibleTo = visibleToOf(ctx, p.visibleTo);
   }
 
   ctx.room.touchScene(scene.id);

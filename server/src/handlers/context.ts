@@ -1,4 +1,4 @@
-import type { Ack, Result, Scene, Token } from '@rpg/shared';
+import { perceives, type Ack, type Result, type Scene, type Token } from '@rpg/shared';
 
 import type { TypedSocket } from '../broadcast.js';
 import type { Viewer } from '../filter.js';
@@ -69,6 +69,8 @@ export function canMoveToken(ctx: Ctx, token: Token): boolean {
   if (isGm(ctx)) return true;
   if (token.locked) return false;
   if (token.gmOnly || token.visibility === 'hidden') return false;
+  // Alucinacao de outra pessoa: nao se move o que nao se percebe.
+  if (!perceives(token, ctx.viewer.playerId)) return false;
   if (ctx.room.state.settings.playersMoveOwnTokensOnly) {
     return token.ownerPlayerId === ctx.viewer.playerId;
   }

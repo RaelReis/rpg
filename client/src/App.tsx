@@ -5,8 +5,10 @@ import { connectAndResume } from './net/socket';
 import { useStore } from './state/store';
 import { Gate } from './ui/Gate';
 import { HandoutModal } from './ui/HandoutModal';
+import { MessageComposer } from './ui/MessageComposer';
 import { Notices } from './ui/Notices';
 import { Rail } from './ui/Rail';
+import { ScreenLayer } from './ui/ScreenLayer';
 import { Side } from './ui/Side';
 import { SheetModal } from './ui/SheetModal';
 import { TemplateEditor } from './ui/TemplateEditor';
@@ -19,6 +21,7 @@ export function App(): JSX.Element {
   const templateEditorOpen = useStore((s) => s.templateEditorOpen);
   const sheetModalId = useStore((s) => s.sheetModalId);
   const openHandoutId = useStore((s) => s.openHandoutId);
+  const messageComposer = useStore((s) => s.messageComposer);
   const [restoring, setRestoring] = useState(true);
 
   /**
@@ -62,6 +65,7 @@ export function App(): JSX.Element {
         <Rail />
         <div className="stage-wrap">
           <Stage />
+          <ScreenLayer />
           <TurnBanner />
           <SideToggle />
         </div>
@@ -71,6 +75,8 @@ export function App(): JSX.Element {
       {templateEditorOpen && <TemplateEditor />}
       {sheetModalId && <SheetModal sheetId={sheetModalId} />}
       {openHandoutId && <HandoutModal handoutId={openHandoutId} />}
+      {/* A chave recomeca o formulario a cada abertura, com os destinatarios pedidos. */}
+      {messageComposer && <MessageComposer key={messageComposer.recipients.join(',') || 'novo'} />}
       <Notices />
     </div>
   );

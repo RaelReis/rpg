@@ -291,6 +291,11 @@ textarea {
   border-color: #6a5220;
   color: var(--brass);
 }
+.tag.halluc {
+  color: #b48ee0;
+  border-color: rgba(180, 142, 224, 0.45);
+}
+
 .tag.on {
   background: rgba(111, 174, 114, 0.12);
   border-color: #38542f;
@@ -1584,5 +1589,101 @@ textarea {
     position: absolute;
     inset: 0 0 0 var(--rail-w);
     width: auto;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Imersao: camada sobre o mapa, fora da camera. Tudo aqui anima em CSS e so
+   enquanto esta na tela; o canvas do mapa nao e redesenhado por causa dela.
+   --------------------------------------------------------------------------- */
+.screen-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  overflow: hidden;
+}
+
+.screen-messages {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+
+.screen-message {
+  pointer-events: auto;
+  cursor: pointer;
+  max-width: min(640px, 90%);
+  padding: 18px 28px;
+  text-align: center;
+  border-radius: var(--radius-lg);
+  background: radial-gradient(ellipse at center, rgba(8, 9, 13, 0.82) 0%, rgba(8, 9, 13, 0.55) 70%, transparent 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  animation: screen-message-in 900ms ease both;
+}
+.screen-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1.35;
+  color: var(--ink);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+.screen-message.whisper p {
+  font-style: italic;
+  font-size: 21px;
+  letter-spacing: 0.02em;
+  color: #b9c6d6;
+  opacity: 0.9;
+}
+.screen-message.threat p {
+  font-family: var(--font-ui);
+  font-weight: 800;
+  font-size: 28px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e0544a;
+  text-shadow: 0 0 18px rgba(207, 91, 82, 0.55), 0 2px 10px rgba(0, 0, 0, 0.95);
+}
+.screen-message.leaving {
+  animation: screen-message-out 700ms ease both;
+}
+.screen-message.static {
+  animation: none;
+  cursor: default;
+}
+.screen-message-preview {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  background: var(--void);
+  border-radius: var(--radius);
+}
+@keyframes screen-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(4px);
+  }
+}
+@keyframes screen-message-out {
+  to {
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .screen-message,
+  .screen-message.leaving {
+    animation-duration: 1ms;
   }
 }

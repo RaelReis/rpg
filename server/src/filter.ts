@@ -3,10 +3,12 @@ import {
   computeVision,
   filterSheetForRole,
   filterTemplateForRole,
+  perceives,
   type Asset,
   type ChatMessage,
   type Handout,
   type InitiativeState,
+  type MapEffect,
   type Player,
   type Role,
   type Scene,
@@ -64,7 +66,7 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
     .map(presentToken);
 
   const tiles = scene.tiles.filter((t) => !t.gmOnly);
-  const effects = scene.effects.filter((e) => !e.gmOnly && e.visibility !== 'hidden');
+  const effects = scene.effects.filter((e) => effectVisibleTo(e, viewer));
 
   // Com strictVision as paredes ficam no servidor: elas descrevem a planta do
   // mapa e apareceriam inteiras no inspecionador de rede do navegador. O que
@@ -93,6 +95,16 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
         };
 
   return { ...scene, tokens, tiles, effects, walls, fog };
+}
+
+/**
+ * O efeito chega a este observador? Exclusivo do mestre, oculto e alucinacao
+ * de outra pessoa ficam de fora do payload.
+ */
+export function effectVisibleTo(effect: MapEffect, viewer: Viewer): boolean {
+  if (viewer.role === 'GM') return true;
+  if (effect.gmOnly || effect.visibility === 'hidden') return false;
+  return perceives(effect, viewer.playerId);
 }
 
 /**
@@ -232,9 +244,28 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
   return handout.sharedWith.includes(viewer.playerId) ? handout : null;
 }
 
-function initiativeForViewer(initiative: InitiativeState, viewer: Viewer): InitiativeState {
+/**
+ * Iniciativa na versao do observador. Alem das entradas marcadas como ocultas,
+ * sai a entrada de uma alucinacao que ele nao percebe: ela traria o id e o
+ * nome do token, e a ordem de turno entregaria o monstro que so a Alice ve.
+ */
+export function initiativeForViewer(room: Room, viewer: Viewer): InitiativeState {
+  const initiative = room.state.initiative;
   if (viewer.role === 'GM') return initiative;
-  return { ...initiative, entries: initiative.entries.filter((e) => !e.hiddenFromPlayers) };
+
+  const unseen = new Set<string>();
+  for (const scene of room.state.scenes) {
+    for (const token of scene.tokens) {
+      if (!perceives(token, viewer.playerId)) unseen.add(token.id);
+    }
+  }
+
+  return {
+    ...initiative,
+    entries: initiative.entries.filter(
+      (e) => !e.hiddenFromPlayers && !(e.tokenId && unseen.has(e.tokenId)),
+    ),
+  };
 }
 
 function chatForViewer(chat: ChatMessage[], viewer: Viewer): ChatMessage[] {
@@ -269,7 +300,7 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
       .filter((h): h is Handout => h !== null),
     assets: assetsForViewer(room, viewer, scene, sheets, players),
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
-    initiative: initiativeForViewer(s.initiative, viewer),
+    initiative: initiativeForViewer(room, viewer),
     chat: chatForViewer(s.chat, viewer),
   };
 }

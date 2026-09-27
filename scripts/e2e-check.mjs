@@ -1094,11 +1094,180 @@ async function main() {
   gm.disconnect();
   player2.disconnect();
 
+  await immersionPerception();
+
   console.log(`\n${'='.repeat(52)}`);
   console.log(`${checks - failures}/${checks} verificacoes passaram`);
   if (failures > 0) console.log(`${failures} FALHA(S)`);
   console.log('='.repeat(52));
   process.exit(failures > 0 ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
+// Imersao
+// ---------------------------------------------------------------------------
+
+/**
+ * Registra TUDO o que chega a um socket, como texto. Os testes de vazamento
+ * procuram ids aqui, e nao na tela: um objeto escondido na interface mas
+ * presente no payload continuaria legivel no inspecionador de rede.
+ */
+function recordTraffic(socket) {
+  const log = [];
+  socket.onAny((event, ...args) => {
+    log.push(`${event} ${JSON.stringify(args.filter((a) => typeof a !== 'function'))}`);
+  });
+  return {
+    contains: (needle) => log.some((line) => line.includes(needle)),
+    events: (name) => log.filter((line) => line.startsWith(`${name} `)),
+  };
+}
+
+/** Mesa nova com mestre e jogadores, independente das secoes anteriores. */
+async function freshTable(playerNames) {
+  const res = await fetch(`${BASE}/api/tables`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Mesa de Imersao', gmName: 'Mestre', gmPassword: 'segredo' }),
+  });
+  const { session } = await res.json();
+  const gm = await connect();
+  const gmState = await rpc(gm, 'session:resume', { token: session.token });
+  const players = [];
+  for (const name of playerNames) {
+    const socket = await connect();
+    const joined = await rpc(socket, 'session:join', { code: session.tableCode, name });
+    // Como o cliente real: confirma a mensagem individual assim que chega.
+    socket.on('message:show', (_message, ack) => ack?.(true));
+    players.push({ socket, id: joined.session.playerId, token: joined.session.token, state: joined.state });
+  }
+  return { gm, gmToken: session.token, sceneId: gmState.state.activeSceneId, code: session.tableCode, players };
+}
+
+async function immersionPerception() {
+  console.log('\n== I1. Alucinacoes ==');
+  const { gm, sceneId, players } = await freshTable(['Alice', 'Bruno', 'Clara']);
+  const [alice, bruno, clara] = players;
+  const aliceSees = recordTraffic(alice.socket);
+  const brunoSees = recordTraffic(bruno.socket);
+
+  const aliceGetsGhost = waitFor(alice.socket, 'tokens:patch', (p) => p.upsert?.some((t) => t.name === 'Fantasma'));
+  const ghost = await rpc(gm, 'token:create', {
+    sceneId,
+    token: {
+      name: 'Fantasma',
+      x: 210,
+      y: 210,
+      visibleTo: [alice.id],
+      // Pedidos que uma alucinacao nao pode ter: o servidor recusa em silencio.
+      ownerPlayerId: alice.id,
+      visionRadius: 5,
+      lightRadius: 3,
+    },
+  });
+  check('alucinacao guarda a lista de quem a percebe', JSON.stringify(ghost.visibleTo) === JSON.stringify([alice.id]));
+  check(
+    'alucinacao nao tem dono, visao nem luz',
+    ghost.ownerPlayerId === null && ghost.visionRadius === 0 && ghost.lightRadius === 0,
+    JSON.stringify(ghost).slice(0, 160),
+  );
+  check('quem esta na lista recebe o token', !!(await aliceGetsGhost));
+
+  const aliceGetsVeil = waitFor(alice.socket, 'effects:patch', (p) => p.upsert?.some((e) => e.label === 'Veu'));
+  const veil = await rpc(gm, 'effect:create', {
+    sceneId,
+    effect: { kind: 'circle', label: 'Veu', x: 300, y: 300, visibleTo: [alice.id] },
+  });
+  check('quem esta na lista recebe o efeito', !!(await aliceGetsVeil));
+
+  // O mestre mexe na alucinacao de varios jeitos: nada disso pode chegar ao Bruno.
+  await rpc(gm, 'token:move', { sceneId, tokenId: ghost.id, x: 280, y: 280, dragging: false });
+  await rpc(gm, 'token:update', { sceneId, tokenId: ghost.id, patch: { name: 'Fantasma palido', ownerPlayerId: alice.id } });
+  await rpc(gm, 'effect:update', { sceneId, effectId: veil.id, patch: { color: '#b48ee0' } });
+  await rpc(gm, 'initiative:add', { entry: { name: 'Fantasma', tokenId: ghost.id, value: 12 } });
+  await sleep(250);
+
+  const aliceInit = aliceSees.events('initiative:patch').some((line) => line.includes(ghost.id));
+  const brunoInit = brunoSees.events('initiative:patch').length > 0;
+  check('a entrada de iniciativa da alucinacao chega a quem a percebe', aliceInit);
+  check('...e a iniciativa chega ao Bruno sem ela', brunoInit && !brunoSees.contains(ghost.id));
+
+  await rpc(gm, 'settings:update', { playersMoveOwnTokensOnly: false });
+  let moveRefused = false;
+  try {
+    await rpc(bruno.socket, 'token:move', { sceneId, tokenId: ghost.id, x: 10, y: 10 });
+  } catch {
+    moveRefused = true;
+  }
+  check('quem nao percebe a alucinacao nao consegue move-la', moveRefused);
+  await rpc(gm, 'settings:update', { playersMoveOwnTokensOnly: true });
+
+  const brunoStateText = JSON.stringify((await rpc(bruno.socket, 'session:resume', { token: bruno.token })).state);
+  check('estado completo do Bruno nao contem o token', !brunoStateText.includes(ghost.id));
+  check('estado completo do Bruno nao contem o efeito', !brunoStateText.includes(veil.id));
+  const aliceState = JSON.stringify((await rpc(alice.socket, 'session:resume', { token: alice.token })).state);
+  check('estado completo da Alice contem os dois', aliceState.includes(ghost.id) && aliceState.includes(veil.id));
+
+  console.log('\n== I2. Trocar quem percebe ==');
+  const shade = await rpc(gm, 'token:create', { sceneId, token: { name: 'Sombra', x: 420, y: 210, visibleTo: [alice.id] } });
+  const mist = await rpc(gm, 'effect:create', { sceneId, effect: { kind: 'rect', label: 'Bruma', x: 500, y: 500, visibleTo: [alice.id] } });
+  await sleep(150);
+
+  const aliceLosesShade = waitFor(alice.socket, 'tokens:patch', (p) => p.remove?.includes(shade.id));
+  const brunoGetsShade = waitFor(bruno.socket, 'tokens:patch', (p) => p.upsert?.some((t) => t.id === shade.id));
+  const aliceLosesMist = waitFor(alice.socket, 'effects:patch', (p) => p.remove?.includes(mist.id));
+  const brunoGetsMist = waitFor(bruno.socket, 'effects:patch', (p) => p.upsert?.some((e) => e.id === mist.id));
+  await rpc(gm, 'token:update', { sceneId, tokenId: shade.id, patch: { visibleTo: [bruno.id] } });
+  await rpc(gm, 'effect:update', { sceneId, effectId: mist.id, patch: { visibleTo: [bruno.id] } });
+  check('quem sai da lista perde o token', !!(await aliceLosesShade));
+  check('quem entra na lista recebe o token', !!(await brunoGetsShade));
+  check('quem sai da lista perde o efeito', !!(await aliceLosesMist));
+  check('quem entra na lista recebe o efeito', !!(await brunoGetsMist));
+
+  const everyoneGetsShade = waitFor(clara.socket, 'tokens:patch', (p) => p.upsert?.some((t) => t.id === shade.id));
+  await rpc(gm, 'token:update', { sceneId, tokenId: shade.id, patch: { visibleTo: null } });
+  check('voltar para "todos" entrega o token a quem nunca o viu', !!(await everyoneGetsShade));
+
+  // Apagar a alucinacao nao pode anunciar o id a quem nunca a recebeu.
+  await rpc(gm, 'token:delete', { sceneId, tokenId: ghost.id });
+  await rpc(gm, 'effect:delete', { sceneId, effectId: veil.id });
+  await sleep(250);
+  check('Bruno nunca recebeu o id do token, em nenhum evento', !brunoSees.contains(ghost.id));
+  check('Bruno nunca recebeu o id do efeito, em nenhum evento', !brunoSees.contains(veil.id));
+  check('Alice recebeu a remocao', aliceSees.events('tokens:patch').some((l) => l.includes('remove') && l.includes(ghost.id)));
+
+  console.log('\n== I3. Mensagem individual ==');
+  clara.socket.disconnect();
+  await sleep(250);
+
+  const aliceMessage = waitFor(alice.socket, 'message:show', (m) => m.text === 'Voce ouve alguem chamar seu nome.');
+  const delivery = await rpc(gm, 'message:send', {
+    recipients: [alice.id, clara.id],
+    text: 'Voce ouve alguem chamar seu nome.',
+    style: 'whisper',
+    durationMs: 5000,
+  });
+  const shown = await aliceMessage;
+  check('a mensagem chega ao destinatario', shown?.style === 'whisper' && shown?.durationMs === 5000);
+  check('o mestre sabe que ela foi entregue', delivery.delivered.includes(alice.id), JSON.stringify(delivery));
+  check('quem esta offline e avisado, e nao enfileirado', delivery.offline.includes(clara.id));
+  check('quem nao e destinatario nao recebe', !brunoSees.contains('chamar seu nome'));
+
+  const untilClosed = waitFor(bruno.socket, 'message:show', (m) => m.durationMs === null);
+  await rpc(gm, 'message:send', { recipients: [bruno.id], text: 'Nao olhe para tras.', style: 'threat', durationMs: null });
+  check('mensagem "ate fechar" chega sem duracao', !!(await untilClosed));
+
+  let playerRefused = false;
+  try {
+    await rpc(alice.socket, 'message:send', { recipients: [bruno.id], text: 'oi', style: 'neutral', durationMs: 3000 });
+  } catch {
+    playerRefused = true;
+  }
+  check('jogador nao envia mensagem individual', playerRefused);
+
+  gm.disconnect();
+  alice.socket.disconnect();
+  bruno.socket.disconnect();
 }
 
 main().catch((err) => {

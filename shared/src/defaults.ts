@@ -105,8 +105,10 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     fog: { ...DEFAULT_FOG, ...(partial.fog ?? {}) },
     walls: partial.walls ?? [],
     tiles: partial.tiles ?? [],
-    tokens: partial.tokens ?? [],
-    effects: partial.effects ?? [],
+    // Passar pelas fabricas completa campos criados depois que a cena foi
+    // gravada (ou exportada): um token antigo chegaria sem `visibleTo`.
+    tokens: (partial.tokens ?? []).map((t) => createToken(t)),
+    effects: (partial.effects ?? []).map((e) => createEffect(e)),
     globalLight: partial.globalLight ?? 1,
     weather: { ...DEFAULT_WEATHER, ...(partial.weather ?? {}) },
   };
@@ -135,6 +137,7 @@ export function createToken(partial: Partial<Token> = {}): Token {
     label: partial.label ?? '',
     locked: partial.locked ?? false,
     conditions: partial.conditions ?? [],
+    visibleTo: partial.visibleTo ?? null,
   };
 }
 
@@ -181,6 +184,7 @@ export function createEffect(partial: Partial<MapEffect> = {}): MapEffect {
     style: partial.style ?? 'flat',
     colorAlt: partial.colorAlt ?? '#ffffff',
     speed: partial.speed ?? 1,
+    visibleTo: partial.visibleTo ?? null,
   };
 }
 

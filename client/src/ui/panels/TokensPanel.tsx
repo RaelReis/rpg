@@ -98,6 +98,7 @@ export function TokensPanel(): JSX.Element {
                           {owner && <span className="sub"> · {owner.name}</span>}
                         </span>
                         {token.gmOnly && <span className="tag gm">MJ</span>}
+                        {token.visibleTo && <HallucinationTag ids={token.visibleTo} />}
                         {token.visibility === 'hidden' && <span className="tag">oculto</span>}
                         {token.visionRadius > 0 && <span className="tag">👁 {token.visionRadius}</span>}
                       </button>
@@ -200,6 +201,8 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
         onChange={(v) => patch({ gmOnly: v })}
       />
 
+      <VisibleToField value={token.visibleTo} onChange={(visibleTo) => patch({ visibleTo })} />
+
       <div className="grid-2">
         <NumberField
           label="Tamanho"
@@ -244,8 +247,16 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
 
       <div className="divider" />
 
+      {token.visibleTo && (
+        <span className="hint">
+          Alucinacao nao tem dono, nao enxerga e nao emite luz — senao a neblina dos outros
+          denunciaria que ela existe.
+        </span>
+      )}
+
       <SelectField
         label="Controlado por"
+        disabled={token.visibleTo !== null}
         value={token.ownerPlayerId ?? ''}
         options={[
           { value: '', label: 'Mestre' },
@@ -273,6 +284,7 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
           value={token.visionRadius}
           min={0}
           max={40}
+          disabled={token.visibleTo !== null}
           onChange={(v) => patch({ visionRadius: v })}
         />
         <NumberField
@@ -281,6 +293,7 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
           value={token.lightRadius}
           min={0}
           max={40}
+          disabled={token.visibleTo !== null}
           onChange={(v) => patch({ lightRadius: v })}
         />
       </div>
@@ -626,6 +639,7 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
           <span className="sub"> · {anchorLabel}</span>
         </span>
         {effect.gmOnly && <span className="tag gm">MJ</span>}
+        {effect.visibleTo && <HallucinationTag ids={effect.visibleTo} />}
         <button
           className="btn ghost sm"
           onClick={(e) => {
@@ -780,8 +794,83 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
             checked={effect.gmOnly}
             onChange={(v) => patch({ gmOnly: v })}
           />
+
+          <VisibleToField value={effect.visibleTo} onChange={(visibleTo) => patch({ visibleTo })} />
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * "Visivel para": todos, ou apenas alguns jogadores (alucinacao).
+ *
+ * Quem fica de fora nao recebe o objeto — o servidor tira do payload, e a
+ * previa pelos olhos do jogador aplica o mesmo filtro. Lista vazia vale:
+ * ninguem alem do mestre percebe, ate ele marcar alguem.
+ */
+function VisibleToField({
+  value,
+  onChange,
+}: {
+  value: string[] | null;
+  onChange: (next: string[] | null) => void;
+}): JSX.Element {
+  // Seleciona a lista e filtra fora: um seletor que devolve array novo a cada
+  // chamada faz o zustand re-renderizar sem fim.
+  const allPlayers = useStore((s) => s.table?.players);
+  const players = (allPlayers ?? []).filter((p) => p.role === 'PLAYER');
+  const restricted = value !== null;
+
+  return (
+    <div className="field">
+      <SelectField
+        label="Visivel para"
+        value={restricted ? 'some' : 'all'}
+        options={[
+          { value: 'all', label: 'Todos' },
+          { value: 'some', label: 'Apenas…' },
+        ]}
+        onChange={(v) => onChange(v === 'all' ? null : [])}
+      />
+      {restricted &&
+        (players.length === 0 ? (
+          <span className="hint">Nenhum jogador na mesa ainda.</span>
+        ) : (
+          <div className="row wrap">
+            {players.map((p) => {
+              const on = value.includes(p.id);
+              return (
+                <label key={p.id} className="check" style={{ width: 'auto' }}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => onChange(on ? value.filter((id) => id !== p.id) : [...value, p.id])}
+                  />
+                  <span>{p.name}</span>
+                </label>
+              );
+            })}
+          </div>
+        ))}
+      {restricted && (
+        <span className="hint">
+          Quem nao estiver marcado nao recebe este objeto — nem sabe que ele existe.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function HallucinationTag({ ids }: { ids: string[] }): JSX.Element {
+  const names = useStore(
+    (s) => s.table?.players.filter((p) => ids.includes(p.id)).map((p) => p.name).join(', ') ?? '',
+  );
+  return (
+    <span className="tag halluc" title={names ? `Visivel apenas para: ${names}` : 'Apenas o mestre'}>
+      ◈ {ids.length}
+    </span>
   );
 }

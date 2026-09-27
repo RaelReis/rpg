@@ -15,6 +15,7 @@ export function PlayersPanel(): JSX.Element {
   const openSheet = useStore((s) => s.openSheetModal);
   const previewPlayerId = useStore((s) => s.previewPlayerId);
   const setPreviewPlayer = useStore((s) => s.setPreviewPlayer);
+  const openMessageComposer = useStore((s) => s.openMessageComposer);
 
   void rev;
   if (!table) return <Empty>Sem mesa carregada.</Empty>;
@@ -28,7 +29,17 @@ export function PlayersPanel(): JSX.Element {
           {table.players.map((player) => {
             const sheet = table.sheets.find((s) => s.ownerPlayerId === player.id);
             return (
-              <div key={player.id} className="item">
+              <div
+                key={player.id}
+                className="item"
+                // Botao direito no jogador abre a mensagem individual para ele:
+                // e o gesto de "falar ao pe do ouvido" de alguem da lista.
+                onContextMenu={(e) => {
+                  if (!gm || player.role !== 'PLAYER') return;
+                  e.preventDefault();
+                  openMessageComposer([player.id]);
+                }}
+              >
                 <span
                   className="swatch"
                   style={{
@@ -72,6 +83,16 @@ export function PlayersPanel(): JSX.Element {
                       + ▤
                     </button>
                   )
+                )}
+
+                {gm && player.role === 'PLAYER' && (
+                  <button
+                    className="btn ghost sm"
+                    title={`Mensagem individual para ${player.name} (ou botao direito no nome)`}
+                    onClick={() => openMessageComposer([player.id])}
+                  >
+                    ✉
+                  </button>
                 )}
 
                 {gm && player.role === 'PLAYER' && (

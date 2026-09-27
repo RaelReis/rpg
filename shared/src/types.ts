@@ -153,6 +153,13 @@ export interface Token {
   label: string;
   locked: boolean;
   conditions: string[];
+  /**
+   * Alucinacao: jogadores que percebem este token. `null` e o comportamento
+   * normal (todos, sujeito a neblina e ocultacao). Com lista, so quem esta
+   * nela — e o mestre — recebe o token; os demais nem sabem que ele existe.
+   * Ver `shared/src/perception.ts`.
+   */
+  visibleTo: string[] | null;
 }
 
 /** Imagem colada no mapa nas camadas 1 e 2 (terreno, moveis, paredes). */
@@ -231,6 +238,8 @@ export interface MapEffect {
   colorAlt: string;
   /** Multiplicador de velocidade da animacao. 0 congela o efeito. */
   speed: number;
+  /** Alucinacao: jogadores que percebem o efeito. `null` = todos. */
+  visibleTo: string[] | null;
 }
 
 export type WeatherKind = 'none' | 'rain' | 'snow' | 'fog' | 'ash';
@@ -484,6 +493,29 @@ export interface Handout {
   sharedWithAll: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Imersao: o que aparece na tela do jogador, fora do mapa
+// ---------------------------------------------------------------------------
+
+/** Tom da mensagem individual; muda so a tipografia e a cor. */
+export type ScreenMessageStyle = 'neutral' | 'whisper' | 'threat';
+
+/**
+ * Mensagem que o mestre faz aparecer no centro da tela de alguns jogadores
+ * ("Voce ouve alguem chamar seu nome.").
+ *
+ * E efemera de proposito: nao persiste e nao entra no chat. O que foi dito ao
+ * pe do ouvido de uma pessoa nao deveria ficar registrado onde a mesa inteira
+ * pode rolar a tela e ler.
+ */
+export interface ScreenMessage {
+  id: string;
+  text: string;
+  style: ScreenMessageStyle;
+  /** Milissegundos na tela; `null` fica ate o jogador fechar. */
+  durationMs: number | null;
 }
 
 /** Estado completo da mesa. O jogador recebe uma versao filtrada disto. */

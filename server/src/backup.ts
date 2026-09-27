@@ -271,7 +271,11 @@ async function buildImportedTable(
       ...t,
       ownerPlayerId: null,
       sheetId: t.sheetId ? (sheetByOldId.get(t.sheetId) ?? null) : null,
+      // Alucinacoes continuam alucinacoes, mas a lista apontava para jogadores
+      // que nao existem aqui: esvazia (so o mestre ve) em vez de virar "todos".
+      visibleTo: Array.isArray(t.visibleTo) ? [] : null,
     }));
+    scene.effects = scene.effects.map((e) => ({ ...e, visibleTo: Array.isArray(e.visibleTo) ? [] : null }));
     room.touchScene(scene.id);
   }
 

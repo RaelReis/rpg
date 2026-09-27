@@ -11,6 +11,8 @@ import type {
   Player,
   Role,
   Scene,
+  ScreenMessage,
+  ScreenMessageStyle,
   Session,
   Sheet,
   SheetTemplate,
@@ -127,6 +129,29 @@ export interface MapPing {
   focus: boolean;
 }
 
+export interface ScreenMessageRequest {
+  /** Jogadores que recebem a mensagem. */
+  recipients: string[];
+  text: string;
+  style: ScreenMessageStyle;
+  /** Milissegundos na tela; `null` fica ate o jogador fechar. */
+  durationMs: number | null;
+}
+
+/**
+ * Resultado da entrega, para o mestre saber quem de fato leu.
+ *
+ * Quem esta offline nao recebe depois: a mensagem e do momento, e aparecer
+ * fora de hora, quando a pessoa voltar, estragaria o efeito. O mestre e
+ * avisado e decide se repete.
+ */
+export interface ScreenMessageDelivery {
+  delivered: string[];
+  offline: string[];
+  /** Conectados que nao confirmaram a tempo (aba travada, rede ruim). */
+  unconfirmed: string[];
+}
+
 export interface ChatSendPayload {
   text: string;
   whisper: boolean;
@@ -205,6 +230,8 @@ export interface ClientToServerEvents {
   'handout:present': (payload: { handoutId: string }, ack: Ack<null>) => void;
 
   'chat:send': (payload: ChatSendPayload, ack: Ack<null>) => void;
+  /** Mensagem individual no centro da tela (so o mestre envia). */
+  'message:send': (payload: ScreenMessageRequest, ack: Ack<ScreenMessageDelivery>) => void;
   'map:ping': (payload: Omit<MapPing, 'playerName' | 'color'>) => void;
   // Nao ha evento de cursor: ninguem, nem o mestre, ve o ponteiro dos outros.
   // O ping continua sendo o jeito deliberado de apontar algo no mapa.
@@ -236,6 +263,8 @@ export interface ServerToClientEvents {
   'table:renamed': (name: string) => void;
 
   'chat:message': (message: ChatMessage) => void;
+  /** O cliente confirma pelo ack assim que recebe: e o "entregue" do mestre. */
+  'message:show': (message: ScreenMessage, ack: (received: boolean) => void) => void;
   'map:ping': (ping: MapPing) => void;
 
   'notice': (payload: { level: 'info' | 'warn' | 'error'; message: string }) => void;
@@ -266,6 +295,10 @@ export const ALLOWED_IMAGE_MIMES = [
 
 export const MAX_IMAGE_DIMENSION = 8192;
 export const MAX_CHAT_LENGTH = 2000;
+export const MAX_SCREEN_MESSAGE_LENGTH = 400;
+/** Limites de tempo na tela de uma mensagem com duracao. */
+export const SCREEN_MESSAGE_MIN_MS = 1000;
+export const SCREEN_MESSAGE_MAX_MS = 120000;
 export const CHAT_HISTORY_SIZE = 200;
 
 export type { Cell, Layer };

@@ -6,6 +6,7 @@ import {
   cellHeight,
   tokenCell,
 } from './grid.js';
+import { isHallucination, perceives } from './perception.js';
 import type { Cell, Point, Scene, Token, Role, Wall } from './types.js';
 
 /**
@@ -223,6 +224,8 @@ export function tokenVisionCells(
 export function visionSources(scene: Scene, playerId: string | null): Token[] {
   return scene.tokens.filter((t) => {
     if (t.layer !== 3) return false;
+    // Alucinacao nao ilumina nem enxerga: a neblina dos outros a denunciaria.
+    if (isHallucination(t)) return false;
     if (t.lightRadius > 0 && !t.gmOnly) return true;
     return t.ownerPlayerId !== null && t.ownerPlayerId === playerId && t.visionRadius > 0;
   });
@@ -309,6 +312,9 @@ export function canPlayerSeeToken(
   // qualquer consideracao sobre neblina: desligar a neblina afrouxa o que se
   // enxerga do cenario, e nunca deve revelar o que o mestre escondeu.
   if (vision.gm) return true;
+  // Percepcao antes de tudo: quem nao esta na lista da alucinacao nao a ve,
+  // nem sendo dono, nem com a neblina desligada.
+  if (!perceives(token, playerId)) return false;
   if (token.gmOnly || token.visibility === 'hidden') return false;
   if (token.ownerPlayerId !== null && token.ownerPlayerId === playerId) return true;
   if (vision.unrestricted || scene.fog.mode === 'off') return true;
@@ -336,6 +342,7 @@ export function newlyExploredCells(scene: Scene): string[] {
 
   for (const token of scene.tokens) {
     if (token.layer !== 3) continue;
+    if (isHallucination(token)) continue;
     const isPlayerEye = token.ownerPlayerId !== null && token.visionRadius > 0;
     const isLight = token.lightRadius > 0 && !token.gmOnly;
     if (!isPlayerEye && !isLight) continue;

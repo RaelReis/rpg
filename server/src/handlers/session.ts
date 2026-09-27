@@ -88,6 +88,7 @@ function stateWithVisibilityCache(room: Room, socket: TypedSocket): TableState {
 
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
+  socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
   socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
   return state;
 }
@@ -99,6 +100,7 @@ function attach(socket: TypedSocket, room: Room, playerId: string): void {
   socket.data.tableId = room.state.id;
   socket.data.viewer = { playerId, role: player.role };
   socket.data.visibleTokens = new Set();
+  socket.data.visibleEffects = new Set();
   socket.data.knownAssets = new Set();
   socket.data.currentSceneId = room.state.activeSceneId;
 

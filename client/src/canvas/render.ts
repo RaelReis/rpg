@@ -6,7 +6,9 @@ import {
   canPlayerSeeToken,
   cellsInRect,
   hexRadius,
+  isHallucination,
   isHex,
+  perceives,
   parseCellKey,
   tokenCell,
   type Layer,
@@ -577,7 +579,21 @@ function drawToken(input: RenderInput, token: Token): void {
     ctx.setLineDash([]);
   }
 
+  if (input.role === 'GM' && isHallucination(token)) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.1, 0, Math.PI * 2);
+    ctx.strokeStyle = HALLUCINATION_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   ctx.restore();
+
+  if (input.role === 'GM' && isHallucination(token)) {
+    drawHallucinationMark(input, cx + radius * 0.78, cy - radius * 0.78);
+  }
 
   drawTokenBars(input, token, cx, cy + h / 2, w);
   drawTokenLabel(input, token, cx, cy + h / 2, w);
@@ -690,9 +706,22 @@ function drawArtToken(
     ctx.strokeRect(-artW / 2, -artH, artW, artH);
     ctx.restore();
   }
+  if (input.role === 'GM' && isHallucination(token)) {
+    ctx.save();
+    ctx.strokeStyle = HALLUCINATION_COLOR;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+    const pad = 4 / camera.zoom;
+    ctx.strokeRect(-artW / 2 - pad, -artH - pad, artW + pad * 2, artH + pad * 2);
+    ctx.restore();
+  }
   ctx.restore();
 
   ctx.restore();
+
+  if (input.role === 'GM' && isHallucination(token)) {
+    drawHallucinationMark(input, cx + artW / 2, top);
+  }
 
   drawConditions(input, token, cx, top, artW);
 }
@@ -797,6 +826,11 @@ function effectOrigin(input: RenderInput, effect: MapEffect): Point | null {
   if (effect.anchor === 'token') {
     const token = scene.tokens.find((t) => t.id === effect.tokenId);
     if (!token) return null;
+    // Na previa, o jogador nao recebe o token que ele nao ve; sem ancora, o
+    // efeito preso a ele tambem nao aparece para ele.
+    if (input.previewPlayerId !== null && !canPlayerSeeToken(scene, token, input.vision, input.previewPlayerId)) {
+      return null;
+    }
     const w = scene.grid.size * token.scale;
     const h = (scene.grid.type === 'none' ? scene.grid.size : cellHeight(scene.grid)) * token.scale;
     return { x: token.x + w / 2 + effect.x, y: token.y + h / 2 + effect.y };
@@ -813,7 +847,12 @@ function effectOrigin(input: RenderInput, effect: MapEffect): Point | null {
 }
 
 function drawEffect(input: RenderInput, effect: MapEffect): void {
-  if (input.previewPlayerId !== null && (effect.gmOnly || effect.visibility === 'hidden')) return;
+  if (
+    input.previewPlayerId !== null &&
+    (effect.gmOnly || effect.visibility === 'hidden' || !perceives(effect, input.previewPlayerId))
+  ) {
+    return;
+  }
   const origin = effectOrigin(input, effect);
   if (!origin) return;
   if (!litEnoughToDraw(input, effect.layer, origin)) return;
@@ -933,9 +972,63 @@ function drawEffect(input: RenderInput, effect: MapEffect): void {
   ctx.restore();
 }
 
+/**
+ * Alucinacao: cor e marca que so o mestre ve.
+ *
+ * O contorno tracejado e o olho aparecem apenas na tela dele — na previa pelos
+ * olhos de um jogador o papel desenhado ja e o de jogador, e nada disso sai.
+ * Sao desenhos estaticos: nao pedem quadro algum.
+ */
+const HALLUCINATION_COLOR = '#b48ee0';
+
+function drawHallucinationMark(input: RenderInput, x: number, y: number): void {
+  const { ctx, camera } = input;
+  const r = 8 / camera.zoom;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(18,20,26,0.9)';
+  ctx.fill();
+  ctx.lineWidth = 1.2 / camera.zoom;
+  ctx.strokeStyle = HALLUCINATION_COLOR;
+  ctx.stroke();
+  // Olho: amendoa com pupila.
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * 0.62, r * 0.36, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.2, 0, Math.PI * 2);
+  ctx.fillStyle = HALLUCINATION_COLOR;
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Contorno tracejado de um efeito com visibilidade restrita. */
+function drawEffectHallucination(input: RenderInput, effect: MapEffect, origin: Point): void {
+  const { ctx, camera } = input;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = HALLUCINATION_COLOR;
+  ctx.lineWidth = 1.5 / camera.zoom;
+  ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+  const areaKinds = effect.kind === 'circle' || effect.kind === 'cone' || effect.kind === 'rect';
+  if (areaKinds) {
+    traceEffectShape(ctx, effect, origin, input.scene.grid.size);
+  } else {
+    ctx.beginPath();
+    ctx.arc(origin.x, origin.y, 16 / camera.zoom, 0, Math.PI * 2);
+  }
+  ctx.stroke();
+  ctx.restore();
+  drawHallucinationMark(input, origin.x, origin.y - 22 / camera.zoom);
+}
+
 /** Rotulo e marcador de ancora, comuns a todos os estilos. */
 function drawEffectLabelAndAnchor(input: RenderInput, effect: MapEffect, origin: Point): void {
   const { ctx, camera } = input;
+
+  if (input.role === 'GM' && isHallucination(effect)) drawEffectHallucination(input, effect, origin);
 
   // Rotulo do efeito (exceto no tipo texto, que ja e o proprio rotulo).
   if (effect.label && effect.kind !== 'text') {

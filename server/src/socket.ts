@@ -47,6 +47,7 @@ import {
   updateScene,
   updateSettings,
 } from './handlers/scene.js';
+import { sendScreenMessage } from './handlers/immersion.js';
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
   assignSheet,
@@ -271,5 +272,8 @@ export function registerSocketHandlers(io: TypedServer): void {
     socket.on('handout:present', gm(presentHandout));
 
     socket.on('map:ping', loose(pingMap));
+
+    // -- imersao -----------------------------------------------------------
+    socket.on('message:send', gm(sendScreenMessage));
   });
 }

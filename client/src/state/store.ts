@@ -13,6 +13,7 @@ import {
   type Player,
   type Point,
   type Scene,
+  type ScreenMessage,
   type Session,
   type Sheet,
   type SheetTemplate,
@@ -89,6 +90,11 @@ export interface Camera {
   x: number;
   y: number;
   zoom: number;
+}
+
+/** Mensagem individual na tela, com a hora de chegada para o tempo correr. */
+export interface ShownMessage extends ScreenMessage {
+  receivedAt: number;
 }
 
 export interface ActivePing extends MapPing {
@@ -173,6 +179,10 @@ interface AppState {
   openHandoutId: string | null;
   /** Mensagens de chat chegadas enquanto a aba estava em outro painel. */
   unreadChat: number;
+  /** Mensagens individuais na tela deste jogador (efemeras, nunca no chat). */
+  screenMessages: ShownMessage[];
+  /** Compositor de mensagem individual do mestre, com os destinatarios iniciais. */
+  messageComposer: { recipients: string[] } | null;
 
   // --- acoes de sessao
   setSession(session: Session | null): void;
@@ -234,6 +244,9 @@ interface AppState {
   openTemplateEditor(open: boolean): void;
   openSheetModal(sheetId: string | null): void;
   openHandout(handoutId: string | null): void;
+  showScreenMessage(message: ScreenMessage): void;
+  dismissScreenMessage(id: string): void;
+  openMessageComposer(recipients: string[] | null): void;
 }
 
 let noticeSeq = 0;
@@ -288,6 +301,8 @@ export const useStore = create<AppState>((set, get) => ({
   sheetModalId: null,
   openHandoutId: null,
   unreadChat: 0,
+  screenMessages: [],
+  messageComposer: null,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -317,6 +332,8 @@ export const useStore = create<AppState>((set, get) => ({
       undoStack: [],
       redoStack: [],
       wallDraft: [],
+      screenMessages: [],
+      messageComposer: null,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -602,6 +619,17 @@ export const useStore = create<AppState>((set, get) => ({
   openTemplateEditor: (templateEditorOpen) => set({ templateEditorOpen }),
   openSheetModal: (sheetModalId) => set({ sheetModalId }),
   openHandout: (openHandoutId) => set({ openHandoutId }),
+
+  showScreenMessage: (message) =>
+    set((s) => ({
+      // Poucas de cada vez: se o mestre mandar varias seguidas, as mais
+      // antigas saem para nao empilhar texto sobre o mapa inteiro.
+      screenMessages: [...s.screenMessages.filter((m) => m.id !== message.id), { ...message, receivedAt: Date.now() }].slice(-3),
+    })),
+  dismissScreenMessage: (id) =>
+    set((s) => ({ screenMessages: s.screenMessages.filter((m) => m.id !== id) })),
+  openMessageComposer: (recipients) =>
+    set({ messageComposer: recipients === null ? null : { recipients } }),
 }));
 
 // ---------------------------------------------------------------------------
