@@ -1,0 +1,346 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createDefaultTemplate,
+  createScene,
+  createSheetValues,
+  createTile,
+  createToken,
+  createTrigger,
+  createWall,
+  DEFAULT_SETTINGS,
+  DEFAULT_TURNS,
+  type Player,
+  type Sheet,
+  type TableState,
+} from '@rpg/shared';
+
+vi.mock('./db.js', () => ({
+  prisma: {
+    table: { update: vi.fn(), findUnique: vi.fn() },
+    player: { findUnique: vi.fn(), create: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
+    sheet: { create: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
+    asset: { findMany: vi.fn() },
+  },
+  toJson: JSON.stringify,
+  fromJson: (s: string) => JSON.parse(s),
+  withRetry: (fn: () => unknown) => fn(),
+}));
+
+import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
+import { stateForViewer } from './filter.js';
+import type { Ctx } from './handlers/context.js';
+import { updateHandout } from './handlers/handouts.js';
+import { deleteToken } from './handlers/map.js';
+import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
+import { handleJoin } from './handlers/session.js';
+import { Room, rooms } from './room.js';
+
+/*
+ * Caca a vazamentos em forma de teste.
+ *
+ * O relatorio de QA (qa/relatorio-usabilidade.md) achou os vazamentos em
+ * caminhos secundarios — arrastar a ficha para a ordem, compartilhar um
+ * material com outra pessoa —, e nao no estado inicial, que ja era filtrado.
+ * Por isso aqui cada fluxo de risco roda contra sockets falsos e o teste olha
+ * TUDO o que o jogador recebeu, nao so o `stateForViewer`.
+ *
+ * Todo segredo leva o marcador `SEGREDO` no id ou no texto: basta ele aparecer
+ * no trafego serializado para o teste acusar, sem depender do formato da
+ * mensagem.
+ *
+ * Os achados ainda abertos usam `it.fails`: a suite segue verde (o build roda
+ * os testes) e o teste passa a FALHAR quando o bug for corrigido — o aviso
+ * para trocar `it.fails` por `it` junto da correcao.
+ */
+
+const SECRET = /SEGREDO/;
+
+interface FakeSocket {
+  socket: TypedSocket;
+  received: unknown[][];
+}
+
+let socketMap: Map<string, TypedSocket>;
+const created: Room[] = [];
+
+beforeEach(() => {
+  socketMap = new Map();
+  bindIo({ sockets: { sockets: socketMap } } as unknown as TypedServer);
+});
+
+afterEach(() => {
+  for (const room of created.splice(0)) room.cancelPendingWrites();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
+
+function player(id: string, role: Player['role'] = 'PLAYER'): Player {
+  return { id, name: id, role, color: '#ffffff', connected: true, lastSeen: 0, sheetId: `sht-${id}` };
+}
+
+function sheetOf(id: string, owner: string | null, template = createDefaultTemplate()): Sheet {
+  return {
+    id,
+    name: id,
+    ownerPlayerId: owner,
+    portraitAssetId: null,
+    bodyAssetId: null,
+    values: createSheetValues(template),
+    sharedWithParty: false,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}
+
+/**
+ * Mesa com mestre, Alice e Bruno, neblina por visao e escuridao total: a Alice
+ * so enxerga as celulas em volta do proprio token, no canto (0,0).
+ */
+function table(): Room {
+  const template = createDefaultTemplate();
+  const scene = createScene({
+    id: 'scn-ativa',
+    globalLight: 0,
+    fog: { mode: 'vision' } as never,
+    tokens: [
+      createToken({ id: 'tok-alice', ownerPlayerId: 'alice', sheetId: 'sht-alice', x: 0, y: 0, visionRadius: 2 }),
+      createToken({ id: 'tok-bruno', ownerPlayerId: 'bruno', sheetId: 'sht-bruno', x: 1400, y: 0, visionRadius: 2 }),
+    ],
+  });
+  const state: TableState = {
+    id: 'mesa',
+    code: 'mesa',
+    name: 'mesa',
+    activeSceneId: scene.id,
+    settings: { ...DEFAULT_SETTINGS, strictVision: true },
+    sheetTemplate: template,
+    turns: structuredClone(DEFAULT_TURNS),
+    scenes: [scene],
+    sheets: [sheetOf('sht-alice', 'alice', template), sheetOf('sht-bruno', 'bruno', template)],
+    players: [player('mestre', 'GM'), player('alice'), player('bruno')],
+    assets: [],
+    handouts: [],
+    chat: [],
+    sceneCards: [],
+    screenEffects: [],
+    presentedCard: null,
+    triggerLog: [],
+    board: { locked: false, items: [], threads: [] },
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  state.players[0].sheetId = null;
+  const room = new Room(state);
+  created.push(room);
+  return room;
+}
+
+/** Socket falso autenticado na mesa, que guarda tudo o que recebe. */
+function connect(room: Room, playerId: string): FakeSocket {
+  const received: unknown[][] = [];
+  const role = room.player(playerId)?.role ?? 'PLAYER';
+  const socket = {
+    id: `sock-${playerId}`,
+    connected: true,
+    data: { tableId: room.state.id, viewer: { playerId, role } },
+    emit: (...args: unknown[]) => {
+      received.push(args);
+      return true;
+    },
+    join: vi.fn(),
+    leave: vi.fn(),
+    disconnect: vi.fn(),
+    nsp: { sockets: socketMap },
+  } as unknown as TypedSocket;
+  socketMap.set(socket.id, socket);
+  room.sockets.add(socket.id);
+  return { socket, received };
+}
+
+function ctxOf(room: Room, sock: FakeSocket): Ctx {
+  return { room, viewer: sock.socket.data.viewer, socket: sock.socket };
+}
+
+/** Tudo o que o jogador recebeu, mais o estado completo que ele receberia agora. */
+function traffic(room: Room, sock: FakeSocket): string {
+  return JSON.stringify(sock.received) + JSON.stringify(stateForViewer(room, sock.socket.data.viewer));
+}
+
+function secretsIn(text: string): string[] {
+  return [...new Set(text.match(/SEGREDO[\w-]*/g) ?? [])];
+}
+
+describe('vazamentos: o que ja esta protegido', () => {
+  it('o estado do jogador nao carrega nenhum segredo de preparacao', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    const near = { x: 70, y: 0 };
+
+    // Tokens escondidos por tres caminhos diferentes, todos dentro da visao da Alice.
+    scene.tokens.push(createToken({ id: 'SEGREDO-oculto', name: 'SEGREDO-oculto', visibility: 'hidden', ...near }));
+    scene.tokens.push(createToken({ id: 'SEGREDO-exclusivo', name: 'SEGREDO-exclusivo', gmOnly: true, ...near }));
+    scene.tokens.push(createToken({ id: 'SEGREDO-alucinacao', name: 'SEGREDO-alucinacao', visibleTo: ['bruno'], ...near }));
+    // Paredes comuns e porta secreta nao vao com a visao estrita.
+    scene.walls.push(createWall({ id: 'SEGREDO-parede', x1: 140, y1: 0, x2: 140, y2: 280 }));
+    scene.walls.push(createWall({ id: 'SEGREDO-porta', x1: 0, y1: 140, x2: 70, y2: 140, door: true, hidden: true }));
+    scene.triggers.push(createTrigger({ kind: 'rect', x: 0, y: 0, width: 70, height: 70 }, { id: 'SEGREDO-gatilho', name: 'SEGREDO-gatilho' }));
+
+    room.state.sheetTemplate.fields.push({ ...room.state.sheetTemplate.fields[0], id: 'SEGREDO-campo', gmOnly: true });
+    room.sheet('sht-alice')!.values['SEGREDO-campo'] = 'SEGREDO-valor';
+
+    room.state.handouts.push({
+      id: 'SEGREDO-material',
+      title: 'SEGREDO-titulo',
+      text: '',
+      assetId: null,
+      sharedWith: [],
+      sharedWithAll: false,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    room.state.scenes.push(createScene({ id: 'SEGREDO-cena', name: 'SEGREDO-cena' }));
+    room.state.sceneCards.push({ id: 'SEGREDO-cartela', title: 'SEGREDO-cartela', subtitle: '', assetId: null, createdAt: 0, updatedAt: 0 });
+    room.state.triggerLog.push({
+      id: 'SEGREDO-disparo',
+      at: 0,
+      sceneId: scene.id,
+      triggerId: 'SEGREDO-gatilho',
+      triggerName: 'SEGREDO-gatilho',
+      tokenId: 'tok-bruno',
+      tokenName: 'bruno',
+      playerName: 'bruno',
+    });
+    room.state.chat.push({
+      id: 'msg',
+      playerId: 'bruno',
+      authorName: 'bruno',
+      authorColor: '#fff',
+      text: 'SEGREDO-sussurro',
+      roll: null,
+      rollLabel: null,
+      whisper: true,
+      createdAt: 0,
+    });
+
+    const alice = connect(room, 'alice');
+    expect(secretsIn(traffic(room, alice))).toEqual([]);
+  });
+
+  it('apagar uma alucinacao nao avisa quem nunca a percebeu', () => {
+    const room = table();
+    room.activeScene()!.tokens.push(createToken({ id: 'SEGREDO-fantasma', visibleTo: ['bruno'], x: 70, y: 0 }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+
+    deleteToken(ctxOf(room, gm), { sceneId: 'scn-ativa', tokenId: 'SEGREDO-fantasma' }, vi.fn());
+
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+  });
+});
+
+describe('vazamentos: achados abertos do relatorio de QA', () => {
+  // Q-002. Arrastar a ficha para a faixa de turnos manda o mesmo payload que
+  // `addSheet` do TurnBar, sem `hiddenFromPlayers`. A vez do NPC oculto vai
+  // aos jogadores com nome e id do token.
+  it.fails('Q-002: NPC oculto posto na ordem pela ficha nao chega aos jogadores', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    room.state.sheets.push(sheetOf('sht-SEGREDO-guarda', null));
+    scene.tokens.push(
+      createToken({ id: 'tok-SEGREDO-guarda', sheetId: 'sht-SEGREDO-guarda', name: 'SEGREDO-guarda', visibility: 'hidden', x: 700, y: 700 }),
+    );
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+
+    addTurnEntries(
+      ctxOf(room, gm),
+      { entries: [{ sheetId: 'sht-SEGREDO-guarda', tokenId: 'tok-SEGREDO-guarda', playerId: null, name: 'SEGREDO-guarda' }] },
+      vi.fn(),
+    );
+
+    expect(secretsIn(traffic(room, alice))).toEqual([]);
+  });
+
+  // Q-003. O filtro de cena so tira tiles `gmOnly`: um bau numa sala que
+  // ninguem viu e um tile que bloqueia a visao (a mesma planta que as paredes
+  // escondem) chegam inteiros ao jogador.
+  it.fails('Q-003: tiles fora da visao e tiles que bloqueiam a visao nao chegam ao jogador', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.tiles.push(createTile({ id: 'SEGREDO-bau', x: 1400, y: 1050, width: 70, height: 70 }));
+    scene.tiles.push(createTile({ id: 'SEGREDO-estante', x: 700, y: 700, width: 70, height: 210, blocksVision: true }));
+    const alice = connect(room, 'alice');
+
+    expect(secretsIn(traffic(room, alice))).toEqual([]);
+  });
+
+  // Q-004. Mudar o compartilhamento de um material manda `remove` com o id a
+  // todos os que nao veem — inclusive a quem nunca teve acesso.
+  it.fails('Q-004: compartilhar um material com o Bruno nao manda o id dele a Alice', () => {
+    const room = table();
+    room.state.handouts.push({
+      id: 'SEGREDO-carta',
+      title: 'carta',
+      text: '',
+      assetId: null,
+      sharedWith: [],
+      sharedWithAll: false,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    const gm = connect(room, 'mestre');
+    connect(room, 'bruno');
+    const alice = connect(room, 'alice');
+
+    updateHandout(ctxOf(room, gm), { handoutId: 'SEGREDO-carta', patch: { sharedWith: ['bruno'] } }, vi.fn());
+    updateHandout(ctxOf(room, gm), { handoutId: 'SEGREDO-carta', patch: { sharedWith: [] } }, vi.fn());
+
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+  });
+});
+
+describe('reproducoes do relatorio de QA', () => {
+  // Q-005. O novato que fecha a janela de imagens perde a sessao; ao entrar de
+  // novo com o mesmo nome, ganha outro jogador, outra ficha, outro token e
+  // outra vez. A correcao pode retomar o personagem ou perguntar antes — nos
+  // dois casos nao pode haver duas "Alice" na mesa.
+  it.fails('Q-005: reentrar com o mesmo nome nao duplica o personagem', async () => {
+    const room = table();
+    room.state.players = room.state.players.filter((p) => p.id === 'mestre');
+    room.state.sheets = [];
+    room.activeScene()!.tokens = [];
+    vi.spyOn(rooms, 'loadByCode').mockResolvedValue(room);
+
+    const first = connect(room, 'ninguem');
+    await handleJoin(first.socket, { code: 'mesa', name: 'Alice' }, vi.fn());
+
+    // A aba fecha: o jogador fica desconectado, a sessao se perde no navegador.
+    room.sockets.delete(first.socket.id);
+    for (const p of room.state.players) if (p.name === 'Alice') p.connected = false;
+
+    const second = connect(room, 'ninguem-2');
+    await handleJoin(second.socket, { code: 'mesa', name: 'Alice' }, vi.fn());
+
+    expect(room.state.players.filter((p) => p.name === 'Alice')).toHaveLength(1);
+    expect(room.state.sheets.filter((s) => s.name === 'Alice')).toHaveLength(1);
+    expect(room.activeScene()!.tokens.filter((t) => t.name === 'Alice')).toHaveLength(1);
+  });
+
+  // Q-007. `kickPlayer` tira as vezes do jogador, mas o token dele continua
+  // com `ownerPlayerId` apontando para quem saiu — e `ensurePartyInTurns`
+  // recria a vez a partir desse token. Foi assim que a "Alice fantasma" voltou
+  // para a ordem durante o teste.
+  it.fails('Q-007: jogador removido nao volta para a ordem nem deixa token com dono fantasma', async () => {
+    const room = table();
+    ensurePartyInTurns(room);
+    expect(room.state.turns.entries.some((e) => e.playerId === 'bruno')).toBe(true);
+    const gm = connect(room, 'mestre');
+    connect(room, 'bruno');
+
+    await kickPlayer(ctxOf(room, gm), { playerId: 'bruno' }, vi.fn());
+    ensurePartyInTurns(room);
+
+    expect(room.state.turns.entries.filter((e) => e.playerId === 'bruno' || e.tokenId === 'tok-bruno')).toEqual([]);
+    expect(room.activeScene()!.tokens.filter((t) => t.ownerPlayerId === 'bruno')).toEqual([]);
+  });
+});
