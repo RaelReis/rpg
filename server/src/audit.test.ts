@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createScene, createToken, createDefaultTemplate, createSheetValues, DEFAULT_SETTINGS, DEFAULT_TURNS, type TableState, type Sheet } from '@rpg/shared';
+import { createScene, createToken, createWall, createDefaultTemplate, createSheetValues, DEFAULT_SETTINGS, DEFAULT_TURNS, type TableState, type Sheet } from '@rpg/shared';
 
 vi.mock('./db.js', () => ({
   prisma: { table: { update: vi.fn(), findUnique: vi.fn() }, player: { findUnique: vi.fn(), create: vi.fn() }, sheet: { create: vi.fn() }, asset: { findMany: vi.fn() } },
@@ -12,7 +12,7 @@ import { handleJoin } from './handlers/session.js';
 import { stateForViewer, assetIdsOfSheet } from './filter.js';
 import { exportTable, remapSheetImages } from './backup.js';
 import { hashPassword, verifyPassword } from './auth.js';
-import { moveToken } from './handlers/map.js';
+import { moveToken, updateWall } from './handlers/map.js';
 import { operateSheet } from './handlers/sheets.js';
 import { validateBackup } from './backup-validation.js';
 import { ownedAsset, type Ctx } from './handlers/context.js';
@@ -140,5 +140,47 @@ describe('audit regressions', () => {
     expect(ownedAsset(ctx, 'private')).toBeNull();
     room.state.assets[0].uploadedBy = 'p';
     expect(ownedAsset(ctx, 'private')).toBe('private');
+  });
+});
+
+describe('portas abertas pelo jogador', () => {
+  // Alice no canto (0,0), no escuro total: enxerga so em volta de si.
+  function doorsFixture(): { room: Room; ctx: Ctx; open: (wallId: string, sceneId?: string) => { ok: boolean; error?: string } } {
+    const room = fixture();
+    const scene = room.activeScene()!;
+    scene.fog.mode = 'vision';
+    scene.globalLight = 0;
+    scene.tokens.push(createToken({ id: 'alice-token', ownerPlayerId: 'alice', x: 0, y: 0, visionRadius: 1 }));
+    scene.walls.push(createWall({ id: 'perto', x1: 70, y1: 0, x2: 70, y2: 70, door: true }));
+    scene.walls.push(createWall({ id: 'longe', x1: 1400, y1: 0, x2: 1400, y2: 70, door: true }));
+    scene.walls.push(createWall({ id: 'secreta', x1: 0, y1: 70, x2: 70, y2: 70, door: true, hidden: true }));
+    room.state.players.push({ id: 'alice', name: 'Alice', role: 'PLAYER', color: '#ffffff', connected: true, lastSeen: 0, sheetId: null });
+    const ctx = { room, viewer: { role: 'PLAYER', playerId: 'alice' }, socket: {} } as Ctx;
+    const open = (wallId: string, sceneId = scene.id) => {
+      const ack = vi.fn();
+      updateWall(ctx, { sceneId, wallId, patch: { open: true } }, ack);
+      return ack.mock.calls[0][0];
+    };
+    return { room, ctx, open };
+  }
+
+  it('abre a porta que o jogador enxerga', () => {
+    const { room, open } = doorsFixture();
+    expect(open('perto').ok).toBe(true);
+    expect(room.activeScene()!.walls.find((w) => w.id === 'perto')!.open).toBe(true);
+  });
+
+  it('recusa a porta no escuro do outro lado do mapa', () => {
+    const { room, open } = doorsFixture();
+    expect(open('longe')).toMatchObject({ ok: false, error: 'Voce nao enxerga esta porta.' });
+    expect(room.activeScene()!.walls.find((w) => w.id === 'longe')!.open).toBe(false);
+  });
+
+  it('recusa porta secreta e porta de cena fora do ar', () => {
+    const { room, open } = doorsFixture();
+    expect(open('secreta').ok).toBe(false);
+    const other = createScene({ walls: [createWall({ id: 'outra', x1: 70, y1: 0, x2: 70, y2: 70, door: true })] });
+    room.state.scenes.push(other);
+    expect(open('outra', other.id)).toMatchObject({ ok: false, error: 'Esta cena nao esta no ar.' });
   });
 });

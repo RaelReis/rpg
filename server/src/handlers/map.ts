@@ -5,6 +5,7 @@ import {
   createToken,
   createWall,
   enforceHallucinationRules,
+  isDoorWithinSight,
   movementBlocked,
   normalizeConditions,
   newlyExploredCells,
@@ -34,7 +35,7 @@ import {
   refreshVision,
   socketsOf,
 } from '../broadcast.js';
-import { tokenForViewer } from '../filter.js';
+import { tokenForViewer, visionFor } from '../filter.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
 import { checkTriggers } from './triggers.js';
 
@@ -793,6 +794,13 @@ export function updateWall(
   if (!gm) {
     if (!wall.door || wall.hidden) return fail(ack, 'Apenas o mestre pode editar paredes.');
     if (p.open === undefined) return fail(ack, 'Jogadores so podem abrir ou fechar portas.');
+    // Mesma regra do movimento: so a cena no ar, e so a porta que o jogador
+    // enxerga — as portas chegam a ele em todo o mapa, e abrir uma no escuro
+    // do outro lado revelaria a sala sem ninguem ir ate la.
+    if (scene.id !== ctx.room.state.activeSceneId) return fail(ack, 'Esta cena nao esta no ar.');
+    if (!isDoorWithinSight(scene, visionFor(scene, ctx.viewer), wall)) {
+      return fail(ack, 'Voce nao enxerga esta porta.');
+    }
     wall.open = Boolean(p.open);
   } else {
     if (p.x1 !== undefined) wall.x1 = clampNumber(p.x1, -30000, 30000, wall.x1);

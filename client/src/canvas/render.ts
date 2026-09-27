@@ -6,6 +6,7 @@ import {
   canPlayerSeeToken,
   cellsInRect,
   hexRadius,
+  isDoorWithinSight,
   isHallucination,
   isHex,
   perceives,
@@ -1571,6 +1572,45 @@ export function wallAtPoint(scene: Scene, world: Point, zoom: number): Wall | nu
     if (distanceToSegment(world, wall) <= reach) return wall;
   }
   return null;
+}
+
+/**
+ * Porta que o jogador pode abrir sob o ponto: visivel (nao secreta) e ao
+ * alcance dos olhos dele, pela mesma regra que o servidor confere.
+ *
+ * A visao vem por funcao porque isto roda a cada movimento do mouse, e sem
+ * visao estrita calcula-la custa caro: so e pedida quando ha porta perto.
+ */
+export function doorAtPoint(
+  scene: Scene,
+  world: Point,
+  zoom: number,
+  vision: () => VisionResult,
+): Wall | null {
+  const reach = 8 / zoom;
+
+  for (let i = scene.walls.length - 1; i >= 0; i--) {
+    const wall = scene.walls[i];
+    if (!wall.door || wall.hidden) continue;
+    if (distanceToSegment(world, wall) > reach) continue;
+    if (isDoorWithinSight(scene, vision(), wall)) return wall;
+  }
+  return null;
+}
+
+/** Porta fechada e visivel mais proxima do ponto, dentro de `maxDist`. */
+export function closedDoorNear(scene: Scene, point: Point, maxDist: number): Wall | null {
+  let best: Wall | null = null;
+  let bestDist = maxDist;
+  for (const wall of scene.walls) {
+    if (!wall.door || wall.open || wall.hidden) continue;
+    const d = distanceToSegment(point, wall);
+    if (d <= bestDist) {
+      best = wall;
+      bestDist = d;
+    }
+  }
+  return best;
 }
 
 function distanceToSegment(p: Point, seg: { x1: number; y1: number; x2: number; y2: number }): number {

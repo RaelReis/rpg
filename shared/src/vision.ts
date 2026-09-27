@@ -304,6 +304,42 @@ export function isPointVisible(scene: Scene, vision: VisionResult, p: Point): bo
 }
 
 /**
+ * O jogador alcanca esta porta com os olhos — pode abri-la ou fecha-la?
+ *
+ * A porta fica na fronteira entre duas celulas, e basta enxergar uma delas:
+ * quem esta de um lado de uma porta fechada nao ve o outro. Sem esta regra,
+ * como as portas chegam ao jogador em qualquer ponto do mapa, dava para abrir
+ * uma porta no escuro do outro lado da masmorra e explorar a sala sem ir ate
+ * la. As amostras ficam a um quarto de celula da porta, perpendiculares a ela,
+ * para cair dentro das celulas vizinhas e nao sobre a linha da grade.
+ */
+export function isDoorWithinSight(
+  scene: Scene,
+  vision: VisionResult,
+  wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
+): boolean {
+  if (vision.gm || vision.unrestricted || scene.fog.mode === 'off') return true;
+
+  const dx = wall.x2 - wall.x1;
+  const dy = wall.y2 - wall.y1;
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length;
+  const ny = dx / length;
+  const reach = scene.grid.size / 4;
+
+  // Tres pontos ao longo da porta: numa porta de varias celulas, enxergar
+  // qualquer trecho dela basta.
+  for (const t of [0.5, 0.2, 0.8]) {
+    const mx = wall.x1 + dx * t;
+    const my = wall.y1 + dy * t;
+    for (const side of [1, -1]) {
+      if (isPointVisible(scene, vision, { x: mx + nx * reach * side, y: my + ny * reach * side })) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Um token so aparece para o jogador se nao for exclusivo do mestre, nao
  * estiver marcado como oculto, e (com fog de visao) ocupar uma celula
  * iluminada. Tokens do proprio jogador sao sempre visiveis para ele, para

@@ -9,6 +9,7 @@ import {
   computeVision,
   dragStepAllowed,
   hasLineOfSight,
+  isDoorWithinSight,
   movementBlocked,
   segmentsIntersect,
   visibleWalls,
@@ -418,5 +419,25 @@ describe('dragStepAllowed', () => {
     const big = createToken({ x: 300, y: 200, scale: 2 });
     expect(dragStepAllowed(s, big, 350, 200)).toBe(false);
     expect(dragStepAllowed(s, big, 300, 350)).toBe(true);
+  });
+});
+
+describe('isDoorWithinSight', () => {
+  // Visao feita a mao: so a celula (0,0) esta iluminada.
+  const seen = { visible: new Set([cellKey({ a: 0, b: 0 })]), explored: new Set<string>(), unrestricted: false, gm: false };
+
+  it('alcanca a porta na borda de uma celula que o jogador ve', () => {
+    // Porta vertical em x=100, entre as celulas (0,0) e (1,0).
+    expect(isDoorWithinSight(scene(), seen, wallAt(SIZE, 0, SIZE, { door: true }))).toBe(true);
+  });
+
+  it('nao alcanca uma porta no escuro, longe do que o jogador ve', () => {
+    expect(isDoorWithinSight(scene(), seen, wallAt(5 * SIZE, 0, SIZE, { door: true }))).toBe(false);
+  });
+
+  it('com a neblina desligada, ou para o mestre, qualquer porta vale', () => {
+    const off = scene({ fog: { ...createScene().fog, mode: 'off' } });
+    expect(isDoorWithinSight(off, seen, wallAt(5 * SIZE, 0, SIZE, { door: true }))).toBe(true);
+    expect(isDoorWithinSight(scene(), { ...seen, gm: true }, wallAt(5 * SIZE, 0, SIZE, { door: true }))).toBe(true);
   });
 });

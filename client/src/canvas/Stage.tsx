@@ -43,6 +43,8 @@ import {
   tokenAtPoint,
   tokensInRect,
   wallAtPoint,
+  closedDoorNear,
+  doorAtPoint,
   type Box,
   type HandleId,
   type MarqueeKind,
@@ -94,6 +96,8 @@ interface Gesture {
   originalRotation: number;
   originalSize: { width: number; height: number };
   moved: boolean;
+  /** Porta sob o clique do jogador: abre ou fecha no soltar, se nao houve arraste. */
+  doorId: string | null;
 }
 
 const emptyGesture = (): Gesture => ({
@@ -114,6 +118,7 @@ const emptyGesture = (): Gesture => ({
   originalRotation: 0,
   originalSize: { width: 0, height: 0 },
   moved: false,
+  doorId: null,
 });
 
 type FogAction = 'reveal' | 'hide' | 'block';
@@ -210,15 +215,51 @@ export function Stage(): JSX.Element {
   // de mexer neles e eles seguem so o que o servidor aceitar.
   const dragBlockedRef = useRef(new Set<string>());
 
+  /*
+   * Aviso de movimento barrado, uma vez por arraste. O token parava encostado
+   * na porta sem nada dizer por que: o novato lia como defeito, e nao sabia que
+   * a porta abre com um clique. Com porta fechada perto, ela pisca e o aviso
+   * diz o que fazer; sem porta, foi uma parede — que o jogador nem recebe.
+   */
+  const [blockedHint, setBlockedHint] = useState<{ text: string; at: Point } | null>(null);
+  const blockedHintShownRef = useRef(false);
+  const blockedHintTimerRef = useRef<number | null>(null);
+  const flashWallRef = useRef<{ id: string; until: number } | null>(null);
+
+  const showBlockedHint = useCallback((tokenId: string) => {
+    if (blockedHintShownRef.current) return;
+    const scene = activeScene(useStore.getState());
+    const token = scene?.tokens.find((t) => t.id === tokenId);
+    if (!scene || !token) return;
+    blockedHintShownRef.current = true;
+
+    const size = scene.grid.size * token.scale;
+    const center = { x: token.x + size / 2, y: token.y + size / 2 };
+    const door = closedDoorNear(scene, center, size / 2 + scene.grid.size);
+    if (door) flashWallRef.current = { id: door.id, until: performance.now() + 1600 };
+
+    const anchor = door ? { x: (door.x1 + door.x2) / 2, y: (door.y1 + door.y2) / 2 } : center;
+    setBlockedHint({
+      text: door ? 'Porta fechada — clique nela para abrir' : 'Caminho bloqueado',
+      at: worldToScreen(cameraRef.current, viewportRef.current, anchor.x, anchor.y),
+    });
+    if (blockedHintTimerRef.current !== null) window.clearTimeout(blockedHintTimerRef.current);
+    blockedHintTimerRef.current = window.setTimeout(() => setBlockedHint(null), 1800);
+  }, []);
+
   useEffect(
     () =>
       onTokenBlocked((tokenId) => {
-        if (gestureRef.current.kind === 'drag-token') dragBlockedRef.current.add(tokenId);
+        if (gestureRef.current.kind !== 'drag-token') return;
+        dragBlockedRef.current.add(tokenId);
+        showBlockedHint(tokenId);
       }),
-    [],
+    [showBlockedHint],
   );
 
   const [zoomLabel, setZoomLabel] = useState(1);
+  const [overDoor, setOverDoor] = useState(false);
+  const overDoorRef = useRef(false);
   const [measureText, setMeasureText] = useState<{ text: string; at: Point } | null>(null);
   const [dropGhost, setDropGhost] = useState<DropGhost | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -366,6 +407,8 @@ export function Stage(): JSX.Element {
       state.selectedTileId !== null ||
       state.selectedWallId !== null ||
       state.pings.length > 0 ||
+      // A porta que barrou o arraste pisca por um instante.
+      (flashWallRef.current !== null && performance.now() < flashWallRef.current.until) ||
       state.wallDraft.length > 0 ||
       // O anel de encaixe segue o cursor enquanto a ferramenta esta ativa.
       walling ||
@@ -412,7 +455,9 @@ export function Stage(): JSX.Element {
       hiddenLayers: new Set(state.hiddenLayers),
       selectedTokenIds: new Set(state.selectedTokenIds),
       selectedTileId: state.selectedTileId,
-      selectedWallId: state.selectedWallId,
+      selectedWallId:
+        state.selectedWallId ??
+        (flashWallRef.current && performance.now() < flashWallRef.current.until ? flashWallRef.current.id : null),
       marquee: marqueeRef.current,
       wallPath,
       wallKind: state.wallKind,
@@ -641,6 +686,11 @@ export function Stage(): JSX.Element {
           assetUrlOf,
         );
 
+        // Porta, para o jogador: o clique seco a abre ou fecha no soltar. Fica
+        // anotada aqui, e nao decidida ja, porque o arraste que comeca no vao
+        // da porta tem de continuar movendo o token que esta parado ali.
+        if (!gm) gesture.doorId = doorAtPoint(currentScene, world, cameraRef.current.zoom, () => vision)?.id ?? null;
+
         if (token) {
           // Shift acrescenta a selecao em vez de troca-la.
           if (e.shiftKey || e.metaKey) state.toggleTokenSelection(token.id);
@@ -650,6 +700,7 @@ export function Stage(): JSX.Element {
             gesture.kind = 'drag-token';
             gesture.tokenId = token.id;
             dragBlockedRef.current.clear();
+            blockedHintShownRef.current = false;
             gesture.tokenOffset = { x: world.x - token.x, y: world.y - token.y };
 
             // Tudo que estiver selecionado e movivel viaja junto.
@@ -707,6 +758,19 @@ export function Stage(): JSX.Element {
         gesture.moved = true;
       }
 
+      // Cursor de mao sobre a porta que o jogador pode abrir: sem isso, nada
+      // indica que a linha dourada no mapa responde ao clique.
+      if (gesture.kind === 'none' && state.tool === 'select' && state.session?.role !== 'GM') {
+        const over =
+          doorAtPoint(currentScene, world, cameraRef.current.zoom, () =>
+            resolveVision(currentScene, 'PLAYER', state.session?.playerId ?? null),
+          ) !== null;
+        if (over !== overDoorRef.current) {
+          overDoorRef.current = over;
+          setOverDoor(over);
+        }
+      }
+
       // A posicao do cursor nao sai daqui: ninguem, nem o mestre, ve o
       // ponteiro dos outros. Apontar algo e gesto deliberado, pelo ping.
       const now = performance.now();
@@ -753,7 +817,10 @@ export function Stage(): JSX.Element {
             const y = start.y + dy;
             if (wallsBlock) {
               const token = currentScene.tokens.find((t) => t.id === id);
-              if (token && !dragStepAllowed(currentScene, token, x, y)) continue;
+              if (token && !dragStepAllowed(currentScene, token, x, y)) {
+                showBlockedHint(id);
+                continue;
+              }
             }
             // Parado pelo servidor: o pedido continua indo, para o token voltar
             // a andar se o cursor recuar por um caminho livre, mas a posicao na
@@ -821,7 +888,7 @@ export function Stage(): JSX.Element {
           break;
       }
     },
-    [flushFog, toLocalScreen, toWorld],
+    [flushFog, showBlockedHint, toLocalScreen, toWorld],
   );
 
   const onPointerUp = useCallback(
@@ -832,6 +899,13 @@ export function Stage(): JSX.Element {
       if (!currentScene) return;
 
       const world = toWorld(e);
+
+      if (gesture.doorId && !gesture.moved && gesture.button === 0) {
+        const door = currentScene.walls.find((w) => w.id === gesture.doorId);
+        if (door) {
+          void act('wall:update', { sceneId: currentScene.id, wallId: door.id, patch: { open: !door.open } });
+        }
+      }
 
       switch (gesture.kind) {
         case 'drag-token': {
@@ -1239,6 +1313,7 @@ export function Stage(): JSX.Element {
   // -- render ---------------------------------------------------------------
 
   const cursorStyle = useMemo(() => {
+    if (tool === 'select' && overDoor) return 'pointer';
     switch (tool) {
       case 'pan':
         return 'grab';
@@ -1255,7 +1330,7 @@ export function Stage(): JSX.Element {
       default:
         return 'default';
     }
-  }, [tool]);
+  }, [tool, overDoor]);
 
   return (
     <div
@@ -1325,6 +1400,11 @@ export function Stage(): JSX.Element {
       )}
 
       <div className="stage-overlay">
+        {blockedHint && (
+          <div className="blocked-hint" style={{ left: blockedHint.at.x, top: blockedHint.at.y }}>
+            {blockedHint.text}
+          </div>
+        )}
         {measureText && (
           <div className="measure-readout" style={{ left: measureText.at.x, top: measureText.at.y }}>
             {measureText.text}

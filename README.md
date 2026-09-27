@@ -316,8 +316,13 @@ entre parede, porta e janela, ou abrir e fechar a porta. Botão direito
 arrastando continua movendo a câmera.
 
 **Portas** bloqueiam a visão quando fechadas, e os jogadores podem abri-las e
-fechá-las. Janelas e portas são desenhadas para os jogadores; paredes comuns e
-secretas, não.
+fechá-las **com um clique** sobre a porta (o cursor vira a mão). Vale para a
+porta que o jogador enxerga — a de uma célula vizinha iluminada —, e não para
+uma porta no escuro do outro lado do mapa; o servidor confere a mesma regra.
+Arrastar a partir do vão da porta continua movendo o token que está ali. Quando
+o arraste para numa porta fechada, ela pisca e um aviso diz como abri-la.
+Janelas e portas são desenhadas para os jogadores; paredes comuns e secretas,
+não.
 
 **Toda ficha nova ganha o próprio token** na cena ativa, ligado a ela, com o
 dono, as barras do modelo e visão 1. Na aba *Fichas*, o mestre **arrasta uma
