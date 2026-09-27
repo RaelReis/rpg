@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { createTable, importTable, lookupTable, type TableSummary } from '../net/api';
-import { joinTable, resumeWithSession } from '../net/socket';
+import { connectAndResume, storedSession, joinTable, resumeWithSession } from '../net/socket';
 
 /**
  * Entrada na mesa.
@@ -161,7 +161,10 @@ export function Gate(): JSX.Element {
             </button>
           </div>
 
-          {error && <div className="error-box">{error}</div>}
+          {error && <div className="error-box" role="alert">{error}</div>}
+          {storedSession() && <button className="btn" disabled={busy} onClick={async () => {
+            setBusy(true); try { await connectAndResume(); } finally { setBusy(false); }
+          }}>Retomar minha mesa</button>}
 
           {created && (
             <div className="field">
@@ -229,6 +232,7 @@ export function Gate(): JSX.Element {
                     id="gmpass"
                     className="input"
                     type="password"
+                    maxLength={200}
                     value={gmPassword}
                     onChange={(e) => setGmPassword(e.target.value)}
                     autoComplete="off"
@@ -282,6 +286,7 @@ export function Gate(): JSX.Element {
                   id="npass"
                   className="input"
                   type="password"
+                  maxLength={200}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   autoComplete="new-password"

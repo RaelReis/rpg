@@ -3,7 +3,6 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { AssetsPanel } from './panels/AssetsPanel';
 import { HandoutsPanel } from './panels/HandoutsPanel';
 import { ChatPanel } from './panels/ChatPanel';
-import { InitiativePanel } from './panels/InitiativePanel';
 import { PlayersPanel } from './panels/PlayersPanel';
 import { ScenePanel } from './panels/ScenePanel';
 import { SheetPanel } from './panels/SheetPanel';
@@ -22,7 +21,6 @@ const GM_TABS: { id: SideTab; label: string }[] = [
   { id: 'scene', label: 'Cena' },
   { id: 'tokens', label: 'Tokens' },
   { id: 'sheet', label: 'Fichas' },
-  { id: 'initiative', label: 'Turnos' },
   { id: 'chat', label: 'Chat' },
   { id: 'handouts', label: 'Materiais' },
   { id: 'assets', label: 'Imagens' },
@@ -32,7 +30,6 @@ const GM_TABS: { id: SideTab; label: string }[] = [
 
 const PLAYER_TABS: { id: SideTab; label: string }[] = [
   { id: 'sheet', label: 'Ficha' },
-  { id: 'initiative', label: 'Turnos' },
   { id: 'chat', label: 'Chat' },
   { id: 'handouts', label: 'Materiais' },
 ];
@@ -48,7 +45,7 @@ export function Side(): JSX.Element {
   const current = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
-    <aside className={`side${open ? '' : ' hidden'}`}>
+    <aside className={`side${open ? '' : ' hidden'}`} data-tab={current}>
       <div className="side-tabs">
         {tabs.map((t) => (
           <button
@@ -71,7 +68,6 @@ export function Side(): JSX.Element {
           {current === 'scene' && <ScenePanel />}
           {current === 'tokens' && <TokensPanel />}
           {current === 'sheet' && <SheetPanel />}
-          {current === 'initiative' && <InitiativePanel />}
           {current === 'chat' && <ChatPanel />}
           {current === 'handouts' && <HandoutsPanel />}
           {current === 'assets' && <AssetsPanel />}

@@ -6,6 +6,7 @@ import {
   createWall,
   enforceHallucinationRules,
   movementBlocked,
+  normalizeConditions,
   newlyExploredCells,
   sanitizeVisibleTo,
   snapTokenPosition,
@@ -24,7 +25,7 @@ import {
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import {
   emitEffects,
-  emitInitiative,
+  emitTurns,
   emitTiles,
   emitTokenMove,
   emitTokenRemoved,
@@ -33,6 +34,7 @@ import {
   refreshVision,
   socketsOf,
 } from '../broadcast.js';
+import { tokenForViewer } from '../filter.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
 import { checkTriggers } from './triggers.js';
 
@@ -99,7 +101,9 @@ export function createTokenHandler(
     scale: clampNumber(t.scale, 0.25, 20, 1),
     rotation: clampNumber(t.rotation, -360, 360, 0),
     layer: asLayer(t.layer, 3),
-    shape: TOKEN_SHAPES.includes(t.shape as never) ? t.shape : 'circle',
+    // Sem forma declarada, quem decide e o padrao do modelo (arte inteira):
+    // repetir um literal aqui fazia o padrao valer so para o caminho da ficha.
+    shape: TOKEN_SHAPES.includes(t.shape as never) ? t.shape : undefined,
     visibility: VISIBILITIES.includes(t.visibility as never) ? t.visibility : 'visible',
     opacity: clampNumber(t.opacity, 0.05, 1, 1),
     gmOnly: Boolean(t.gmOnly),
@@ -109,7 +113,7 @@ export function createTokenHandler(
     lightRadius: clampNumber(t.lightRadius, 0, 40, 0),
     bars: Array.isArray(t.bars) ? t.bars.slice(0, 4) : [],
     label: safeString(t.label, 40, ''),
-    conditions: Array.isArray(t.conditions) ? t.conditions.slice(0, 12) : [],
+    conditions: normalizeConditions(t.conditions),
     visibleTo: visibleToOf(ctx, t.visibleTo),
   });
   enforceHallucinationRules(token);
@@ -151,7 +155,7 @@ export function updateToken(
   if (p.rotation !== undefined) token.rotation = clampNumber(p.rotation, -360, 360, token.rotation);
   if (p.label !== undefined) token.label = safeString(p.label, 40, token.label);
   if (p.conditions !== undefined && Array.isArray(p.conditions)) {
-    token.conditions = p.conditions.slice(0, 12).map((c) => safeString(c, 24));
+    token.conditions = normalizeConditions(p.conditions);
   }
 
   if (gm) {
@@ -209,7 +213,7 @@ export function updateToken(
     applyExploration(ctx, scene);
     refreshVision(ctx.room, scene);
   }
-  if (p.visibleTo !== undefined && gm) emitInitiative(ctx.room);
+  if (p.visibleTo !== undefined && gm) emitTurns(ctx.room);
   ok(ack, null);
 }
 
@@ -219,7 +223,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
 
   const token = scene.tokens.find((t) => t.id === payload.tokenId);
   if (!token) return fail(ack, 'Token nao encontrado.');
-  if (!canMoveToken(ctx, token)) return fail(ack, 'Voce nao pode mover este token.');
+  if (!canMoveToken(ctx, token) || (!isGm(ctx) && (scene.id !== ctx.room.state.activeSceneId || !tokenForViewer(ctx.room, scene, token, ctx.viewer)))) return fail(ack, 'Voce nao pode mover este token.');
 
   const dragging = payload.dragging === true;
   let x = clampNumber(payload.x, -10000, 30000, token.x);
@@ -259,17 +263,21 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
    */
   if (!isGm(ctx) && ctx.room.state.settings.wallsBlockMovement) {
     const center = (p: { x: number; y: number }) => ({ x: p.x + w / 2, y: p.y + h / 2 });
-    if (movementBlocked(scene, center(from), center({ x, y }))) {
-      // Durante o arraste a recusa e silenciosa: a previa local do cliente
-      // segue o cursor, e avisar a cada quadro encheria a tela de erros.
-      // O token simplesmente nao sai do lugar no servidor.
-      if (dragging) return ok(ack, null);
+    if (movementBlocked(scene, center(from), center({ x, y }), token.scale)) {
+      // Durante o arraste nao ha erro na tela — avisar a cada quadro encheria a
+      // mesa de mensagens. Mas quem arrasta precisa saber: sem as paredes
+      // comuns (strictVision), a previa dele atravessava o muro e so voltava
+      // ao soltar. O aviso vai so para esse socket.
+      if (dragging) {
+        ctx.socket.emit('token:blocked', { sceneId: scene.id, tokenId: token.id, x: token.x, y: token.y });
+        return ok(ack, null);
+      }
 
       // Ao soltar, o token para onde o arraste chegou — encostado na parede.
       // Sem isto ele ficaria fora da grade, porque o arraste nao usa snap.
       if (scene.grid.snap && scene.grid.type !== 'none') {
         const settled = snapTokenPosition(scene.grid, { x: token.x, y: token.y }, token.scale);
-        if (!movementBlocked(scene, center(token), center(settled))) {
+        if (!movementBlocked(scene, center(token), center(settled), token.scale)) {
           token.x = settled.x;
           token.y = settled.y;
           ctx.room.touchScene(scene.id);
@@ -312,6 +320,34 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
   applyExploration(ctx, scene);
   refreshVision(ctx.room, scene);
   ok(ack, null);
+}
+
+/** Teto de tokens por lote: um grupo maior que isto nao e gesto de mao. */
+const MAX_MOVES_PER_BATCH = 50;
+
+/**
+ * Lote de movimentos de um mesmo quadro de arraste.
+ *
+ * Cada item passa pelo mesmo `moveToken`, com as mesmas regras de permissao e
+ * de parede — o lote so muda o transporte. Um evento por quadro, e nao um por
+ * token, era o que faltava para arrastar um grupo sem estourar o limite de
+ * eventos do socket e perder movimentos sem aviso.
+ */
+export function moveTokens(
+  ctx: Ctx,
+  payload: { sceneId: string; moves: { tokenId: string; x: number; y: number }[]; dragging?: boolean },
+): void {
+  const moves = Array.isArray(payload?.moves) ? payload.moves.slice(0, MAX_MOVES_PER_BATCH) : [];
+  for (const move of moves) {
+    if (!move || typeof move.tokenId !== 'string') continue;
+    moveToken(ctx, {
+      sceneId: payload.sceneId,
+      tokenId: move.tokenId,
+      x: move.x,
+      y: move.y,
+      dragging: payload.dragging === true,
+    });
+  }
 }
 
 export function deleteToken(ctx: Ctx, payload: { sceneId: string; tokenId: string }, ack: Ack<null>): void {

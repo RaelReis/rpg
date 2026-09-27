@@ -4,6 +4,7 @@ import type { ActiveScreenEffect, SceneCard, ScreenEffect, ScreenEffectKind } fr
 import { act } from '../net/socket';
 import { findAsset, useStore } from '../state/store';
 import { ColorField, Dropzone, Empty, Modal, SelectField, TextField, Toggle } from './common';
+import { Icon, type IconName } from './icons';
 
 /**
  * Paineis de imersao do mestre: efeitos de tela e cartelas de cena.
@@ -81,12 +82,12 @@ function useRecipientNames(): (ids: string[] | null) => string {
 // Efeitos de tela
 // ---------------------------------------------------------------------------
 
-const EFFECTS: { kind: ScreenEffectKind; icon: string; label: string; hint: string }[] = [
-  { kind: 'shake', icon: '〰', label: 'Tremor', hint: 'Sacode o mapa' },
-  { kind: 'flash', icon: '✺', label: 'Flash', hint: 'Um clarao que se apaga' },
-  { kind: 'vignette', icon: '◍', label: 'Vinheta', hint: 'Escurece as bordas da tela' },
-  { kind: 'blur', icon: '◌', label: 'Desfoque', hint: 'Embaça o mapa' },
-  { kind: 'blackout', icon: '●', label: 'Apagao', hint: 'Tela preta, com fade' },
+const EFFECTS: { kind: ScreenEffectKind; icon: IconName; label: string; hint: string }[] = [
+  { kind: 'shake', icon: 'shake', label: 'Tremor', hint: 'Sacode o mapa' },
+  { kind: 'flash', icon: 'flash', label: 'Flash', hint: 'Um clarao que se apaga' },
+  { kind: 'vignette', icon: 'vignette', label: 'Vinheta', hint: 'Escurece as bordas da tela' },
+  { kind: 'blur', icon: 'blur', label: 'Desfoque', hint: 'Embaça o mapa' },
+  { kind: 'blackout', icon: 'blackout', label: 'Apagao', hint: 'Tela preta, com fade' },
 ];
 
 const EFFECT_LABEL: Record<ScreenEffectKind, string> = {
@@ -133,7 +134,7 @@ export function ScreenEffectsPanel(): JSX.Element {
       <header>
         <h3>Efeitos de tela</h3>
         <button className="btn ghost sm" onClick={() => close(null)} aria-label="Fechar">
-          ✕
+          <Icon name="close" size="sm" />
         </button>
       </header>
 
@@ -145,7 +146,7 @@ export function ScreenEffectsPanel(): JSX.Element {
             title={e.hint}
             onClick={() => setKind(e.kind)}
           >
-            <span aria-hidden="true">{e.icon}</span> {e.label}
+            <Icon name={e.icon} size="sm" /> {e.label}
           </button>
         ))}
       </div>
@@ -221,8 +222,9 @@ export function ScreenEffectsPanel(): JSX.Element {
                   className="btn ghost sm"
                   title="Remover"
                   onClick={() => void act('screen:stop', { effectId: e.id })}
+                  aria-label="Remover"
                 >
-                  ✕
+                  <Icon name="close" size="sm" />
                 </button>
               </div>
             ))}
@@ -285,7 +287,7 @@ export function CardsModal(): JSX.Element {
               onKeyDown={(e) => e.key === 'Enter' && void create()}
             />
             <button className="btn sm" onClick={() => void create()}>
-              + Nova
+              <Icon name="add" size="sm" /> Nova
             </button>
           </div>
           {cards.length === 0 ? (
@@ -387,7 +389,7 @@ function CardEditor({ card }: { card: SceneCard }): JSX.Element {
       </div>
       <span className="hint">
         Nada desta cartela chega aos jogadores antes de voce apresentar — nem o titulo. Para abrir
-        uma cena com ela, escolha-a em Cena → Cartela ao ativar.
+        uma cena com ela, escolha-a na aba Cena, em "Cartela ao ativar".
       </span>
     </div>
   );

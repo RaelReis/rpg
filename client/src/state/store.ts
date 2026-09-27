@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import {
   createDefaultTemplate,
-  DEFAULT_INITIATIVE,
   DEFAULT_SETTINGS,
+  DEFAULT_TURNS,
   flashAllowed,
   type ActiveScreenEffect,
   type Asset,
@@ -10,7 +10,6 @@ import {
   type ChatMessage,
   type FogPatch,
   type Handout,
-  type InitiativeState,
   type MapEffect,
   type MapPing,
   type Player,
@@ -29,6 +28,7 @@ import {
   type Token,
   type Trigger,
   type TriggerLogEntry,
+  type TurnState,
   type Wall,
 } from '@rpg/shared';
 
@@ -61,7 +61,6 @@ export type SideTab =
   | 'scene'
   | 'tokens'
   | 'sheet'
-  | 'initiative'
   | 'chat'
   | 'handouts'
   | 'assets'
@@ -146,6 +145,12 @@ interface AppState {
   selectedWallId: string | null;
   selectedSheetId: string | null;
   selectedAssetId: string | null;
+  /**
+   * Cena que o painel Cena esta configurando — independente da que esta no
+   * ar. `null` significa "acompanhe a cena ativa", o comportamento de antes.
+   * Sem isso, preparar uma cena nova obrigava a ativa-la so para editar.
+   */
+  editingSceneId: string | null;
   sideTab: SideTab;
   sideOpen: boolean;
   camera: Camera;
@@ -252,7 +257,7 @@ interface AppState {
   upsertSheets(sheets: Sheet[], remove: string[]): void;
   setTemplate(template: SheetTemplate): void;
   setPlayers(players: Player[]): void;
-  setInitiative(initiative: InitiativeState): void;
+  setTurns(turns: TurnState): void;
   setSettings(settings: TableSettings): void;
   setTableName(name: string): void;
   upsertAssets(assets: Asset[], remove: string[]): void;
@@ -266,6 +271,7 @@ interface AppState {
   selectTokens(ids: string[]): void;
   selectTile(id: string | null): void;
   selectWall(id: string | null): void;
+  setEditingScene(id: string | null): void;
   setFogBrush(radius: number): void;
   setWallDraft(points: Point[]): void;
   setWallKind(kind: WallKind): void;
@@ -345,6 +351,7 @@ export const useStore = create<AppState>((set, get) => ({
   selectedWallId: null,
   selectedSheetId: null,
   selectedAssetId: null,
+  editingSceneId: null,
   sideTab: 'chat',
   sideOpen: true,
   camera: { x: 0, y: 0, zoom: 1 },
@@ -577,8 +584,8 @@ export const useStore = create<AppState>((set, get) => ({
   setPlayers: (players) =>
     set((s) => (s.table ? { table: { ...s.table, players }, rev: s.rev + 1 } : {})),
 
-  setInitiative: (initiative) =>
-    set((s) => (s.table ? { table: { ...s.table, initiative }, rev: s.rev + 1 } : {})),
+  setTurns: (turns) =>
+    set((s) => (s.table ? { table: { ...s.table, turns }, rev: s.rev + 1 } : {})),
 
   setSettings: (settings) =>
     set((s) => (s.table ? { table: { ...s.table, settings }, rev: s.rev + 1 } : {})),
@@ -637,6 +644,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ selectedTileId, selectedTokenIds: [], selectedWallId: null }),
   selectWall: (selectedWallId) =>
     set({ selectedWallId, selectedTokenIds: [], selectedTileId: null }),
+  setEditingScene: (editingSceneId) => set({ editingSceneId }),
   setFogBrush: (radius) => set({ fogBrush: Math.min(8, Math.max(0, Math.round(radius))) }),
   setFogShape: (fogShape) => set({ fogShape }),
   setFogSeal: (fogSeal) => set({ fogSeal }),
@@ -811,6 +819,34 @@ export function activeScene(state: AppState = useStore.getState()): Scene | null
   return table.scenes.find((s) => s.id === table.activeSceneId) ?? table.scenes[0] ?? null;
 }
 
+/**
+ * Cena que o painel Cena deve configurar: a escolhida em `editingSceneId`,
+ * ou a ativa quando nada foi escolhido. Preparar uma cena fora do ar usa
+ * esta funcao; o que aparece no mapa continua vindo de `activeScene`.
+ */
+export function editingScene(state: AppState = useStore.getState()): Scene | null {
+  const table = state.table;
+  if (!table) return null;
+  if (state.editingSceneId) {
+    const found = table.scenes.find((s) => s.id === state.editingSceneId);
+    if (found) return found;
+  }
+  return activeScene(state);
+}
+
+/**
+ * Confirma antes de ativar uma cena, mas so quando ha jogador conectado.
+ *
+ * Trocar o mapa de todo mundo com um clique errado so doi durante a sessao;
+ * preparando a mesa sozinho, antes de qualquer jogador entrar, o freio so
+ * atrapalharia sem proteger ninguem.
+ */
+export function confirmSceneActivation(table: TableState | null, sceneName: string): boolean {
+  const someoneWatching = table?.players.some((p) => p.role === 'PLAYER' && p.connected) ?? false;
+  if (!someoneWatching) return true;
+  return window.confirm(`Ativar "${sceneName}" para todos os jogadores conectados agora?`);
+}
+
 export function isGm(state: AppState = useStore.getState()): boolean {
   return state.session?.role === 'GM';
 }
@@ -827,8 +863,8 @@ export function sheetTemplate(state: AppState = useStore.getState()): SheetTempl
   return state.table?.sheetTemplate ?? createDefaultTemplate();
 }
 
-export function initiativeState(state: AppState = useStore.getState()): InitiativeState {
-  return state.table?.initiative ?? DEFAULT_INITIATIVE;
+export function turnsState(state: AppState = useStore.getState()): TurnState {
+  return state.table?.turns ?? DEFAULT_TURNS;
 }
 
 export function findSheet(id: string | null | undefined): Sheet | null {

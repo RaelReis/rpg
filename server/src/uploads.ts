@@ -154,11 +154,11 @@ export async function deleteAssetFiles(assetId: string): Promise<void> {
   const row = await prisma.asset.findUnique({ where: { id: assetId } });
   if (!row) return;
 
-  await fs.rm(path.join(UPLOAD_DIR, row.filename), { force: true });
-  if (row.thumbFilename) {
-    await fs.rm(path.join(UPLOAD_DIR, 'thumbs', row.thumbFilename), { force: true });
-  }
+  // Remove the record first: failure leaves the usable asset intact.
   await prisma.asset.deleteMany({ where: { id: assetId } });
+  const files = [path.join(UPLOAD_DIR, row.filename)];
+  if (row.thumbFilename) files.push(path.join(UPLOAD_DIR, 'thumbs', row.thumbFilename));
+  for (const file of files) await fs.rm(file, { force: true }).catch(err => console.warn('[upload] arquivo pendente de limpeza:', err));
 }
 
 export function formatBytes(bytes: number): string {

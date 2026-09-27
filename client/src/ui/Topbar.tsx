@@ -2,6 +2,8 @@ import type { Player } from '@rpg/shared';
 
 import { act, leaveTable } from '../net/socket';
 import { findAsset, isGm, useStore } from '../state/store';
+import { Icon } from './icons';
+import { TurnBar } from './TurnBar';
 
 /** Acima disto, os demais viram um contador para o cabecalho nao estourar. */
 const MAX_AVATARS = 7;
@@ -52,10 +54,17 @@ export function Topbar(): JSX.Element {
         {table.code}
       </button>
 
-      <span className={`conn${connected ? '' : ' off'}`}>
+      {/* Conectado e o estado normal: basta o ponto. So a queda merece texto. */}
+      <span className={`conn${connected ? '' : ' off'}`} title={connected ? 'conectado' : 'reconectando'}>
         <span className="dot" />
-        {connected ? 'conectado' : 'reconectando'}
+        {!connected && 'reconectando'}
       </span>
+
+      <div className="spacer" />
+
+      {/* A vez de agir fica no meio do cabecalho: e a informacao que a mesa
+          consulta o tempo todo, e no mapa ela tampava o proprio mapa. */}
+      <TurnBar />
 
       <div className="spacer" />
 
@@ -70,19 +79,15 @@ export function Topbar(): JSX.Element {
             </span>
           )}
         </div>
-        <span className="presence-count">{online.length} na mesa</span>
       </div>
 
-      {gm && <span className="tag gm">Mestre</span>}
-
       <button className="btn sm" onClick={() => setBoardOpen(true)} title="Quadro de pistas do grupo">
-        📌 Quadro
+        <Icon name="board" size="sm" /> Quadro
       </button>
 
       <button className="btn ghost sm" onClick={() => setPrefsOpen(true)} title="Preferencias" aria-label="Preferencias">
-        ⚙
+        <Icon name="settings" size="sm" />
       </button>
-
       <span className="topbar-sep" aria-hidden="true" />
 
       <button

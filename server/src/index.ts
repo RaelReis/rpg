@@ -1,3 +1,4 @@
+import { asyncRoute } from './http.js';
 import http from 'node:http';
 import path from 'node:path';
 
@@ -77,10 +78,11 @@ const importLimiter = rateLimit({
 });
 
 /** Criacao de mesa: unica operacao que acontece antes de existir uma sessao. */
-app.post('/api/tables', createLimiter, async (req, res) => {
+app.post('/api/tables', createLimiter, asyncRoute(async (req, res) => {
   const name = String(req.body?.name ?? '').slice(0, 80).trim();
   const gmName = String(req.body?.gmName ?? '').slice(0, 40).trim();
   const gmPassword = String(req.body?.gmPassword ?? '');
+  if (gmPassword.length > 200) return res.status(400).json({ error: 'Senha deve ter no maximo 200 caracteres.' });
 
   if (!name) return res.status(400).json({ error: 'Informe o nome da mesa.' });
   if (!gmName) return res.status(400).json({ error: 'Informe seu nome de mestre.' });
@@ -101,10 +103,10 @@ app.post('/api/tables', createLimiter, async (req, res) => {
     console.error('[api] falha ao criar mesa:', err);
     res.status(500).json({ error: 'Nao foi possivel criar a mesa.' });
   }
-});
+}));
 
 /** Checagem do codigo antes de entrar, para dar erro cedo na tela de login. */
-app.get('/api/tables/:code', async (req, res) => {
+app.get('/api/tables/:code', asyncRoute(async (req, res) => {
   const room = await rooms.loadByCode(String(req.params.code ?? ''));
   if (!room) return res.status(404).json({ error: 'Mesa nao encontrada.' });
   res.json({
@@ -120,14 +122,14 @@ app.get('/api/tables/:code', async (req, res) => {
     // A tela de entrada esconde "entrar como mestre" quando a mesa ja tem um.
     hasGm: room.state.players.some((p) => p.role === 'GM'),
   });
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Backup
 // ---------------------------------------------------------------------------
 
 /** Exporta a mesa inteira. Restrito ao mestre: o arquivo contem tudo. */
-app.get('/api/tables/:id/export', async (req, res) => {
+app.get('/api/tables/:id/export', asyncRoute(async (req, res) => {
   const token = String(req.header('x-session-token') ?? '');
   const resolved = token ? await rooms.resolveSession(token) : null;
   if (!resolved) return res.status(401).json({ error: 'Sessao invalida.' });
@@ -150,20 +152,22 @@ app.get('/api/tables/:id/export', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${slug}-${stamp}.json"`);
     res.json(backup);
   } catch (err) {
+    if (err instanceof BackupError) return res.status(409).json({ error: err.message });
     console.error('[backup] falha ao exportar:', err);
     res.status(500).json({ error: 'Falha ao gerar o backup.' });
   }
-});
+}));
 
 /** Importa um backup como uma mesa NOVA, sem tocar em nada existente. */
 // O teto acompanha MAX_EMBEDDED_BYTES do export mais a inflacao do base64: um
 // backup gerado aqui tem de poder voltar. Quem contem o abuso e o limitador
 // acima, nao o tamanho — que existe para o arquivo legitimo caber.
-app.post('/api/tables/import', importLimiter, express.json({ limit: '200mb' }), async (req, res) => {
+app.post('/api/tables/import', importLimiter, express.json({ limit: '200mb' }), asyncRoute(async (req, res) => {
   const gmName = String(req.body?.gmName ?? '').slice(0, 40).trim();
   if (!gmName) return res.status(400).json({ error: 'Informe seu nome de mestre.' });
 
   try {
+    if (String(req.body?.gmPassword ?? '').length > 200) return res.status(400).json({ error: 'Senha deve ter no maximo 200 caracteres.' });
     const backup = parseBackup(req.body?.backup);
     const result = await importTable(backup, gmName, String(req.body?.gmPassword ?? ''));
 
@@ -183,7 +187,7 @@ app.post('/api/tables/import', importLimiter, express.json({ limit: '200mb' }), 
     console.error('[backup] falha ao importar:', err);
     res.status(500).json({ error: 'Falha ao importar o backup.' });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Upload de imagens
@@ -201,11 +205,25 @@ const upload = multer({
 /** O jogador sobe o proprio material; mapas e tiles sao do mestre. */
 const PLAYER_ALLOWED_KINDS: AssetKind[] = ['portrait', 'item', 'token', 'clue'];
 
-app.post('/api/assets', upload.single('file'), async (req, res) => {
+const uploadLimiter = rateLimit({ windowMs: 60_000, max: 30, message: 'Muitos envios. Aguarde um minuto.' });
+let activeUploads = 0;
+const authorizeUpload = asyncRoute(async (req, res, next) => {
+  const token = String(req.header('x-session-token') ?? '');
+  const resolved = token ? await rooms.resolveSession(token) : null;
+  if (!resolved) return res.status(401).json({ error: 'Sessao invalida.' });
+  if (activeUploads >= 4) return res.status(429).json({ error: 'Muitos envios simultaneos. Tente novamente.' });
+  activeUploads++;
+  let released = false;
+  const release = () => { if (!released) { released = true; activeUploads--; } };
+  res.once('finish', release); res.once('close', release);
+  res.locals.resolved = resolved;
+  next();
+});
+app.post('/api/assets', uploadLimiter, authorizeUpload, upload.single('file'), asyncRoute(async (req, res) => {
   const token = String(req.header('x-session-token') ?? '');
   if (!token) return res.status(401).json({ error: 'Sessao ausente.' });
 
-  const resolved = await rooms.resolveSession(token);
+  const resolved = res.locals.resolved as Awaited<ReturnType<typeof rooms.resolveSession>>;
   if (!resolved) return res.status(401).json({ error: 'Sessao invalida.' });
 
   const { room, playerId } = resolved;
@@ -248,7 +266,7 @@ app.post('/api/assets', upload.single('file'), async (req, res) => {
     console.error('[upload] falha:', err);
     res.status(500).json({ error: 'Falha ao processar a imagem.' });
   }
-});
+}));
 
 // Erros do multer (arquivo grande demais) precisam de resposta propria, senao
 // o cliente recebe um HTML de stack trace em vez de uma mensagem util.
@@ -276,6 +294,13 @@ if (IS_PROD) {
 }
 
 // ---------------------------------------------------------------------------
+
+app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(err);
+  const status = Number((err as { status?: number })?.status);
+  console.error('[http] falha:', err);
+  res.status(status >= 400 && status < 600 ? status : 500).json({ error: status === 413 ? 'Arquivo acima do limite permitido.' : 'Nao foi possivel concluir o pedido. Tente novamente.' });
+});
 
 const server = http.createServer(app);
 
@@ -311,8 +336,12 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[${signal}] encerrando; gravando estado pendente...`);
-  io.close();
-  await rooms.flushAll();
+  await new Promise<void>(resolve => io.close(() => resolve()));
+  try { await rooms.flushAll(); } catch (err) {
+    console.error('[shutdown] falha ao gravar; mantendo processo para nova tentativa:', err);
+    shuttingDown = false;
+    return;
+  }
   await prisma.$disconnect();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();

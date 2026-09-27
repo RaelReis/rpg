@@ -14,7 +14,7 @@ export function SheetModal({ sheetId }: { sheetId: string }): JSX.Element | null
 
   return (
     <Modal title={sheet.name} onClose={() => close(null)} wide>
-      <SheetView sheet={sheet} />
+      <SheetView key={sheet.id} sheet={sheet} />
     </Modal>
   );
 }

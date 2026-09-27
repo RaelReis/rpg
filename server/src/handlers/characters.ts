@@ -1,3 +1,4 @@
+import { emitSheet } from './sheets.js';
 import {
   CHARACTER_VISION_RADIUS,
   cellKey,
@@ -5,14 +6,25 @@ import {
   snapTokenPosition,
   tokenBarFields,
   tokenCell,
+  type Ack,
   type Scene,
   type Sheet,
   type Token,
 } from '@rpg/shared';
 
-import { emitTokenUpsert, refreshVision } from '../broadcast.js';
+import {
+  emitPlayers,
+  emitTokenUpsert,
+  emitTurns,
+  refreshVision,
+  socketsOf,
+  syncAssets,
+} from '../broadcast.js';
+import { assetIdsOfSheet, sheetForViewer } from '../filter.js';
 import { LIMITS } from '../limits.js';
 import type { Room } from '../room.js';
+import { fail, ok, ownedAsset, type Ctx } from './context.js';
+import { ensurePartyInTurns } from './play.js';
 
 /**
  * Personagem no mapa.
@@ -69,7 +81,10 @@ export function spawnCharacterToken(room: Room, sheet: Sheet): Token | null {
 
   const token = createToken({
     name: sheet.name,
-    assetId: sheet.portraitAssetId,
+    // A peca no mapa usa o corpo inteiro; o retrato so entra enquanto o corpo
+    // nao existe, para o token nao nascer sem arte nenhuma. A forma vem do
+    // padrao, que ja e arte inteira.
+    assetId: sheet.bodyAssetId ?? sheet.portraitAssetId,
     color: owner?.color ?? '#7a8bd4',
     x: spot.x,
     y: spot.y,
@@ -87,7 +102,65 @@ export function spawnCharacterToken(room: Room, sheet: Sheet): Token | null {
   room.touchScene(scene.id);
   emitTokenUpsert(room, scene, token);
   refreshVision(room, scene);
+
+  // O personagem de um jogador ja nasce na ordem de turnos: as rodadas estao
+  // sempre correndo, e quem esta na mesa tem vez.
+  if (sheet.ownerPlayerId && ensurePartyInTurns(room)) emitTurns(room);
+
   return token;
+}
+
+/** A arte do token do personagem passa a ser a imagem de corpo da ficha. */
+export function applyCharacterArt(room: Room, sheet: Sheet): void {
+  if (!sheet.bodyAssetId) return;
+
+  for (const scene of room.state.scenes) {
+    let changed = false;
+    for (const token of scene.tokens) {
+      if (token.sheetId !== sheet.id) continue;
+      token.assetId = sheet.bodyAssetId;
+      token.shape = 'art';
+      changed = true;
+      if (scene.id === room.state.activeSceneId) emitTokenUpsert(room, scene, token);
+    }
+    if (changed) room.touchScene(scene.id);
+  }
+}
+
+/**
+ * As duas imagens do personagem, enviadas pelo proprio jogador.
+ *
+ * E o jogador quem manda, e nao o mestre, porque isto acontece na entrada da
+ * mesa: a ficha so fica utilizavel com um rosto para o grupo e um corpo para o
+ * mapa. O evento troca as duas de uma vez para nao existir o estado pela
+ * metade, com retrato e sem peca.
+ */
+export function setCharacterImages(
+  ctx: Ctx,
+  payload: { portraitAssetId: string; bodyAssetId: string },
+  ack: Ack<null>,
+): void {
+  const sheet =
+    ctx.room.sheet(ctx.room.player(ctx.viewer.playerId)?.sheetId) ??
+    ctx.room.state.sheets.find((s) => s.ownerPlayerId === ctx.viewer.playerId) ??
+    null;
+  if (!sheet) return fail(ack, 'Voce nao tem uma ficha nesta mesa.');
+
+  const portrait = ownedAsset(ctx, payload?.portraitAssetId);
+  const body = ownedAsset(ctx, payload?.bodyAssetId);
+  if (!portrait || !body) return fail(ack, 'Envie as duas imagens do personagem.');
+
+  sheet.portraitAssetId = portrait;
+  sheet.bodyAssetId = body;
+  sheet.updatedAt = Date.now();
+  ctx.room.touchSheet(sheet.id);
+
+  applyCharacterArt(ctx.room, sheet);
+
+  emitSheet(ctx.room, sheet);
+  // A lista de presenca e os retratos do grupo vem do retrato da ficha.
+  emitPlayers(ctx.room);
+  ok(ack, null);
 }
 
 /**

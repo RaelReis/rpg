@@ -4,6 +4,7 @@ import type { BoardItem, BoardThread } from '@rpg/shared';
 import { uploadAsset } from '../net/api';
 import { act, emit } from '../net/socket';
 import { findAsset, isGm, useStore } from '../state/store';
+import { Icon } from './icons';
 
 /**
  * Quadro de pistas: cortica, papeis e fios vermelhos.
@@ -212,7 +213,9 @@ export function ClueBoardView(): JSX.Element | null {
   return (
     <div className="board-overlay" role="dialog" aria-label="Quadro de pistas">
       <header className="board-toolbar">
-        <h2>📌 Quadro de pistas</h2>
+        <h2>
+          <Icon name="board" /> Quadro de pistas
+        </h2>
         {!lockedForMe && (
           <>
             <div className="board-colors" aria-label="Cor da nota">
@@ -227,10 +230,10 @@ export function ClueBoardView(): JSX.Element | null {
               ))}
             </div>
             <button className="btn sm" onClick={addNote}>
-              + Nota
+              <Icon name="add" size="sm" /> Nota
             </button>
             <button className="btn sm" onClick={() => fileRef.current?.click()}>
-              + Imagem
+              <Icon name="add" size="sm" /> Imagem
             </button>
             <input
               ref={fileRef}
@@ -260,7 +263,7 @@ export function ClueBoardView(): JSX.Element | null {
               }}
               title="Ligar dois itens com um fio"
             >
-              🧵 Fio
+              <Icon name="thread" size="sm" /> Fio
             </button>
             {threadMode && (
               <div className="board-colors" aria-label="Cor do fio">
@@ -284,15 +287,20 @@ export function ClueBoardView(): JSX.Element | null {
             onClick={() => void act('board:lock', { locked: !board.locked })}
             title="Travado, o quadro fica somente leitura para os jogadores"
           >
-            {board.locked ? '🔒 Travado' : '🔓 Travar'}
+            <Icon name={board.locked ? 'locked' : 'unsealed'} size="sm" /> {board.locked ? 'Travado' : 'Travar'}
           </button>
         )}
         <span className="mono sub">{Math.round(camera.zoom * 100)}%</span>
-        <button className="btn ghost sm" onClick={() => setCamera({ x: 0, y: 0, zoom: 1 })} title="Voltar ao inicio">
-          ⤢
+        <button
+          className="btn ghost sm"
+          onClick={() => setCamera({ x: 0, y: 0, zoom: 1 })}
+          title="Voltar ao inicio"
+          aria-label="Voltar ao inicio"
+        >
+          <Icon name="fitMap" size="sm" />
         </button>
         <button className="btn ghost sm" onClick={() => close(false)} aria-label="Fechar quadro">
-          ✕
+          <Icon name="close" size="sm" />
         </button>
       </header>
 
@@ -390,8 +398,9 @@ export function ClueBoardView(): JSX.Element | null {
                     className="board-remove"
                     title="Apagar"
                     onClick={() => void act('board:delete', { itemId: item.id })}
+                    aria-label="Apagar"
                   >
-                    ✕
+                    <Icon name="delete" size="sm" />
                   </button>
                 )}
               </div>

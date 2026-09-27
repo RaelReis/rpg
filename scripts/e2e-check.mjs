@@ -5,7 +5,7 @@
 import { io } from 'socket.io-client';
 import sharp from 'sharp';
 
-const BASE = 'http://localhost:8787';
+const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:8787';
 let failures = 0;
 let checks = 0;
 
@@ -29,7 +29,8 @@ function connect() {
 
 function rpc(socket, event, payload) {
   return new Promise((resolve, reject) => {
-    const cb = (res) => (res.ok ? resolve(res.data) : reject(new Error(res.error)));
+    const timer = setTimeout(() => reject(new Error(`Tempo limite: ${event}`)), 10000);
+    const cb = (res) => { clearTimeout(timer); res.ok ? resolve(res.data) : reject(new Error(res.error)); };
     if (payload === undefined) socket.emit(event, cb);
     else socket.emit(event, payload, cb);
   });
@@ -226,24 +227,124 @@ async function main() {
     `nivel=${sheetAfter.values.level}`,
   );
 
-  console.log('\n== 11. Iniciativa ==');
-  await rpc(gm, 'initiative:add', {
-    entry: { name: 'Alice', tokenId: hero.id, playerId, value: 12 },
-  });
-  await rpc(gm, 'initiative:add', { entry: { name: 'Guarda', tokenId: visible.id, value: 18 } });
-  const initPatch = waitFor(player, 'initiative:patch');
-  await rpc(gm, 'initiative:update', { active: true });
-  const init = await initPatch;
-  check('ordem de iniciativa chega aos jogadores', (init?.entries?.length ?? 0) === 2);
-  check('ordenada do maior para o menor', init?.entries[0].value === 18);
+  console.log('\n== 11. Turnos ==');
+  /*
+   * As rodadas estao sempre correndo: elas dao o fluxo da mesa (de quem e a vez
+   * de agir e descrever), e nao marcam combate. Ninguem abre nada — o
+   * personagem de quem entrou ja esta na ordem.
+   */
+  const turnsNow = async () =>
+    (await rpc(gm, 'session:resume', { token: gmSession.token })).state.turns;
+
+  const opening = await turnsNow();
+  check('a mesa ja comeca na rodada 1', opening.round === 1);
+  check(
+    'o personagem do jogador ja esta na ordem, sem ninguem abrir combate',
+    opening.entries.some((e) => e.playerId === playerId),
+    JSON.stringify(opening.entries.map((e) => e.name)),
+  );
+  check('e alguem ja esta com a vez', !!opening.activeEntryId);
+
+  const turnsPatch = waitFor(player, 'turns:patch');
+  await rpc(gm, 'turns:add', { entries: [{ name: 'Guarda', tokenId: visible.id }] });
+  const turns = await turnsPatch;
+  check('a ordem chega aos jogadores', turns.entries.length === opening.entries.length + 1);
+  check('o mestre poe um NPC na ordem', turns.entries.some((e) => e.name === 'Guarda'));
+
+  const ids = (await turnsNow()).entries.map((e) => e.id);
+
+  // O gesto central: arrastar a miniatura para outra posicao da ordem.
+  await rpc(gm, 'turns:reorder', { entryIds: [...ids].reverse() });
+  const reordered = await turnsNow();
+  check('arrastar muda a ordem dos turnos', reordered.entries[0].id === ids[ids.length - 1]);
 
   let advanceRefused = false;
   try {
-    await rpc(player, 'initiative:next');
+    await rpc(player, 'turns:next');
   } catch {
     advanceRefused = true;
   }
-  check('jogador nao avanca turno sem autorizacao', advanceRefused);
+  check('jogador nao passa a vez', advanceRefused);
+
+  const beforeNext = await turnsNow();
+  await rpc(gm, 'turns:set', { entryId: beforeNext.entries[0].id });
+  await rpc(gm, 'turns:next');
+  const afterNext = await turnsNow();
+  check('a vez segue a ordem nova', afterNext.activeEntryId === beforeNext.entries[1].id);
+  check(
+    'o historico registra a vez que terminou',
+    afterNext.history.at(-1)?.entryId === beforeNext.entries[0].id,
+  );
+
+  await rpc(gm, 'turns:previous');
+  const afterPrevious = await turnsNow();
+  check('voltar a vez desfaz o registro', afterPrevious.history.length === afterNext.history.length - 1);
+
+  await rpc(gm, 'turns:update', { entryId: afterPrevious.activeEntryId, patch: { skipped: true } });
+  const skipped = await turnsNow();
+  check('pular tira o participante da vez', skipped.activeEntryId !== afterPrevious.activeEntryId);
+  await rpc(gm, 'turns:update', { entryId: afterPrevious.activeEntryId, patch: { skipped: false } });
+
+  const guarda = (await turnsNow()).entries.find((e) => e.name === 'Guarda');
+  await rpc(gm, 'turns:remove', { entryId: guarda.id });
+  const withoutGuard = await turnsNow();
+  check('remover tira da ordem', !withoutGuard.entries.some((e) => e.name === 'Guarda'));
+  check('e as rodadas continuam correndo', withoutGuard.round >= 1 && !!withoutGuard.activeEntryId);
+
+  console.log('\n== 11b. Imagens do personagem ==');
+  /*
+   * Ao entrar, o jogador manda as duas imagens do personagem: o retrato (ficha,
+   * presenca e retratos do grupo) e o corpo inteiro (a peca no mapa). As duas
+   * viajam no mesmo evento para nao existir o estado pela metade.
+   */
+  const playerImage = async (kind, background) => {
+    const buffer = await sharp({ create: { width: 80, height: 120, channels: 4, background } })
+      .png()
+      .toBuffer();
+    const body = new FormData();
+    body.append('kind', kind);
+    body.append('file', new Blob([buffer], { type: 'image/png' }), `${kind}.png`);
+    const res = await fetch(`${BASE}/api/assets`, {
+      method: 'POST',
+      headers: { 'x-session-token': joined.session.token },
+      body,
+    });
+    return (await res.json()).asset;
+  };
+
+  const facePic = await playerImage('portrait', { r: 190, g: 140, b: 90, alpha: 1 });
+  const bodyPic = await playerImage('token', { r: 60, g: 90, b: 160, alpha: 1 });
+  check('o jogador envia o proprio retrato', !!facePic?.id);
+  check('e a propria imagem de corpo', !!bodyPic?.id);
+
+  await rpc(player, 'character:images', {
+    portraitAssetId: facePic.id,
+    bodyAssetId: bodyPic.id,
+  });
+
+  const mySheet = (
+    await rpc(player, 'session:resume', { token: joined.session.token })
+  ).state.sheets.find((s) => s.ownerPlayerId === playerId);
+  check('o retrato entra na ficha', mySheet?.portraitAssetId === facePic.id);
+  check('a imagem de corpo entra na ficha', mySheet?.bodyAssetId === bodyPic.id);
+
+  const charToken = (
+    await rpc(gm, 'session:resume', { token: gmSession.token })
+  ).state.scenes[0].tokens.find((t) => t.sheetId === mySheet?.id);
+  check(
+    'o token do personagem passa a usar a imagem de corpo',
+    charToken?.assetId === bodyPic.id,
+    `assetId=${charToken?.assetId}`,
+  );
+  check('e passa a ser desenhado como arte', charToken?.shape === 'art', `forma=${charToken?.shape}`);
+
+  let halfRefused = false;
+  try {
+    await rpc(player, 'character:images', { portraitAssetId: facePic.id, bodyAssetId: '' });
+  } catch {
+    halfRefused = true;
+  }
+  check('mandar so uma das imagens e recusado', halfRefused);
 
   console.log('\n== 12. Upload de imagem ==');
   const png = await sharp({
@@ -625,6 +726,68 @@ async function main() {
   await rpc(gm, 'token:move', { sceneId, tokenId: hero.id, x: start.x, y: start.y, dragging: false });
   await sleep(250);
 
+  console.log('\n== 14f. Token grande contra a parede ==');
+  /*
+   * Relatado em jogo: "as vezes o personagem ve atraves da parede, e isso
+   * acontece com o token de tamanho grande".
+   *
+   * O snap encaixa tokens de tamanho PAR com o centro em cima das linhas da
+   * grade, que e onde as paredes ficam. Enquanto a colisao olhava so o centro,
+   * o passo que parava sobre a parede e o passo que saia dela nunca tinham as
+   * duas pontas em lados opostos: o token atravessava em dois movimentos, e a
+   * visao passava a sair da celula do outro lado.
+   */
+  await rpc(gm, 'settings:update', { wallsBlockMovement: true });
+  const bigWall = await rpc(gm, 'wall:create', {
+    sceneId,
+    wall: { x1: 280, y1: -500, x2: 280, y2: 900, door: false },
+  });
+  await rpc(gm, 'token:update', { sceneId, tokenId: hero.id, patch: { scale: 2 } });
+  // Token 2x2 (140px) com o centro em x=140: o corpo vai de 70 a 210, deste
+  // lado da parede que esta em x=280.
+  await rpc(gm, 'token:move', { sceneId, tokenId: hero.id, x: 70, y: 140, dragging: false });
+  await sleep(250);
+
+  // Arraste quadro a quadro ate bem depois da parede, como o navegador faz.
+  for (let x = 105; x <= 350; x += 35) {
+    await rpc(player, 'token:move', { sceneId, tokenId: hero.id, x, y: 140, dragging: true });
+  }
+  let bigRefused = false;
+  try {
+    await rpc(player, 'token:move', { sceneId, tokenId: hero.id, x: 350, y: 140, dragging: false });
+  } catch {
+    bigRefused = true;
+  }
+  check('token grande tem a travessia recusada', bigRefused);
+
+  const bigPos = await heroPos();
+  check(
+    'o corpo do token grande nao passa da parede',
+    bigPos.x + 140 <= 280,
+    `parou em x=${bigPos.x} (corpo ate ${bigPos.x + 140}), parede em x=280`,
+  );
+  check(
+    'e o centro dele nao para em cima da parede',
+    bigPos.x + 70 < 280,
+    `centro em x=${bigPos.x + 70}`,
+  );
+
+  // Um vao de duas celulas deixa o mesmo token passar.
+  await rpc(gm, 'wall:delete', { sceneId, wallId: bigWall.id });
+  const topPart = await rpc(gm, 'wall:create', { sceneId, wall: { x1: 280, y1: -500, x2: 280, y2: 70 } });
+  const lowPart = await rpc(gm, 'wall:create', { sceneId, wall: { x1: 280, y1: 350, x2: 280, y2: 900 } });
+  await sleep(250);
+  await rpc(player, 'token:move', { sceneId, tokenId: hero.id, x: 350, y: 140, dragging: false });
+  await sleep(250);
+  const throughGap = await heroPos();
+  check('o mesmo token passa por um vao de duas celulas', throughGap.x >= 280, `x=${throughGap.x}`);
+
+  for (const w of [topPart, lowPart]) await rpc(gm, 'wall:delete', { sceneId, wallId: w.id });
+  await rpc(gm, 'token:update', { sceneId, tokenId: hero.id, patch: { scale: 1 } });
+  await rpc(gm, 'settings:update', { wallsBlockMovement: false });
+  await rpc(gm, 'token:move', { sceneId, tokenId: hero.id, x: start.x, y: start.y, dragging: false });
+  await sleep(250);
+
   console.log('\n== 14e. Clima da cena ==');
   await rpc(gm, 'scene:update', {
     sceneId,
@@ -949,6 +1112,9 @@ async function main() {
     usurpRefused.includes('mestre'),
     usurpRefused || 'entrou como mestre',
   );
+  // A recusa nao depende mais de haver mestre na mesa: sem senha definida, o
+  // papel so volta pela sessao original.
+  check('a recusa diz que a mesa nao tem senha de mestre', usurpRefused.includes('nao tem senha'), usurpRefused);
   usurper.disconnect();
 
   console.log('\n== 19. Cursores ficam privados ==');
@@ -1053,9 +1219,11 @@ async function main() {
   const faceForm = new FormData();
   faceForm.append('kind', 'portrait');
   faceForm.append('file', new Blob([faceBuffer], { type: 'image/png' }), 'alice.png');
+  // Enviado pela propria Alice: jogador so vincula imagem que ele mesmo subiu
+  // ou que ja enxerga — a do mestre, ainda privada, e recusada por ownedAsset.
   const face = (
     await (
-      await fetch(`${BASE}/api/assets`, { method: 'POST', headers: { 'x-session-token': fresh.session.token }, body: faceForm })
+      await fetch(`${BASE}/api/assets`, { method: 'POST', headers: { 'x-session-token': aliceJoin.session.token }, body: faceForm })
     ).json()
   ).asset;
 
@@ -1085,6 +1253,155 @@ async function main() {
     'ficha continua sendo a mesma',
     resumed.state.sheets.some((s) => s.id === playerSheet.id),
   );
+
+  console.log('\n== 23. Correcoes da auditoria ==');
+
+  // Arrastar um grupo: um lote por quadro, sem estourar o limite de eventos.
+  // Antes eram cinco `token:move` por quadro, e acima de 220 por segundo o
+  // servidor recusava em silencio — os tokens voltavam ao soltar.
+  const groupIds = [];
+  for (let i = 0; i < 5; i++) {
+    const t = await rpc(gm, 'token:create', {
+      sceneId,
+      token: { name: `Grupo ${i}`, x: 100 + i * 70, y: 700, layer: 3 },
+    });
+    groupIds.push(t.id);
+  }
+  const frames = 90;
+  for (let f = 1; f <= frames; f++) {
+    gm.emit('tokens:move', {
+      sceneId,
+      dragging: true,
+      moves: groupIds.map((id, i) => ({ tokenId: id, x: 100 + i * 70 + f, y: 700 })),
+    });
+  }
+  await sleep(700);
+  const afterBurst = (await rpc(gm, 'session:resume', { token: gmSession.token })).state.scenes
+    .find((s) => s.id === sceneId)
+    .tokens.filter((t) => groupIds.includes(t.id));
+  check(
+    'arrastar um grupo nao perde movimentos',
+    afterBurst.length === 5 &&
+      afterBurst.every((t) => t.x === 100 + groupIds.indexOf(t.id) * 70 + frames),
+    JSON.stringify(afterBurst.map((t) => t.x)),
+  );
+  for (const id of groupIds) await rpc(gm, 'token:delete', { sceneId, tokenId: id });
+
+  // Arraste contra parede que o jogador nao recebe. Com strictVision a parede
+  // comum nao chega ao cliente, e a previa atravessava o muro ate soltar: quem
+  // arrasta precisa do aviso do servidor para parar encostado.
+  const blockTable = await (await fetch(`${BASE}/api/tables`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Mesa da parede', gmName: 'Mestre' }),
+  })).json();
+  const blockGm = await connect();
+  const blockState = (await rpc(blockGm, 'session:resume', { token: blockTable.session.token })).state;
+  const blockScene = blockState.activeSceneId;
+  const blockG = blockState.scenes.find((s) => s.id === blockScene).grid.size;
+  const walker = await connect();
+  const walkerJoin = await rpc(walker, 'session:join', { code: blockTable.session.tableCode, name: 'Andarilho' });
+  const walkerToken = walkerJoin.state.scenes
+    .find((s) => s.id === blockScene)
+    ?.tokens.find((t) => t.ownerPlayerId === walkerJoin.session.playerId);
+  check('o andarilho nasce com token', !!walkerToken);
+  if (walkerToken) {
+    await rpc(blockGm, 'token:move', { sceneId: blockScene, tokenId: walkerToken.id, x: 4 * blockG, y: 12 * blockG, dragging: false });
+    await rpc(blockGm, 'wall:create', { sceneId: blockScene, wall: { x1: 6 * blockG, y1: 9 * blockG, x2: 6 * blockG, y2: 16 * blockG } });
+    await rpc(blockGm, 'settings:update', { wallsBlockMovement: true, strictVision: true });
+    await sleep(300);
+
+    const walkerWalls = (await rpc(walker, 'session:resume', { token: walkerJoin.session.token })).state.scenes
+      .find((s) => s.id === blockScene).walls;
+    check('com strictVision o jogador nao recebe a parede comum', walkerWalls.length === 0, `paredes=${walkerWalls.length}`);
+
+    let gmWarned = false;
+    blockGm.on('token:blocked', () => { gmWarned = true; });
+    const blocked = waitFor(walker, 'token:blocked', (p) => p.tokenId === walkerToken.id);
+    // Um passo livre ate a casa encostada e, no quadro seguinte, o salto por cima do muro.
+    walker.emit('tokens:move', { sceneId: blockScene, dragging: true, moves: [{ tokenId: walkerToken.id, x: 5 * blockG, y: 12 * blockG }] });
+    walker.emit('tokens:move', { sceneId: blockScene, dragging: true, moves: [{ tokenId: walkerToken.id, x: 8 * blockG, y: 12 * blockG }] });
+    const blockedPayload = await blocked;
+    check('quem arrasta e avisado de que a parede parou o token', !!blockedPayload);
+    check(
+      'o aviso traz a posicao aceita, encostada na parede',
+      blockedPayload?.x === 5 * blockG && blockedPayload?.y === 12 * blockG,
+      JSON.stringify(blockedPayload),
+    );
+    await sleep(200);
+    check('o aviso nao vai para os outros sockets da mesa', !gmWarned);
+  }
+  walker.disconnect();
+  blockGm.disconnect();
+
+  // Sessao em cache nao vira passe para quem foi expulso.
+  const cacheTable = await (await fetch(`${BASE}/api/tables`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Mesa do cache', gmName: 'Mestre' }),
+  })).json();
+  const cacheGm = await connect();
+  await rpc(cacheGm, 'session:resume', { token: cacheTable.session.token });
+  const leaver = await connect();
+  const leaverJoin = await rpc(leaver, 'session:join', {
+    name: 'Expulso',
+    code: cacheTable.session.tableCode,
+  });
+  const leaverPng = await sharp({
+    create: { width: 40, height: 40, channels: 4, background: { r: 90, g: 90, b: 200, alpha: 1 } },
+  })
+    .png()
+    .toBuffer();
+  const leaverForm = new FormData();
+  leaverForm.append('kind', 'portrait');
+  leaverForm.append('file', new Blob([leaverPng], { type: 'image/png' }), 'rosto.png');
+  const leaverAsset = (await (await fetch(`${BASE}/api/assets`, {
+    method: 'POST',
+    headers: { 'x-session-token': leaverJoin.session.token },
+    body: leaverForm,
+  })).json()).asset;
+  const leaverGrant = await fetch(`${BASE}/api/session/image-access`, {
+    method: 'POST',
+    headers: { 'x-session-token': leaverJoin.session.token },
+  });
+  const leaverCookie = leaverGrant.headers.get('set-cookie')?.split(';')[0] ?? '';
+  const beforeKick = await fetch(`${BASE}${leaverAsset.url}`, { headers: { cookie: leaverCookie } });
+  check('o jogador ve a propria imagem antes de sair', beforeKick.ok, `status=${beforeKick.status}`);
+  await rpc(cacheGm, 'player:kick', { playerId: leaverJoin.session.playerId });
+  // Sem esperar o flush: a linha do jogador ainda existe no banco agora.
+  const afterKick = await fetch(`${BASE}${leaverAsset.url}`, { headers: { cookie: leaverCookie } });
+  check(
+    'o expulso perde as imagens na hora, antes de o banco gravar a saida',
+    !afterKick.ok,
+    `status=${afterKick.status}`,
+  );
+  cacheGm.disconnect();
+
+  // Importacao respeita os tetos por cena: o arquivo e recusado inteiro, antes
+  // de criar a mesa, em vez de entrar pela metade.
+  const hugeBackup = {
+    format: 1,
+    name: 'Importacao grande',
+    scenes: [
+      {
+        id: 'cena-grande',
+        name: 'Muitas paredes',
+        walls: Array.from({ length: 4100 }, (_, i) => ({ id: `w${i}`, x1: i, y1: 0, x2: i, y2: 10 })),
+      },
+    ],
+    sheets: [],
+    handouts: [],
+    assets: [],
+    players: [],
+  };
+  const hugeRes = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: hugeBackup, gmName: 'Mestre da importacao' }),
+  });
+  const hugeData = await hugeRes.json();
+  check('backup acima do teto de paredes e recusado', hugeRes.status === 400, `status=${hugeRes.status}`);
+  check('e a recusa diz qual limite estourou', /limite/i.test(hugeData.error ?? ''), hugeData.error);
 
   console.log('\n== 14. Persistencia ==');
   await sleep(2000); // aguarda o flush debounced do servidor
@@ -1187,13 +1504,13 @@ async function immersionPerception() {
   await rpc(gm, 'token:move', { sceneId, tokenId: ghost.id, x: 280, y: 280, dragging: false });
   await rpc(gm, 'token:update', { sceneId, tokenId: ghost.id, patch: { name: 'Fantasma palido', ownerPlayerId: alice.id } });
   await rpc(gm, 'effect:update', { sceneId, effectId: veil.id, patch: { color: '#b48ee0' } });
-  await rpc(gm, 'initiative:add', { entry: { name: 'Fantasma', tokenId: ghost.id, value: 12 } });
+  await rpc(gm, 'turns:add', { entries: [{ name: 'Fantasma', tokenId: ghost.id }] });
   await sleep(250);
 
-  const aliceInit = aliceSees.events('initiative:patch').some((line) => line.includes(ghost.id));
-  const brunoInit = brunoSees.events('initiative:patch').length > 0;
-  check('a entrada de iniciativa da alucinacao chega a quem a percebe', aliceInit);
-  check('...e a iniciativa chega ao Bruno sem ela', brunoInit && !brunoSees.contains(ghost.id));
+  const aliceInit = aliceSees.events('turns:patch').some((line) => line.includes(ghost.id));
+  const brunoInit = brunoSees.events('turns:patch').length > 0;
+  check('a miniatura de turno da alucinacao chega a quem a percebe', aliceInit);
+  check('...e a ordem de turnos chega ao Bruno sem ela', brunoInit && !brunoSees.contains(ghost.id));
 
   await rpc(gm, 'settings:update', { playersMoveOwnTokensOnly: false });
   let moveRefused = false;
@@ -1524,6 +1841,14 @@ async function immersionTriggers() {
   await sleep(300);
   check('rearmado, dispara de novo', fired.length === 2, `disparos: ${fired.length}`);
 
+  // O cliente arrasta pelo lote `tokens:move`; o gatilho tem de valer ali tambem.
+  await rpc(gm, 'trigger:update', { sceneId, triggerId: trap.id, patch: { armed: true } });
+  await sleep(1700);
+  ana.socket.emit('tokens:move', { sceneId, moves: [{ tokenId: hero.id, x: C, y: 8 * C }], dragging: true });
+  await sleep(400);
+  check('arraste em lote (como o cliente faz) tambem dispara', fired.length === 3, `disparos: ${fired.length}`);
+  await rpc(ana.socket, 'token:move', { sceneId, tokenId: hero.id, x: 10 * C, y: 8 * C, dragging: false });
+
   console.log('\n== I9. Parede corta o caminho do gatilho ==');
   // Parede vertical em x = 14 celulas; area logo atras dela, em (16,8).
   await rpc(gm, 'wall:create', { sceneId, wall: { x1: 14 * C, y1: 6 * C, x2: 14 * C, y2: 11 * C } });
@@ -1556,14 +1881,14 @@ async function immersionTriggers() {
 
   await sleep(1500); // flush agrupado
   const gmState = (await rpc(gm, 'session:resume', { token: gmToken })).state;
-  check('o registro de disparos persiste para o mestre', gmState.triggerLog.length === 2);
+  check('o registro de disparos persiste para o mestre', gmState.triggerLog.length === 3);
   const scene = gmState.scenes.find((s) => s.id === sceneId);
   check('o mestre recebe os gatilhos da cena', scene.triggers.length === 2);
 
   const exported = await (
     await fetch(`${BASE}/api/tables/${gmState.id}/export?assets=0`, { headers: { 'x-session-token': gmToken } })
   ).json();
-  check('backup (versao 3+) leva gatilhos e registro', exported.format >= 3 && exported.scenes[0].triggers.length === 2 && exported.triggerLog.length === 2);
+  check('backup (versao 3+) leva gatilhos e registro', exported.format >= 3 && exported.scenes[0].triggers.length === 2 && exported.triggerLog.length === 3);
 
   gm.disconnect();
   ana.socket.disconnect();

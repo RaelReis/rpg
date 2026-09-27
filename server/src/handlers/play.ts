@@ -1,175 +1,258 @@
 import {
   extractRollCommand,
+  remapSheetImages,
   generateId,
   MAX_CHAT_LENGTH,
   rollFormula,
   type Ack,
   type ChatMessage,
   type ChatSendPayload,
-  type InitiativeEntry,
-  type InitiativeState,
   type MapPing,
   type Role,
+  type TurnEntry,
 } from '@rpg/shared';
 
-import { emitInitiative, emitPlayers, socketsOf, type TypedSocket } from '../broadcast.js';
+import { sendFullStateToAll, emitPlayers, emitTurns, socketsOf, type TypedSocket } from '../broadcast.js';
 import { prisma } from '../db.js';
+import type { Room } from '../room.js';
 import { deleteAssetFiles } from '../uploads.js';
 import { clampNumber, fail, isGm, ok, safeString, type Ctx } from './context.js';
 
-/** Iniciativa, chat, pings, jogadores e remocao de imagens. */
+/** Turnos, chat, pings, jogadores e remocao de imagens. */
 
 // ---------------------------------------------------------------------------
-// Iniciativa
+// Turnos
 // ---------------------------------------------------------------------------
 
-/** Maior valor primeiro; empate resolvido pelo desempate manual. */
-function sortEntries(entries: InitiativeEntry[]): InitiativeEntry[] {
-  return [...entries].sort((a, b) => b.value - a.value || b.tiebreak - a.tiebreak);
-}
+/**
+ * As rodadas estao sempre correndo: elas dao o fluxo da mesa — de quem e a vez
+ * de agir e de descrever —, e nao marcam combate. Por isso nao existe abrir nem
+ * encerrar; o grupo entra na ordem sozinho e a rodada 1 comeca com a mesa.
+ *
+ * A ordem e a ORDEM DA LISTA, e quem a define e o mestre arrastando as
+ * miniaturas. Nao ha valor rolado: iniciativa por d20 e regra de um sistema
+ * especifico, enquanto arrastar serve a qualquer mesa — inclusive quando a
+ * ordem muda no meio, que era impossivel de representar com um numero fixo por
+ * participante.
+ */
 
-function sanitizeEntry(raw: Partial<InitiativeEntry>): InitiativeEntry {
+const MAX_ENTRIES = 60;
+const MAX_HISTORY = 120;
+
+function sanitizeEntry(raw: Partial<TurnEntry>): TurnEntry {
   return {
-    id: safeString(raw?.id, 40) || generateId('ini'),
-    tokenId: raw?.tokenId ?? null,
+    id: safeString(raw?.id, 40) || generateId('trn'),
+    tokenId: typeof raw?.tokenId === 'string' ? raw.tokenId : null,
+    sheetId: typeof raw?.sheetId === 'string' ? raw.sheetId : null,
+    playerId: typeof raw?.playerId === 'string' ? raw.playerId : null,
     name: safeString(raw?.name, 60, 'Participante'),
-    value: clampNumber(raw?.value, -999, 999, 0),
-    tiebreak: clampNumber(raw?.tiebreak, -999, 999, 0),
-    playerId: raw?.playerId ?? null,
     skipped: Boolean(raw?.skipped),
     hiddenFromPlayers: Boolean(raw?.hiddenFromPlayers),
   };
 }
 
-export function updateInitiative(ctx: Ctx, patch: Partial<InitiativeState>, ack: Ack<null>): void {
-  const init = ctx.room.state.initiative;
-
-  if (patch?.entries !== undefined && Array.isArray(patch.entries)) {
-    init.entries = sortEntries(patch.entries.slice(0, 100).map(sanitizeEntry));
-  }
-  if (patch?.active !== undefined) {
-    init.active = Boolean(patch.active);
-    if (init.active && init.round === 0) init.round = 1;
-    if (init.active && !init.activeEntryId) init.activeEntryId = init.entries[0]?.id ?? null;
-    if (!init.active) {
-      init.round = 0;
-      init.activeEntryId = null;
-    }
-  }
-  if (patch?.round !== undefined) init.round = clampNumber(patch.round, 0, 9999, init.round);
-  if (patch?.autoAdvance !== undefined) init.autoAdvance = Boolean(patch.autoAdvance);
-  if (patch?.turnSeconds !== undefined) init.turnSeconds = clampNumber(patch.turnSeconds, 0, 3600, init.turnSeconds);
-  if (patch?.activeEntryId !== undefined) {
-    const exists = init.entries.some((e) => e.id === patch.activeEntryId);
-    init.activeEntryId = exists ? patch.activeEntryId : init.activeEntryId;
-  }
-
+function pushTurns(ctx: Ctx): void {
   ctx.room.touch('table');
-  emitInitiative(ctx.room);
-  ok(ack, null);
-}
-
-export function addInitiativeEntry(ctx: Ctx, payload: { entry: Partial<InitiativeEntry> }, ack: Ack<null>): void {
-  const init = ctx.room.state.initiative;
-  if (init.entries.length >= 100) return fail(ack, 'Limite de participantes na iniciativa.');
-
-  const entry = sanitizeEntry(payload?.entry ?? {});
-
-  // Um token entra na ordem uma vez so.
-  if (entry.tokenId && init.entries.some((e) => e.tokenId === entry.tokenId)) {
-    return fail(ack, 'Este token ja esta na iniciativa.');
-  }
-
-  init.entries = sortEntries([...init.entries, entry]);
-  ctx.room.touch('table');
-  emitInitiative(ctx.room);
-  ok(ack, null);
-}
-
-export function removeInitiativeEntry(ctx: Ctx, payload: { entryId: string }, ack: Ack<null>): void {
-  const init = ctx.room.state.initiative;
-  const index = init.entries.findIndex((e) => e.id === payload?.entryId);
-  if (index === -1) return fail(ack, 'Participante nao encontrado.');
-
-  const wasActive = init.activeEntryId === payload.entryId;
-  init.entries.splice(index, 1);
-
-  // Removendo quem estava jogando, o turno passa para o proximo da ordem.
-  if (wasActive) {
-    init.activeEntryId = init.entries[Math.min(index, init.entries.length - 1)]?.id ?? null;
-  }
-
-  ctx.room.touch('table');
-  emitInitiative(ctx.room);
-  ok(ack, null);
-}
-
-function step(ctx: Ctx, direction: 1 | -1): void {
-  const init = ctx.room.state.initiative;
-  const playable = init.entries.filter((e) => !e.skipped);
-  if (playable.length === 0) return;
-
-  const currentIndex = playable.findIndex((e) => e.id === init.activeEntryId);
-  let next = currentIndex + direction;
-
-  if (next >= playable.length) {
-    next = 0;
-    init.round += 1;
-  } else if (next < 0) {
-    next = playable.length - 1;
-    init.round = Math.max(1, init.round - 1);
-  }
-
-  init.activeEntryId = playable[next].id;
-  ctx.room.touch('table');
-  emitInitiative(ctx.room);
+  emitTurns(ctx.room);
 }
 
 /**
- * Avanco de turno. O mestre sempre pode; o jogador da vez so quando o mestre
- * habilitou `autoAdvance`, que e o modo "cada um passa o proprio turno".
+ * Garante que todo personagem de jogador esteja na ordem.
+ *
+ * Chamado quando alguem entra na mesa: o personagem dele ja nasce na ordem, e
+ * mesas gravadas antes desta versao — que nao tinham ordem nenhuma — se
+ * preenchem sozinhas na primeira conexao. Devolve `true` se mudou algo.
  */
-export function nextTurn(ctx: Ctx, ack: Ack<null>): void {
-  const init = ctx.room.state.initiative;
-  if (!isGm(ctx)) {
-    const active = init.entries.find((e) => e.id === init.activeEntryId);
-    const isMyTurn = active?.playerId === ctx.viewer.playerId;
-    if (!init.autoAdvance || !isMyTurn) return fail(ack, 'Apenas o mestre avanca o turno.');
+export function ensurePartyInTurns(room: Room): boolean {
+  const scene = room.activeScene();
+  if (!scene) return false;
+
+  const turns = room.state.turns;
+  const known = new Set(turns.entries.map((e) => e.sheetId ?? e.tokenId));
+  let added = false;
+
+  for (const token of scene.tokens) {
+    if (token.layer !== 3 || token.ownerPlayerId === null) continue;
+    if (turns.entries.length >= MAX_ENTRIES) break;
+
+    const sheet = room.sheet(token.sheetId);
+    if (known.has(sheet?.id ?? token.id)) continue;
+
+    turns.entries.push(
+      sanitizeEntry({
+        tokenId: token.id,
+        sheetId: sheet?.id ?? null,
+        playerId: token.ownerPlayerId,
+        name: sheet?.name ?? token.name,
+      }),
+    );
+    known.add(sheet?.id ?? token.id);
+    added = true;
   }
-  step(ctx, 1);
+
+  if (added && !turns.activeEntryId) {
+    turns.activeEntryId = turns.entries.find((e) => !e.skipped)?.id ?? null;
+  }
+  if (added) room.touch('table');
+  return added;
+}
+
+export function addTurnEntries(
+  ctx: Ctx,
+  payload: { entries: Partial<TurnEntry>[] },
+  ack: Ack<null>,
+): void {
+  const turns = ctx.room.state.turns;
+  const incoming = Array.isArray(payload?.entries) ? payload.entries.slice(0, MAX_ENTRIES) : [];
+  if (incoming.length === 0) return fail(ack, 'Nada para adicionar a ordem.');
+
+  const tokens = new Set(turns.entries.map((e) => e.tokenId).filter(Boolean));
+  const sheets = new Set(turns.entries.map((e) => e.sheetId).filter(Boolean));
+  let added = 0;
+
+  for (const raw of incoming) {
+    if (turns.entries.length >= MAX_ENTRIES) break;
+    const entry = sanitizeEntry(raw);
+
+    // O mesmo personagem entra uma vez so, venha pelo token ou pela ficha.
+    if (entry.tokenId && tokens.has(entry.tokenId)) continue;
+    if (entry.sheetId && sheets.has(entry.sheetId)) continue;
+
+    turns.entries.push(entry);
+    if (entry.tokenId) tokens.add(entry.tokenId);
+    if (entry.sheetId) sheets.add(entry.sheetId);
+    added++;
+  }
+
+  if (added === 0) return fail(ack, 'Esses personagens ja estao na ordem.');
+  pushTurns(ctx);
+  ok(ack, null);
+}
+
+export function removeTurnEntry(ctx: Ctx, payload: { entryId: string }, ack: Ack<null>): void {
+  const turns = ctx.room.state.turns;
+  const index = turns.entries.findIndex((e) => e.id === payload?.entryId);
+  if (index === -1) return fail(ack, 'Participante nao encontrado.');
+
+  const wasActive = turns.activeEntryId === payload.entryId;
+  turns.entries.splice(index, 1);
+
+  // Tirando quem estava jogando, a vez passa para quem ficou naquela posicao.
+  if (wasActive) {
+    turns.activeEntryId = turns.entries[Math.min(index, turns.entries.length - 1)]?.id ?? null;
+  }
+
+  pushTurns(ctx);
+  ok(ack, null);
+}
+
+/** Nova ordem completa, como o mestre deixou as miniaturas. */
+export function reorderTurns(ctx: Ctx, payload: { entryIds: string[] }, ack: Ack<null>): void {
+  const turns = ctx.room.state.turns;
+  const ids = Array.isArray(payload?.entryIds) ? payload.entryIds : [];
+  if (ids.length === 0) return fail(ack, 'Ordem vazia.');
+
+  const byId = new Map(turns.entries.map((e) => [e.id, e]));
+  const ordered: TurnEntry[] = [];
+  const used = new Set<string>();
+
+  for (const id of ids) {
+    const entry = typeof id === 'string' ? byId.get(id) : undefined;
+    if (!entry || used.has(entry.id)) continue;
+    ordered.push(entry);
+    used.add(entry.id);
+  }
+
+  // Quem entrou na ordem enquanto o mestre arrastava nao veio na lista dele:
+  // vai para o fim em vez de sumir do combate.
+  for (const entry of turns.entries) {
+    if (!used.has(entry.id)) ordered.push(entry);
+  }
+
+  turns.entries = ordered;
+  pushTurns(ctx);
+  ok(ack, null);
+}
+
+export function updateTurnEntry(
+  ctx: Ctx,
+  payload: { entryId: string; patch: Partial<TurnEntry> },
+  ack: Ack<null>,
+): void {
+  const turns = ctx.room.state.turns;
+  const entry = turns.entries.find((e) => e.id === payload?.entryId);
+  if (!entry) return fail(ack, 'Participante nao encontrado.');
+
+  const p = payload.patch ?? {};
+  if (p.name !== undefined) entry.name = safeString(p.name, 60, entry.name);
+  if (p.skipped !== undefined) entry.skipped = Boolean(p.skipped);
+  if (p.hiddenFromPlayers !== undefined) entry.hiddenFromPlayers = Boolean(p.hiddenFromPlayers);
+
+  // Pular quem esta jogando passaria a vez para um participante fora da ordem.
+  if (entry.skipped && turns.activeEntryId === entry.id) {
+    turns.activeEntryId = turns.entries.find((e) => !e.skipped)?.id ?? null;
+  }
+
+  pushTurns(ctx);
+  ok(ack, null);
+}
+
+/** Passa a vez direto para uma miniatura, sem percorrer a ordem. */
+export function setActiveTurn(ctx: Ctx, payload: { entryId: string }, ack: Ack<null>): void {
+  const turns = ctx.room.state.turns;
+  const entry = turns.entries.find((e) => e.id === payload?.entryId);
+  if (!entry) return fail(ack, 'Participante nao encontrado.');
+
+  turns.activeEntryId = entry.id;
+  pushTurns(ctx);
+  ok(ack, null);
+}
+
+function advance(ctx: Ctx, direction: 1 | -1): void {
+  const turns = ctx.room.state.turns;
+  const playable = turns.entries.filter((e) => !e.skipped);
+  if (playable.length === 0) return;
+
+  const current = playable.findIndex((e) => e.id === turns.activeEntryId);
+  const finishing = current >= 0 ? playable[current] : null;
+  const roundPlayed = turns.round;
+  let next = current + direction;
+
+  if (next >= playable.length) {
+    next = 0;
+    turns.round += 1;
+  } else if (next < 0) {
+    next = playable.length - 1;
+    turns.round = Math.max(1, turns.round - 1);
+  }
+
+  if (direction === 1 && finishing) {
+    turns.history.push({
+      round: roundPlayed,
+      entryId: finishing.id,
+      name: finishing.name,
+      at: Date.now(),
+    });
+    if (turns.history.length > MAX_HISTORY) {
+      turns.history = turns.history.slice(-MAX_HISTORY);
+    }
+  } else if (direction === -1) {
+    // Voltar o turno desfaz o registro: o historico conta o que aconteceu, e
+    // essa vez nao aconteceu.
+    turns.history.pop();
+  }
+
+  turns.activeEntryId = playable[next].id;
+  pushTurns(ctx);
+}
+
+export function nextTurn(ctx: Ctx, ack: Ack<null>): void {
+  advance(ctx, 1);
   ok(ack, null);
 }
 
 export function previousTurn(ctx: Ctx, ack: Ack<null>): void {
-  step(ctx, -1);
-  ok(ack, null);
-}
-
-/**
- * Rola iniciativa para todos de uma vez: 1d20 somado ao campo `initiative`
- * da ficha vinculada, quando ele existir. Como o sistema de regras e do
- * mestre, o resultado fica editavel na barra lateral.
- */
-export function rollInitiative(ctx: Ctx, ack: Ack<null>): void {
-  const init = ctx.room.state.initiative;
-  const scene = ctx.room.activeScene();
-
-  init.entries = sortEntries(
-    init.entries.map((entry) => {
-      const token = scene?.tokens.find((t) => t.id === entry.tokenId);
-      const sheet = ctx.room.sheet(token?.sheetId);
-      const bonusRaw = sheet?.values['initiative'];
-      const bonus = typeof bonusRaw === 'number' ? bonusRaw : 0;
-      const roll = rollFormula('1d20');
-      return { ...entry, value: (roll?.total ?? 0) + bonus, tiebreak: Math.random() };
-    }),
-  );
-
-  init.activeEntryId = init.entries.find((e) => !e.skipped)?.id ?? null;
-  if (init.active && init.round === 0) init.round = 1;
-
-  ctx.room.touch('table');
-  emitInitiative(ctx.room);
+  advance(ctx, -1);
   ok(ack, null);
 }
 
@@ -273,6 +356,17 @@ export async function kickPlayer(ctx: Ctx, payload: { playerId: string }, ack: A
   ctx.room.state.players = ctx.room.state.players.filter((p) => p.id !== target.id);
   ctx.room.removePlayerRecord(target.id);
 
+  // Quem saiu da mesa sai da ordem de turnos junto.
+  const turns = ctx.room.state.turns;
+  const remaining = turns.entries.filter((e) => e.playerId !== target.id);
+  if (remaining.length !== turns.entries.length) {
+    const goneActive = !remaining.some((e) => e.id === turns.activeEntryId);
+    turns.entries = remaining;
+    if (goneActive) turns.activeEntryId = remaining.find((e) => !e.skipped)?.id ?? null;
+    ctx.room.touch('table');
+    emitTurns(ctx.room);
+  }
+
   // A ficha continua na mesa, agora sem dono: o mestre decide o que fazer com ela.
   for (const sheet of ctx.room.state.sheets) {
     if (sheet.ownerPlayerId === target.id) {
@@ -332,8 +426,8 @@ export async function deleteAsset(ctx: Ctx, payload: { assetId: string }, ack: A
   const index = ctx.room.state.assets.findIndex((a) => a.id === assetId);
   if (index === -1) return fail(ack, 'Imagem nao encontrada.');
 
-  ctx.room.state.assets.splice(index, 1);
   await deleteAssetFiles(assetId);
+  ctx.room.state.assets = ctx.room.state.assets.filter(a => a.id !== assetId);
 
   // Quem referenciava a imagem volta para a cor de fallback.
   for (const scene of ctx.room.state.scenes) {
@@ -368,12 +462,14 @@ export async function deleteAsset(ctx: Ctx, payload: { assetId: string }, ack: A
   }
 
   for (const sheet of ctx.room.state.sheets) {
-    if (sheet.portraitAssetId === assetId) {
-      sheet.portraitAssetId = null;
-      ctx.room.touchSheet(sheet.id);
-    }
+    if (sheet.portraitAssetId === assetId) sheet.portraitAssetId = null;
+    if (sheet.bodyAssetId === assetId) sheet.bodyAssetId = null;
+    sheet.values = remapSheetImages(ctx.room.state.sheetTemplate, sheet.values, id => id === assetId ? null : id);
+    ctx.room.touchSheet(sheet.id);
   }
-
+  for (const handout of ctx.room.state.handouts) if (handout.assetId === assetId) handout.assetId = null;
+  ctx.room.touch('table');
   for (const socket of socketsOf(ctx.room)) socket.emit('assets:patch', { remove: [assetId] });
+  sendFullStateToAll(ctx.room);
   ok(ack, null);
 }

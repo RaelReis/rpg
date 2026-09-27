@@ -14,11 +14,11 @@ import type {
 import {
   assetIdsOfScene,
   effectVisibleTo,
-  initiativeForViewer,
   playersWithPortraits,
   sceneForViewer,
   stateForViewer,
   tokenForViewer,
+  turnsForViewer,
   visibleTokenIds,
   visionFor,
   type Viewer,
@@ -39,6 +39,7 @@ export interface SocketData {
   currentSceneId: string | null;
   /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
   knownAssets: Set<string>;
+  fogSignature?: string;
 }
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -60,7 +61,11 @@ export function socketsOf(room: Room): TypedSocket[] {
   const out: TypedSocket[] = [];
   for (const id of room.sockets) {
     const s = io.sockets.sockets.get(id) as TypedSocket | undefined;
-    if (s?.data.viewer) out.push(s);
+    if (s?.data.tableId !== room.state.id) continue;
+    const player = room.player(s.data.viewer?.playerId);
+    if (!player) continue;
+    s.data.viewer = { playerId: player.id, role: player.role };
+    out.push(s);
   }
   return out;
 }
@@ -109,15 +114,23 @@ export function syncAssets(
 // Envio de estado
 // ---------------------------------------------------------------------------
 
-export function sendFullState(room: Room, socket: TypedSocket): void {
+export function stateWithVisibilityCache(room: Room, socket: TypedSocket) {
+  const player = room.player(socket.data.viewer?.playerId);
+  if (socket.data.tableId !== room.state.id || !player) throw new Error('Sessao nao pertence a mesa.');
+  socket.data.viewer = { playerId: player.id, role: player.role };
   const state = stateForViewer(room, socket.data.viewer);
   const scene = state.scenes.find((s) => s.id === state.activeSceneId) ?? state.scenes[0] ?? null;
 
+  socket.data.fogSignature = scene ? JSON.stringify([scene.id, scene.fog.computedVisible, scene.fog.computedExplored]) : undefined;
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
   socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
   socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
-  socket.emit('table:state', state);
+  return state;
+}
+
+export function sendFullState(room: Room, socket: TypedSocket): void {
+  socket.emit('table:state', stateWithVisibilityCache(room, socket));
 }
 
 export function sendFullStateToAll(room: Room): void {
@@ -133,6 +146,7 @@ export function pushScene(room: Room, scene: Scene): void {
     if (viewer.role !== 'GM' && scene.id !== room.state.activeSceneId) continue;
 
     const filtered = sceneForViewer(room, scene, viewer);
+    socket.data.fogSignature = JSON.stringify([filtered.id, filtered.fog.computedVisible, filtered.fog.computedExplored]);
     socket.data.currentSceneId = filtered.id;
     socket.data.visibleTokens = new Set(filtered.tokens.map((t) => t.id));
     if (viewer.role !== 'GM') socket.data.visibleEffects = new Set(filtered.effects.map((e) => e.id));
@@ -181,6 +195,9 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
     }
 
     if (strict) {
+      const signature = JSON.stringify([scene.id, [...vision.visible], [...vision.explored]]);
+      if (socket.data.fogSignature === signature) continue;
+      socket.data.fogSignature = signature;
       socket.emit('fog:patch', {
         sceneId: scene.id,
         computed: { visible: [...vision.visible], explored: [...vision.explored] },
@@ -312,9 +329,9 @@ export function emitPlayers(room: Room): void {
   }
 }
 
-export function emitInitiative(room: Room): void {
+export function emitTurns(room: Room): void {
   for (const socket of socketsOf(room)) {
-    socket.emit('initiative:patch', initiativeForViewer(room, socket.data.viewer));
+    socket.emit('turns:patch', turnsForViewer(room, socket.data.viewer));
   }
 }
 

@@ -47,8 +47,11 @@
   --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.62);
 
   --topbar-h: 46px;
-  --rail-w: 52px;
   --panel-w: 540px;
+  /* Abas sem grade nem grid de imagens (Chat, Materiais, Mesa) nao precisam
+     da mesma largura que Cena/Tokens/Fichas/Imagens — reservar 540px pras
+     tres tambem so tira espaco do mapa sem servir a nada naquela aba. */
+  --panel-w-narrow: 380px;
 }
 
 * {
@@ -227,6 +230,18 @@ textarea {
 .input.mono {
   letter-spacing: 0.06em;
 }
+/* As setinhas nativas de spin comem largura sem avisar — num par lado a lado
+   como atual/maximo de um recurso, sobravam poucos pixels pro numero em si,
+   e o valor digitado ficava praticamente invisivel. Os campos que precisam
+   de +1/-1 ja tem botao proprio ao lado. */
+.input[type='number'] {
+  -moz-appearance: textfield;
+}
+.input[type='number']::-webkit-outer-spin-button,
+.input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 
 .field {
   display: flex;
@@ -300,6 +315,31 @@ textarea {
   background: rgba(111, 174, 114, 0.12);
   border-color: #38542f;
   color: var(--success);
+}
+
+/* ---------------------------------------------------------------------------
+   Icones
+   Todos vem de ui/icons.tsx (Lucide). Herdam a cor do texto; o tamanho vem do
+   componente (sm 14, md 16, lg 18), nunca de font-size.
+   --------------------------------------------------------------------------- */
+
+.icon {
+  display: block;
+  flex-shrink: 0;
+}
+/* Ao lado de texto corrido, o icone assenta na linha de base. */
+.inline-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-left: 4px;
+  color: var(--ink-3);
+}
+/* Botao so com icone: quadrado, sem a folga lateral pensada para texto. */
+.btn.icon-only {
+  padding: 6px;
+}
+.btn.sm.icon-only {
+  padding: 4px;
 }
 
 .hint {
@@ -435,12 +475,17 @@ textarea {
 
 .app {
   height: 100%;
-  display: grid;
-  grid-template-rows: var(--topbar-h) 1fr;
+  display: flex;
+  flex-direction: column;
   background: var(--void);
 }
 
+/* A tira de cenas e opcional (so o mestre tem uma), entao o topbar e o
+   workspace usam flex em vez de grid: uma grade de linhas fixas colocaria a
+   tira sempre na segunda linha e empurraria o mapa quando ela nao existisse. */
 .topbar {
+  flex: none;
+  height: var(--topbar-h);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -569,23 +614,164 @@ textarea {
   background: var(--line);
 }
 
-.workspace {
+/* Tira de cenas: uma segunda faixa presa ao cabecalho, so para o mestre.
+   Cada cena e a miniatura do fundo (ou o gradiente vazio) e o nome; a que
+   esta no ar fica em destaque, as outras esmaecidas ate serem clicadas. */
+.scene-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+/* Fechada, a tira encolhe para so o rotulo — a altura que ela devolve a
+   mesa importa mais que o acesso rapido as outras cenas, que so faz falta
+   trocando de cena ao vivo, nao preparando a mesa sozinho. */
+.scene-strip.collapsed {
+  padding: 3px 12px;
+}
+.scene-strip-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.scene-strip-toggle:hover {
+  color: var(--ink-2);
+  background: var(--panel-2);
+}
+.scene-strip-toggle svg {
+  flex: none;
+}
+.scene-strip-current {
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+.scene-strip-item {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--ink-3);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.62;
+  transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.scene-strip-item:hover {
+  opacity: 0.9;
+  background: var(--panel-2);
+}
+.scene-strip-item.active {
+  opacity: 1;
+  border-color: var(--brass-dim);
+  background: var(--brass-glow);
+  color: var(--ink);
+}
+.scene-thumb {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 28px;
+  border-radius: 4px;
+  background: linear-gradient(150deg, var(--panel-2), var(--void));
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+.scene-strip-item.active .scene-thumb {
+  box-shadow: inset 0 0 0 1px var(--brass);
+}
+.scene-thumb-tag {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  padding: 0 3px;
+  font-size: 8px;
+  line-height: 1.4;
+  border-radius: 3px;
+  background: rgba(12, 14, 19, 0.85);
+  color: var(--success);
+}
+.scene-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.scene-strip-more,
+.scene-strip-add {
+  flex: none;
   display: grid;
-  grid-template-columns: var(--rail-w) 1fr auto;
+  place-items: center;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.scene-strip-more:hover,
+.scene-strip-add:hover {
+  color: var(--brass);
+  border-color: var(--brass-dim);
+  background: var(--panel-2);
+}
+
+.workspace {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
   min-height: 0;
   position: relative;
 }
 
-/* Barra de ferramentas vertical */
+/* Barra de ferramentas: flutua centralizada no rodape do mapa, em vez de
+   ocupar uma coluna inteira presa a borda — o mapa e o que a mesa fica
+   olhando, e a barra so precisa estar por perto quando alguem usa. */
 .rail {
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 20;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 3px;
-  padding: 8px 0;
-  z-index: 20;
+  max-width: calc(100% - 24px);
+  padding: 5px;
+  background: rgba(18, 20, 26, 0.92);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow);
 }
 .tool {
   width: 38px;
@@ -614,13 +800,14 @@ textarea {
   opacity: 0.25;
   cursor: not-allowed;
 }
-/* Dica que aparece a direita, fora do trilho */
+/* Dica que aparece acima do botao — a barra flutua colada ao rodape do
+   mapa, entao nao ha espaco embaixo para a dica abrir. */
 .tool::after {
   content: attr(data-tip);
   position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
   padding: 4px 8px;
   background: var(--raised);
   border: 1px solid var(--line);
@@ -639,10 +826,10 @@ textarea {
   opacity: 1;
 }
 .rail .sep {
-  width: 22px;
-  height: 1px;
+  width: 1px;
+  height: 22px;
   background: var(--line);
-  margin: 5px 0;
+  margin: 0 5px;
 }
 
 /* Ajuste do pincel de neblina: só aparece com o pincel em uso. */
@@ -722,10 +909,11 @@ textarea {
   pointer-events: auto;
 }
 
-/* Instrucao contextual sobre o mapa, para gestos de varias etapas. */
+/* Instrucao contextual sobre o mapa, para gestos de varias etapas. Fica no
+   alto, abaixo da faixa de turno: o rodape e dos retratos do grupo. */
 .stage-tip {
   position: absolute;
-  bottom: 12px;
+  top: 58px;
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 12px;
@@ -832,7 +1020,9 @@ textarea {
   color: var(--ink-3);
 }
 .context-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   width: 100%;
   padding: 7px 9px;
   background: transparent;
@@ -849,7 +1039,11 @@ textarea {
   background: var(--raised);
   outline: none;
 }
-.context-menu button.danger {
+.context-menu button .icon {
+  color: var(--ink-3);
+}
+.context-menu button.danger,
+.context-menu button.danger .icon {
   color: var(--danger);
 }
 .context-menu button.danger:hover {
@@ -861,13 +1055,311 @@ textarea {
   background: var(--line-soft);
 }
 
+/* ---------------------------------------------------------------------------
+   Retratos do grupo
+   Linguagem da ficha do sistema: fundo de carvao, selo em fita para as siglas
+   e um quadradinho por ponto, como na ficha impressa em que se risca o dano.
+   --------------------------------------------------------------------------- */
+
+.party-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: calc(100% - 64px);
+  z-index: 7;
+  pointer-events: none;
+}
+.party-hud > * {
+  pointer-events: auto;
+}
+
+.party-hud-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: rgba(12, 14, 19, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.party-hud-toggle:hover,
+.party-hud-toggle:focus-visible {
+  color: var(--brass);
+  border-color: var(--brass-dim);
+  outline: none;
+}
+
+.party-hud-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px;
+  scrollbar-width: thin;
+}
+
+.hud-card {
+  --pc: #7a8bd4;
+  position: relative;
+  flex: 0 0 132px;
+  display: flex;
+  flex-direction: column;
+  padding: 7px 7px 8px;
+  background: linear-gradient(180deg, rgba(24, 20, 20, 0.96) 0%, rgba(10, 11, 15, 0.97) 100%);
+  border: 1px solid #3a2a26;
+  border-top: 3px solid var(--pc);
+  border-radius: 4px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  transition: transform 160ms ease, box-shadow 160ms ease, opacity 200ms ease;
+  animation: rise 220ms ease both;
+}
+.hud-card:hover {
+  transform: translateY(-3px);
+}
+.hud-card.mine {
+  flex-basis: 148px;
+}
+.hud-card.offline {
+  opacity: 0.55;
+}
+.hud-card.on-turn {
+  border-color: var(--brass-dim);
+  border-top-color: var(--brass);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--brass-dim), 0 0 22px var(--brass-glow);
+}
+
+/* Moldura do retrato: cantos em colchete, como na ficha de personagem. */
+.hud-portrait {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 5 / 6;
+  padding: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, #2a2226 0%, #0c0d11 75%);
+  border: 1px solid #2c2224;
+  border-radius: 2px;
+  color: inherit;
+  font: inherit;
+}
+button.hud-portrait {
+  cursor: pointer;
+}
+button.hud-portrait:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+.hud-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: filter 300ms ease;
+}
+.hud-portrait::before,
+.hud-portrait::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--pc);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 1;
+}
+.hud-portrait::before {
+  top: 4px;
+  left: 4px;
+  border-right: none;
+  border-bottom: none;
+}
+.hud-portrait::after {
+  right: 4px;
+  bottom: 4px;
+  border-left: none;
+  border-top: none;
+}
+.hud-initials {
+  font-family: var(--font-display);
+  font-size: 30px;
+  letter-spacing: 0.04em;
+  color: var(--pc);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+}
+
+.hud-card.fallen .hud-portrait img,
+.hud-card.fallen .hud-initials {
+  filter: grayscale(1) brightness(0.55);
+}
+.hud-stamp {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-12deg);
+  padding: 2px 8px;
+  border: 2px solid #d24a3f;
+  color: #ef6b5f;
+  background: rgba(10, 6, 6, 0.72);
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.hud-name {
+  margin: 6px 1px 6px;
+  padding-bottom: 5px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  line-height: 1.1;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid #3a2a26;
+}
+.hud-card.on-turn .hud-name {
+  color: var(--brass);
+}
+
+.hud-vitals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hud-vital {
+  --vital: #d9534f;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-radius: 3px;
+}
+.hud-vital-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* Selo em fita, recortado nas pontas, como os rotulos da ficha do sistema. */
+.hud-tape {
+  padding: 1px 8px 1px 6px;
+  background: var(--vital);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  clip-path: polygon(5% 0, 100% 0, 92% 100%, 0 100%);
+}
+.hud-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.hud-max {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.hud-pips {
+  display: grid;
+  gap: 2px;
+}
+.hud-pips span {
+  height: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.35);
+  transition: background 200ms ease, border-color 200ms ease;
+}
+.hud-pips span.on {
+  background: var(--vital);
+  border-color: transparent;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+}
+.hud-track {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.hud-fill {
+  height: 100%;
+  background: var(--vital);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25);
+  transition: width 260ms ease;
+}
+
+/* Pouca resistencia: a trilha pulsa, para o perigo nao passar batido. */
+.hud-vital.low .hud-pips span.on,
+.hud-vital.low .hud-fill {
+  animation: vital-low 1.2s ease-in-out infinite;
+}
+.hud-vital.hurt {
+  animation: vital-hurt 700ms ease;
+}
+.hud-vital.heal {
+  animation: vital-heal 700ms ease;
+}
+@keyframes vital-low {
+  50% {
+    filter: brightness(1.6);
+  }
+}
+@keyframes vital-hurt {
+  0%,
+  100% {
+    transform: translateX(0);
+    box-shadow: none;
+  }
+  20% {
+    transform: translateX(-3px);
+    box-shadow: 0 0 0 4px rgba(210, 74, 63, 0.35);
+  }
+  45% {
+    transform: translateX(3px);
+  }
+  70% {
+    transform: translateX(-1px);
+  }
+}
+@keyframes vital-heal {
+  30% {
+    box-shadow: 0 0 0 4px rgba(111, 174, 114, 0.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-card,
+  .hud-vital.low .hud-pips span.on,
+  .hud-vital.low .hud-fill,
+  .hud-vital.hurt,
+  .hud-vital.heal {
+    animation: none;
+  }
+}
+
 /* Aba de recolher o painel, presa a borda entre mapa e painel. */
 .side-toggle {
   position: absolute;
   top: 50%;
   right: 0;
   transform: translateY(-50%);
-  width: 16px;
+  width: 18px;
   height: 56px;
   display: grid;
   place-items: center;
@@ -885,7 +1377,7 @@ textarea {
 }
 .side-toggle:hover,
 .side-toggle:focus-visible {
-  width: 20px;
+  width: 22px;
   color: var(--brass);
   background: var(--panel-2);
   outline: none;
@@ -921,35 +1413,391 @@ textarea {
   white-space: nowrap;
 }
 
-/* Faixa de turno sobre o mapa */
-.turn-banner {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
+/* ---------------------------------------------------------------------------
+   Vez de agir, no cabecalho
+   As miniaturas em fila sao a ordem dos turnos; o mestre arrasta para mudar.
+   Discreto de proposito: fica sempre na tela, entao nao pode competir com o
+   mapa nem com o painel.
+   --------------------------------------------------------------------------- */
+
+.turn-bar {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 14px;
-  background: rgba(23, 26, 34, 0.94);
-  border: 1px solid #4a3a18;
+  min-width: 0;
+}
+
+.turn-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
   border-radius: 999px;
-  box-shadow: var(--shadow), 0 0 22px var(--brass-glow);
-  backdrop-filter: blur(8px);
-  pointer-events: auto;
-  animation: rise 260ms ease both;
 }
-.turn-banner .who {
-  font-family: var(--font-display);
-  font-size: 15px;
-  color: var(--brass);
-}
-.turn-banner .round {
+
+.turn-round {
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.turn-now {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--brass);
+}
+.turn-now.mine {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.turn-minis {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px;
+  /* Sem rolagem: barra de rolagem no cabecalho e alvo minusculo, e o que fica
+     escondido nela nunca e encontrado. Passando do teto, a faixa conta o resto
+     num `+N`. */
+  overflow: hidden;
+}
+
+.turn-rest {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.turn-mini {
+  --pc: #45506e;
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+}
+/* Retangulo deitado: o retrato aparece maior sem empurrar a altura do
+   cabecalho, que e fixa em 46px. */
+.turn-mini .face {
+  width: 46px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #12141a;
+  border: 1px solid var(--pc);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.turn-mini .face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.turn-mini .initials {
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.turn-mini.active .face {
+  border-color: var(--brass);
+  box-shadow: 0 0 0 2px rgba(224, 163, 62, 0.28);
+  transform: scale(1.06);
+}
+.turn-mini.skipped {
+  opacity: 0.4;
+}
+.turn-mini.hidden-entry .face {
+  border-style: dashed;
+}
+.turn-mini.dragging {
+  opacity: 0.4;
+}
+.turn-mini.drop-before::before,
+.turn-mini.drop-after::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--brass);
+  border-radius: 2px;
+}
+.turn-mini.drop-before::before {
+  left: -3px;
+}
+.turn-mini.drop-after::after {
+  right: -3px;
+}
+
+/* As acoes por participante so aparecem no hover: o cabecalho fica limpo. */
+.turn-tools {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  gap: 1px;
+  padding: 1px;
+  z-index: 40;
+  background: rgba(12, 14, 19, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+.turn-mini:hover .turn-tools,
+.turn-mini:focus-within .turn-tools {
+  display: flex;
+}
+
+.turn-history {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: 420px;
+  /* Sem altura maxima e sem rolagem: o painel mostra as ultimas rodadas e
+     conta as anteriores numa linha de texto. */
+  padding: 10px 14px;
+  background: rgba(16, 18, 24, 0.97);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  animation: rise 200ms ease both;
+}
+.turn-history h4 {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  color: var(--ink-3);
+}
+.turn-history-round .round-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--brass);
+}
+.turn-history ol {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Bandeja de dados
+   Cada clique soma um dado ao punhado; o d20 gira enquanto o resultado vem.
+   --------------------------------------------------------------------------- */
+
+.dice-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.dice-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.dice-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 7px 2px 5px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.dice-btn:hover {
+  color: var(--brass);
+  border-color: var(--brass-dim);
+  transform: translateY(-1px);
+}
+.dice-btn.on {
+  color: var(--brass);
+  border-color: var(--brass-dim);
+  background: color-mix(in srgb, var(--brass) 12%, transparent);
+}
+.dice-name {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+.dice-count {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  min-width: 17px;
+  padding: 0 4px;
+  background: var(--brass);
+  border-radius: 999px;
+  color: #16130c;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+}
+
+.dice-mod {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.dice-mod .label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.dice-mod .input {
+  width: 54px;
+  padding: 3px 5px;
+}
+
+.dice-formula {
+  font-size: 12px;
+  color: var(--brass);
+}
+.dice-formula.empty {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.dice-roll {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dice-roll.rolling .dice-spin {
+  animation: diceSpin 520ms cubic-bezier(0.5, 0, 0.3, 1) infinite;
+}
+
+@keyframes diceSpin {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  55% {
+    transform: rotate(220deg) scale(1.18);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* O resultado entra no chat com um lampejo, para o olho achar o numero. */
+.msg .roll .total {
+  animation: rollLand 460ms ease both;
+}
+
+@keyframes rollLand {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Entrada do personagem: as duas imagens obrigatorias
+   --------------------------------------------------------------------------- */
+
+.character-setup {
+  width: min(640px, 100%);
+}
+.character-setup .pair {
+  display: grid;
+  /* `minmax(0, 1fr)` e o que impede a coluna de encolher ate o texto vazar:
+     por padrao o item de grid nao fica menor que o proprio conteudo. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  width: 100%;
+}
+@media (max-width: 600px) {
+  .character-setup .pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.char-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.char-slot h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.char-slot .preview {
+  height: 180px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0;
+  background: #0e1015;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.char-slot .preview:hover {
+  border-color: var(--brass-dim);
+}
+.char-slot .preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* Nomes proprios do componente: `.portrait` e `.body` soltos colidiriam com o
+   retrato da ficha e com o corpo do modal, que ja existem na folha. */
+.char-slot.char-face .preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* Painel lateral */
@@ -964,6 +1812,16 @@ textarea {
 }
 .side.hidden {
   display: none;
+}
+/* So em telas largas: no breakpoint mobile o painel vira overlay de tela
+   cheia (mais abaixo), e a regra de largura por aba nao pode disputar com
+   isso — teria especificidade maior que `.side { width: auto }` de la. */
+@media (min-width: 901px) {
+  .side[data-tab='chat'],
+  .side[data-tab='handouts'],
+  .side[data-tab='players'] {
+    width: var(--panel-w-narrow);
+  }
 }
 
 .side-tabs {
@@ -1065,6 +1923,27 @@ textarea {
   font-weight: 700;
 }
 
+/* Titulo de secao dobravel: mesmo texto do h3 estatico, agora clicavel. */
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 0;
+  padding: 4px;
+  margin: -4px 0 -4px -4px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: inherit;
+}
+.section-toggle:hover {
+  background: var(--panel-2);
+}
+.section-toggle svg {
+  color: var(--ink-3);
+  flex: none;
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1129,7 +2008,41 @@ textarea {
 .sheet-chip:active {
   cursor: grabbing;
 }
+/* Condicao marcada ganha a cor dela: a mesma do selo desenhado sobre o token. */
+.condition-btn {
+  color: var(--ink-3);
+}
+.condition-btn:hover {
+  color: var(--condition);
+}
+.condition-btn.on {
+  color: var(--condition);
+  border-color: var(--condition);
+  background: color-mix(in srgb, var(--condition) 16%, transparent);
+}
+
+/* Previa da arte inteira no inspetor do token: mesma logica do desenho no
+   mapa, a figura fica de pe no chao da caixa em vez de preencher tudo. */
+.art-preview {
+  width: 52px;
+  height: 96px;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--void);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: end center;
+}
+.art-preview img {
+  height: 92px;
+  width: auto;
+  object-fit: contain;
+}
+
 .sheet-chip .grip {
+  display: grid;
+  place-items: center;
   color: var(--ink-3);
   font-size: 12px;
   line-height: 1;
@@ -1213,7 +2126,35 @@ textarea {
   gap: 9px;
 }
 .msg {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
   animation: rise 200ms ease both;
+}
+
+/* Rosto de quem falou: o mesmo retrato da ficha e da faixa de turnos. */
+.msg-face {
+  --pc: #7a8bd4;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--pc);
+  border-radius: 50%;
+  color: var(--pc);
+  font-size: 11px;
+  font-weight: 700;
+}
+.msg-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.msg-main {
+  min-width: 0;
 }
 .msg .who {
   font-size: 11px;
@@ -1236,14 +2177,23 @@ textarea {
 }
 .roll {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   padding: 7px 10px;
   margin-top: 3px;
   background: var(--void);
   border: 1px solid var(--line);
   border-left: 3px solid var(--brass);
   border-radius: var(--radius);
+}
+.roll-icon {
+  flex: none;
+  color: var(--brass);
+}
+.roll-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .roll .total {
   font-family: var(--font-mono);
@@ -1252,28 +2202,59 @@ textarea {
   color: var(--brass);
   line-height: 1;
 }
-.roll .detail {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
+.roll-label {
+  font-family: var(--font-ui);
+  font-size: 11px;
   color: var(--ink-3);
 }
-.roll-label {
-  display: block;
-  font-family: var(--font-ui);
-  font-size: 11.5px;
-  color: var(--ink);
-  font-weight: 600;
-  margin-bottom: 1px;
+.roll .detail {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.roll-formula {
+  color: var(--ink-2);
+}
+.roll-breakdown {
+  color: var(--ink-3);
 }
 
 /* Rotulo de campo com dado clicavel. */
 .label-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   justify-content: space-between;
 }
+/* Altura fixa em duas linhas (rotulo + legenda), mesmo quando so uma delas
+   tem conteudo — numa grade de 3 colunas, uma pericia com atributo vinculado
+   ao lado de uma sem cresce sozinha e desalinha a linha inteira; reservando
+   o espaco sempre, toda a fileira fica na mesma altura. */
+.label-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 26px;
+  min-width: 0;
+}
+.label-text {
+  overflow-wrap: break-word;
+}
+/* Com quem a rolagem soma — sem isto, so o hover no dado revelava a formula. */
+.field-linked {
+  color: var(--ink-3);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
 .roll-btn {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-2);
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -1301,6 +2282,47 @@ textarea {
   flex-direction: column;
   gap: 7px;
   background: var(--panel-2);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+/* Sussurro ligado muda a cor do proprio compositor, nao so do checkbox
+   minusculo — e o estado que decide se a proxima mensagem sai publica ou
+   so para o mestre, entao precisa ser visto antes do Enter, nao depois. */
+.chat-input.whisper-on {
+  background: rgba(110, 168, 216, 0.08);
+  border-top-color: var(--steel-dim);
+}
+.chat-input.whisper-on .input {
+  border-color: var(--steel-dim);
+}
+.chat-input.whisper-on .check span {
+  color: var(--steel);
+  font-weight: 600;
+}
+
+/* Abre e fecha a bandeja de dados: fica escondida ate alguem precisar dela,
+   em vez de ocupar o rodape do chat o tempo todo. */
+.tray-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.tray-toggle:hover {
+  color: var(--ink-2);
+  border-color: var(--brass-dim);
+}
+.tray-toggle.on {
+  color: var(--brass);
+  border-color: var(--brass-dim);
+  background: var(--brass-glow);
 }
 
 /* Ficha */
@@ -1308,6 +2330,7 @@ textarea {
   display: flex;
   gap: 12px;
   align-items: flex-start;
+  padding: 14px 14px 16px;
 }
 .portrait {
   width: 74px;
@@ -1583,14 +2606,21 @@ textarea {
     --panel-w: 100vw;
   }
   .workspace {
-    grid-template-columns: var(--rail-w) 1fr;
+    grid-template-columns: 1fr;
   }
   .side {
     position: absolute;
-    inset: 0 0 0 var(--rail-w);
+    inset: 0;
     width: auto;
   }
 }
+
+/* Native dialogs isolate focus and the background for keyboard/screen readers. */
+.modal-shell { border: 0; padding: 0; background: transparent; color: var(--ink); width: min(980px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); overflow: visible; }
+.modal-shell::backdrop { background: rgba(0, 0, 0, .68); }
+.modal-shell .modal { max-width: 100%; }
+button.dropzone { width: 100%; color: inherit; font: inherit; }
+button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
 
 /* ---------------------------------------------------------------------------
    Imersao: camada sobre o mapa, fora da camera. Tudo aqui anima em CSS e so
@@ -1909,11 +2939,6 @@ textarea {
   gap: 5px;
 }
 
-/* O trilho cresceu: numa tela baixa, rola em vez de cortar ferramentas. */
-.rail {
-  overflow-y: auto;
-  scrollbar-width: none;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .scene-card-bg {
@@ -1975,6 +3000,9 @@ textarea {
   border-bottom: 1px solid var(--line);
 }
 .board-toolbar h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0 8px 0 0;
   font-family: var(--font-display);
   font-size: 18px;

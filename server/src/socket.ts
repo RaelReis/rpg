@@ -1,3 +1,5 @@
+import { allowAttempt } from './limits.js';
+import { TRUST_PROXY } from './env.js';
 import type { Ack } from '@rpg/shared';
 
 import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
@@ -12,6 +14,7 @@ import {
   deleteToken,
   deleteWall,
   moveToken,
+  moveTokens,
   paintFog,
   resetFog,
   updateEffect,
@@ -20,18 +23,19 @@ import {
   updateWall,
 } from './handlers/map.js';
 import {
-  addInitiativeEntry,
+  addTurnEntries,
   deleteAsset,
   kickPlayer,
   nextTurn,
   pingMap,
   previousTurn,
   promotePlayer,
-  removeInitiativeEntry,
-  rollInitiative,
+  removeTurnEntry,
+  reorderTurns,
   sendChat,
-  updateInitiative,
+  setActiveTurn,
   updatePlayer,
+  updateTurnEntry,
 } from './handlers/play.js';
 import {
   createHandout,
@@ -47,6 +51,7 @@ import {
   updateScene,
   updateSettings,
 } from './handlers/scene.js';
+import { setCharacterImages } from './handlers/characters.js';
 import {
   applyScreenEffect,
   closeCard,
@@ -71,6 +76,7 @@ import { createTriggerHandler, deleteTriggerHandler, updateTriggerHandler } from
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
   assignSheet,
+  operateSheet,
   createSheet,
   deleteSheet,
   rollSheetField,
@@ -205,8 +211,20 @@ export function registerSocketHandlers(io: TypedServer): void {
       };
 
     // -- sessao ------------------------------------------------------------
-    socket.on('session:join', (req, ack) => handleJoin(socket, req, ack));
-    socket.on('session:resume', (req, ack) => handleResume(socket, req, ack));
+    let authenticating = false;
+    const authenticate = async (run: () => Promise<void>, ack: Ack<never>) => {
+      if (authenticating) return fail(ack, 'Uma entrada ja esta em andamento.');
+      authenticating = true;
+      try { await run(); } finally { authenticating = false; }
+    };
+    socket.on('session:join', (req, ack) => {
+      const forwarded = String(socket.handshake.headers['x-forwarded-for'] ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      const ip = TRUST_PROXY > 0 ? (forwarded[Math.max(0, forwarded.length - TRUST_PROXY)] ?? socket.handshake.address) : socket.handshake.address;
+      if (!allowAttempt(`join:${ip}`, 100, 300_000) ||
+          (req?.gmPassword && !allowAttempt(`password:${ip}`, 15, 300_000))) return fail(ack, 'Muitas tentativas. Aguarde cinco minutos.');
+      return authenticate(() => handleJoin(socket, req, ack), ack);
+    });
+    socket.on('session:resume', (req, ack) => authenticate(() => handleResume(socket, req, ack), ack));
     socket.on('disconnect', () => handleDisconnect(socket));
 
     // -- mesa e cenas ------------------------------------------------------
@@ -225,6 +243,8 @@ export function registerSocketHandlers(io: TypedServer): void {
       if (!ctx) return fail(ack, 'Sessao nao encontrada.');
       moveToken(ctx, payload, ack);
     });
+    // Lote do arraste: cada item repete as checagens de `token:move`.
+    socket.on('tokens:move', loose(moveTokens));
     socket.on('token:delete', gm(deleteToken));
 
     socket.on('tile:create', gm(createTileHandler));
@@ -253,29 +273,29 @@ export function registerSocketHandlers(io: TypedServer): void {
     socket.on('template:update', gm(updateTemplate));
     socket.on('sheet:create', gm(createSheet));
     socket.on('sheet:update', member(updateSheet));
+    socket.on('sheet:operate', member(operateSheet));
     socket.on('sheet:delete', gm(deleteSheet));
     socket.on('sheet:assign', gm(assignSheet));
     socket.on('sheet:roll', member(rollSheetField));
+    socket.on('character:images', member(setCharacterImages));
 
-    // -- iniciativa --------------------------------------------------------
-    socket.on('initiative:update', gm(updateInitiative));
-    socket.on('initiative:add', gm(addInitiativeEntry));
-    socket.on('initiative:remove', gm(removeInitiativeEntry));
-    socket.on('initiative:roll', (ack) => {
+    // -- turnos ------------------------------------------------------------
+    // A ordem inteira e do mestre: ele monta, arrasta e passa a vez.
+    socket.on('turns:add', gm(addTurnEntries));
+    socket.on('turns:remove', gm(removeTurnEntry));
+    socket.on('turns:reorder', gm(reorderTurns));
+    socket.on('turns:update', gm(updateTurnEntry));
+    socket.on('turns:set', gm(setActiveTurn));
+    socket.on('turns:next', (ack) => {
       const ctx = contextOf(socket);
       if (!ctx) return fail(ack, 'Sessao nao encontrada.');
-      if (!isGm(ctx)) return fail(ack, 'Apenas o mestre rola a iniciativa.');
-      rollInitiative(ctx, ack);
-    });
-    socket.on('initiative:next', (ack) => {
-      const ctx = contextOf(socket);
-      if (!ctx) return fail(ack, 'Sessao nao encontrada.');
+      if (!isGm(ctx)) return fail(ack, 'Apenas o mestre passa a vez.');
       nextTurn(ctx, ack);
     });
-    socket.on('initiative:previous', (ack) => {
+    socket.on('turns:previous', (ack) => {
       const ctx = contextOf(socket);
       if (!ctx) return fail(ack, 'Sessao nao encontrada.');
-      if (!isGm(ctx)) return fail(ack, 'Apenas o mestre volta o turno.');
+      if (!isGm(ctx)) return fail(ack, 'Apenas o mestre volta a vez.');
       previousTurn(ctx, ack);
     });
 

@@ -93,6 +93,7 @@ model Sheet {
   name            String
   ownerPlayerId   String?
   portraitAssetId String?
+  bodyAssetId     String?
   /// Record<fieldId, FieldValue> conforme o template vigente da mesa.
   values          String
   sharedWithParty Boolean  @default(false)

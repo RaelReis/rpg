@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChatMessage } from '@rpg/shared';
+import type { ChatMessage, TableState } from '@rpg/shared';
 
 import { act } from '../../net/socket';
-import { isGm, useStore } from '../../state/store';
+import { findAsset, isGm, useStore } from '../../state/store';
+import { DiceTray } from '../DiceTray';
+import { Icon, type IconName } from '../icons';
 
 /**
  * Chat e rolagem de dados.
@@ -18,6 +20,7 @@ export function ChatPanel(): JSX.Element {
   const playerId = useStore((s) => s.session?.playerId ?? null);
   const [text, setText] = useState('');
   const [whisper, setWhisper] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
 
@@ -36,6 +39,11 @@ export function ChatPanel(): JSX.Element {
     if (!value) return;
     void act('chat:send', { text: value, whisper });
     setText('');
+    // O sussurro e quase sempre um aside pontual, nao uma conversa inteira
+    // por texto — a voz externa carrega o resto. Sem isto, a marca ficava
+    // ligada em silencio e a proxima mensagem publica saia sussurrada sem
+    // ninguem perceber antes de mandar.
+    setWhisper(false);
     pinnedRef.current = true;
   }
 
@@ -55,16 +63,22 @@ export function ChatPanel(): JSX.Element {
           </div>
         )}
         {messages.map((message) => (
-          <MessageRow key={message.id} message={message} mine={message.playerId === playerId} />
+          <MessageRow
+            key={message.id}
+            message={message}
+            mine={message.playerId === playerId}
+            portraitUrl={portraitOf(table, message.playerId)}
+          />
         ))}
       </div>
 
-      <form className="chat-input" onSubmit={send}>
+      <form className={`chat-input${whisper ? ' whisper-on' : ''}`} onSubmit={send}>
         <div className="row">
           <input
             className="input"
             value={text}
             placeholder={whisper ? 'Sussurrar ao mestre...' : 'Mensagem ou /r 1d20+5'}
+            title="Comeca com /r para rolar sem abrir a Bandeja — ex.: /r 2d6+3"
             maxLength={2000}
             onChange={(e) => setText(e.target.value)}
           />
@@ -73,7 +87,7 @@ export function ChatPanel(): JSX.Element {
           </button>
         </div>
 
-        <div className="row">
+        <div className="row" style={{ gap: 10 }}>
           {!gm && (
             <label className="check" style={{ padding: 0 }}>
               <input type="checkbox" checked={whisper} onChange={(e) => setWhisper(e.target.checked)} />
@@ -81,23 +95,54 @@ export function ChatPanel(): JSX.Element {
             </label>
           )}
           <div className="spacer" />
-          {['d20', '2d6', 'd100'].map((formula) => (
-            <button
-              key={formula}
-              type="button"
-              className="btn sm"
-              onClick={() => void act('chat:send', { text: `/r ${formula}`, whisper })}
-            >
-              {formula}
-            </button>
-          ))}
+          <button
+            type="button"
+            className={`tray-toggle${trayOpen ? ' on' : ''}`}
+            onClick={() => setTrayOpen((o) => !o)}
+            aria-expanded={trayOpen}
+          >
+            <Icon name="d20" size="sm" /> Bandeja
+          </button>
         </div>
       </form>
+
+      {trayOpen && <DiceTray whisper={whisper} />}
     </div>
   );
 }
 
-function MessageRow({ message, mine }: { message: ChatMessage; mine: boolean }): JSX.Element {
+/**
+ * Retrato de quem falou.
+ *
+ * O mesmo rosto da ficha, da lista de presenca e da faixa de turnos: num chat
+ * de cinco pessoas, procurar o nome escrito custa mais do que reconhecer a
+ * cara — ainda mais quando a mesa esta no meio de uma cena.
+ */
+function portraitOf(table: TableState | null, playerId: string | null): string | null {
+  const player = table?.players.find((p) => p.id === playerId);
+  const asset = findAsset(player?.portraitAssetId);
+  return asset?.thumbUrl ?? asset?.url ?? null;
+}
+
+const DIE_SIDES: number[] = [4, 6, 8, 10, 12, 20];
+
+/** Le a formula ("2d6+3", "1d20+1d6") e acha o maior dado nomeado, pra ilustrar a rolagem. */
+function dieIconFor(formula: string): IconName {
+  const found = [...formula.matchAll(/d(\d+)/gi)].map((m) => Number(m[1]));
+  const known = found.filter((sides) => DIE_SIDES.includes(sides));
+  if (known.length === 0) return 'roll';
+  return `d${Math.max(...known)}` as IconName;
+}
+
+function MessageRow({
+  message,
+  mine,
+  portraitUrl,
+}: {
+  message: ChatMessage;
+  mine: boolean;
+  portraitUrl: string | null;
+}): JSX.Element {
   const time = new Date(message.createdAt).toLocaleTimeString('pt-BR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -105,30 +150,46 @@ function MessageRow({ message, mine }: { message: ChatMessage; mine: boolean }):
 
   return (
     <div className={`msg${message.whisper ? ' whisper' : ''}`}>
-      <div className="row" style={{ gap: 6 }}>
-        <span className="who" style={{ color: message.authorColor }}>
-          {message.authorName}
-          {mine && ' (voce)'}
-        </span>
-        {message.whisper && <span className="tag">sussurro</span>}
-        <div className="spacer" />
-        <span className="hint mono" style={{ fontSize: 10 }}>
-          {time}
-        </span>
-      </div>
+      {/* Decorativo: o nome ao lado ja diz quem falou. */}
+      <span className="msg-face" style={{ ['--pc' as string]: message.authorColor }} aria-hidden="true">
+        {portraitUrl ? (
+          <img src={portraitUrl} alt="" draggable={false} />
+        ) : (
+          message.authorName.slice(0, 1).toUpperCase()
+        )}
+      </span>
 
-      {message.roll ? (
-        <div className="roll">
-          <span className="total">{message.roll.total}</span>
-          <span className="detail">
-            {message.rollLabel && <strong className="roll-label">{message.rollLabel}</strong>}
-            {message.roll.formula}
-            {message.roll.rolls.length > 0 && ` · [${message.roll.rolls.join(', ')}]`}
+      <div className="msg-main">
+        <div className="row" style={{ gap: 6 }}>
+          <span className="who" style={{ color: message.authorColor }}>
+            {message.authorName}
+            {mine && ' (voce)'}
+          </span>
+          {message.whisper && <span className="tag">sussurro</span>}
+          <div className="spacer" />
+          <span className="hint mono" style={{ fontSize: 10 }}>
+            {time}
           </span>
         </div>
-      ) : (
-        <div className="body">{message.text}</div>
-      )}
+
+        {message.roll ? (
+          <div className="roll">
+            <Icon name={dieIconFor(message.roll.formula)} size="lg" className="roll-icon" />
+            <span className="roll-main">
+              <span className="total">{message.roll.total}</span>
+              {message.rollLabel && <span className="roll-label">{message.rollLabel}</span>}
+            </span>
+            <span className="detail">
+              <span className="roll-formula">{message.roll.formula}</span>
+              {message.roll.rolls.length > 0 && (
+                <span className="roll-breakdown">[{message.roll.rolls.join(', ')}]</span>
+              )}
+            </span>
+          </div>
+        ) : (
+          <div className="body">{message.text}</div>
+        )}
+      </div>
     </div>
   );
 }

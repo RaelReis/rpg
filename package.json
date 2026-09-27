@@ -12,7 +12,7 @@
     "dev": "concurrently -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
-    "build": "npm run build -w client",
+    "build": "npm run typecheck && npm test && npm run build -w client",
     "start": "npm run start -w server",
     "share": "node scripts/share.mjs",
     "setup": "npm install && npm run db:push",
@@ -21,7 +21,8 @@
     "typecheck": "tsc -b --pretty",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "node scripts/e2e-check.mjs",
+    "test:e2e": "node scripts/integration-isolated.mjs",
+    "test:e2e:live": "node scripts/e2e-check.mjs",
     "bench:fog": "node scripts/fog-cache-check.mjs",
     "preview:effects": "node scripts/effects-preview.mjs",
     "preview:tokens": "node scripts/token-shape-preview.mjs"

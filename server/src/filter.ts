@@ -10,15 +10,16 @@ import {
   type Asset,
   type ChatMessage,
   type Handout,
-  type InitiativeState,
   type MapEffect,
   type Player,
   type PresentedCard,
   type Role,
   type Scene,
   type Sheet,
+  type SheetTemplate,
   type TableState,
   type Token,
+  type TurnState,
   type VisionResult,
 } from '@rpg/shared';
 
@@ -54,9 +55,10 @@ export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionRes
 }
 
 /** Aplica a semitransparencia de `dim` no que sai para o jogador. */
-function presentToken(token: Token): Token {
-  if (token.visibility === 'dim') return { ...token, opacity: Math.min(token.opacity, 0.45) };
-  return token;
+function presentToken(room: Room, token: Token): Token {
+  const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly).map(f => f.id));
+  return { ...token, bars: token.bars.filter(b => publicFields.has(b.fieldId)),
+    opacity: token.visibility === 'dim' ? Math.min(token.opacity, 0.45) : token.opacity };
 }
 
 export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene {
@@ -67,7 +69,7 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
 
   const tokens = scene.tokens
     .filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId))
-    .map(presentToken);
+    .map(t => presentToken(room, t));
 
   const tiles = scene.tiles.filter((t) => !t.gmOnly);
   const effects = scene.effects.filter((e) => effectVisibleTo(e, viewer));
@@ -118,11 +120,12 @@ export function effectVisibleTo(effect: MapEffect, viewer: Viewer): boolean {
  * pelo mestre precisam de valor. Devolvemos uma ficha reduzida so com os
  * campos que aquele token expoe.
  */
-function barOnlySheet(sheet: Sheet, tokens: Token[]): Sheet | null {
+function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
+  const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly && f.type === 'resource').map(f => f.id));
   const fieldIds = new Set<string>();
   for (const token of tokens) {
     if (token.sheetId !== sheet.id) continue;
-    for (const bar of token.bars) fieldIds.add(bar.fieldId);
+    for (const bar of token.bars) if (publicFields.has(bar.fieldId)) fieldIds.add(bar.fieldId);
   }
   if (fieldIds.size === 0) return null;
 
@@ -153,7 +156,7 @@ export function sheetForViewer(room: Room, sheet: Sheet, viewer: Viewer): Sheet 
 
   const vision = visionFor(scene, viewer);
   const visible = scene.tokens.filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId));
-  return barOnlySheet(sheet, visible);
+  return barOnlySheet(room, sheet, visible);
 }
 
 function sheetsForViewer(room: Room, viewer: Viewer, visibleTokens: Token[]): Sheet[] {
@@ -174,7 +177,7 @@ function sheetsForViewer(room: Room, viewer: Viewer, visibleTokens: Token[]): Sh
   if (room.state.settings.showPartyBars) {
     for (const sheet of room.state.sheets) {
       if (included.has(sheet.id)) continue;
-      const reduced = barOnlySheet(sheet, visibleTokens);
+      const reduced = barOnlySheet(room, sheet, visibleTokens);
       if (reduced) out.push(reduced);
     }
   }
@@ -196,10 +199,14 @@ export function assetIdsOfScene(scene: Scene): (string | null)[] {
 }
 
 /** Imagens que uma ficha usa: o retrato e os itens de inventario. */
-export function assetIdsOfSheet(sheet: Sheet): (string | null)[] {
-  const ids: (string | null)[] = [sheet.portraitAssetId];
+export function assetIdsOfSheet(sheet: Sheet, template: SheetTemplate): (string | null)[] {
+  const ids: (string | null)[] = [sheet.portraitAssetId, sheet.bodyAssetId];
   for (const value of Object.values(sheet.values)) {
     if (Array.isArray(value)) for (const item of value) ids.push(item.assetId);
+  }
+  for (const field of template.fields) {
+    const value = sheet.values[field.id];
+    if (field.type === 'image' && typeof value === 'string') ids.push(value);
   }
   return ids;
 }
@@ -278,7 +285,7 @@ function assetsForViewer(
   // Retratos da lista de presenca no cabecalho.
   for (const player of players) ids.add(player.portraitAssetId);
   if (scene) for (const id of assetIdsOfScene(scene)) ids.add(id);
-  for (const sheet of sheets) for (const id of assetIdsOfSheet(sheet)) ids.add(id);
+  for (const sheet of sheets) for (const id of assetIdsOfSheet(sheet, room.state.sheetTemplate)) ids.add(id);
   for (const handout of room.state.handouts) {
     if (handoutForViewer(handout, viewer)) ids.add(handout.assetId);
   }
@@ -301,26 +308,38 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
 }
 
 /**
- * Iniciativa na versao do observador. Alem das entradas marcadas como ocultas,
- * sai a entrada de uma alucinacao que ele nao percebe: ela traria o id e o
- * nome do token, e a ordem de turno entregaria o monstro que so a Alice ve.
+ * A ordem de turnos como este observador tem direito de ve-la.
+ *
+ * Saem duas coisas: as miniaturas que o mestre escondeu e as de alucinacoes
+ * que este jogador nao percebe — essas trariam o id e o nome do token, e a
+ * ordem de turno entregaria o monstro que so a Alice ve. O historico e a vez
+ * atual acompanham o mesmo corte: um registro do monstro escondido entregaria
+ * que ele existe e em que rodada agiu.
  */
-export function initiativeForViewer(room: Room, viewer: Viewer): InitiativeState {
-  const initiative = room.state.initiative;
-  if (viewer.role === 'GM') return initiative;
+export function turnsForViewer(room: Room, viewer: Viewer): TurnState {
+  const turns = room.state.turns;
+  if (viewer.role === 'GM') return turns;
 
-  const unseen = new Set<string>();
+  const unseenTokens = new Set<string>();
   for (const scene of room.state.scenes) {
     for (const token of scene.tokens) {
-      if (!perceives(token, viewer.playerId)) unseen.add(token.id);
+      if (!perceives(token, viewer.playerId)) unseenTokens.add(token.id);
     }
   }
 
+  const hidden = new Set(
+    turns.entries
+      .filter((e) => e.hiddenFromPlayers || (e.tokenId !== null && unseenTokens.has(e.tokenId)))
+      .map((e) => e.id),
+  );
+  if (hidden.size === 0) return turns;
+
   return {
-    ...initiative,
-    entries: initiative.entries.filter(
-      (e) => !e.hiddenFromPlayers && !(e.tokenId && unseen.has(e.tokenId)),
-    ),
+    ...turns,
+    entries: turns.entries.filter((e) => !hidden.has(e.id)),
+    history: turns.history.filter((r) => !hidden.has(r.entryId)),
+    activeEntryId:
+      turns.activeEntryId && hidden.has(turns.activeEntryId) ? null : turns.activeEntryId,
   };
 }
 
@@ -361,7 +380,7 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
       .filter((h): h is Handout => h !== null),
     assets: assetsForViewer(room, viewer, scene, sheets, players),
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
-    initiative: initiativeForViewer(room, viewer),
+    turns: turnsForViewer(room, viewer),
     chat: chatForViewer(s.chat, viewer),
     // Cartelas em preparacao nunca saem: nem titulo, nem imagem, nem id.
     sceneCards: [],
@@ -386,5 +405,5 @@ export function tokenForViewer(
   if (viewer.role === 'GM') return token;
   const v = vision ?? visionFor(scene, viewer);
   if (!canPlayerSeeToken(scene, token, v, viewer.playerId)) return null;
-  return presentToken(token);
+  return presentToken(room, token);
 }

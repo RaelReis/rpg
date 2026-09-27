@@ -1,4 +1,4 @@
-import { cellHeight } from './grid.js';
+import { tokenCenter } from './grid.js';
 import { sanitizeScreenEffect } from './screen.js';
 import type {
   Point,
@@ -151,12 +151,6 @@ export function areaBounds(area: TriggerArea): { x: number; y: number; width: nu
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
-/** Centro de um token, que e o ponto testado contra as areas (o mesmo das paredes). */
-export function tokenCenter(scene: Scene, token: Pick<Token, 'scale'>, topLeft: Point): Point {
-  const w = scene.grid.size * token.scale;
-  const h = (scene.grid.type === 'none' ? scene.grid.size : cellHeight(scene.grid)) * token.scale;
-  return { x: topLeft.x + w / 2, y: topLeft.y + h / 2 };
-}
 
 // ---------------------------------------------------------------------------
 // Quem dispara
@@ -191,8 +185,9 @@ export function triggersEntered(
   to: Point,
   movedByGm: boolean,
 ): Trigger[] {
-  const a = tokenCenter(scene, token, from);
-  const b = tokenCenter(scene, token, to);
+  // O centro do token e o mesmo ponto que as paredes e a visao usam.
+  const a = tokenCenter(scene.grid, from, token.scale);
+  const b = tokenCenter(scene.grid, to, token.scale);
   if (a.x === b.x && a.y === b.y) return [];
   return (scene.triggers ?? []).filter(
     (t) => triggerAccepts(t, token, movedByGm) && segmentEntersArea(t.area, a, b),

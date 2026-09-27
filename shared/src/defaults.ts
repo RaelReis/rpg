@@ -3,18 +3,21 @@ import type {
   FogConfig,
   Trigger,
   TriggerArea,
-  InitiativeState,
   MapEffect,
   Scene,
   TableSettings,
   Tile,
   Token,
+  TurnEntry,
+  TurnState,
   Wall,
   WeatherConfig,
 } from './types.js';
 
 /** Fabricas de entidades. Cliente e servidor criam objetos completos pelos
  *  mesmos defaults, evitando campos `undefined` viajando pelo socket. */
+
+export const MAX_GM_PASSWORD_LENGTH = 200;
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -65,14 +68,70 @@ export const DEFAULT_SETTINGS: TableSettings = {
   diceEnabled: true,
 };
 
-export const DEFAULT_INITIATIVE: InitiativeState = {
-  active: false,
-  round: 0,
+export const DEFAULT_TURNS: TurnState = {
+  round: 1,
   activeEntryId: null,
   entries: [],
-  autoAdvance: false,
-  turnSeconds: 0,
+  history: [],
 };
+
+/**
+ * Normaliza a ordem de turnos vinda do banco ou de um backup.
+ *
+ * Mesas gravadas antes desta versao guardam o rastreador de iniciativa antigo,
+ * com valor rolado e desempate. Os campos que sobraram ainda descrevem quem
+ * participava, entao a ordem e reaproveitada — na sequencia em que estava
+ * gravada, que era a ordem de iniciativa.
+ */
+export function normalizeTurns(raw: unknown): TurnState {
+  const source = (raw ?? {}) as Partial<TurnState>;
+  const rawEntries = Array.isArray(source.entries) ? source.entries : [];
+
+  const entries: TurnEntry[] = rawEntries.slice(0, 60).map((entry) => {
+    const e = (entry ?? {}) as Partial<TurnEntry>;
+    return {
+      id: typeof e.id === 'string' && e.id ? e.id : generateId('trn'),
+      tokenId: typeof e.tokenId === 'string' ? e.tokenId : null,
+      sheetId: typeof e.sheetId === 'string' ? e.sheetId : null,
+      playerId: typeof e.playerId === 'string' ? e.playerId : null,
+      name: typeof e.name === 'string' && e.name ? e.name.slice(0, 60) : 'Participante',
+      skipped: Boolean(e.skipped),
+      hiddenFromPlayers: Boolean(e.hiddenFromPlayers),
+    };
+  });
+
+  const rawHistory = Array.isArray(source.history) ? source.history : [];
+  const ids = new Set(entries.map((e) => e.id));
+  const history = rawHistory
+    .map((r) => (r ?? {}) as TurnRecordLike)
+    .filter((r) => typeof r.entryId === 'string' && ids.has(r.entryId))
+    .slice(-120)
+    .map((r) => ({
+      round: Number.isFinite(r.round) ? Number(r.round) : 1,
+      entryId: String(r.entryId),
+      name: typeof r.name === 'string' ? r.name.slice(0, 60) : 'Participante',
+      at: Number.isFinite(r.at) ? Number(r.at) : Date.now(),
+    }));
+
+  const activeEntryId =
+    typeof source.activeEntryId === 'string' && ids.has(source.activeEntryId)
+      ? source.activeEntryId
+      : (entries.find((e) => !e.skipped)?.id ?? null);
+
+  return {
+    round: Math.max(1, Math.min(9999, Math.trunc(Number(source.round) || 1))),
+    activeEntryId,
+    entries,
+    history,
+  };
+}
+
+interface TurnRecordLike {
+  round?: unknown;
+  entryId?: unknown;
+  name?: unknown;
+  at?: unknown;
+}
 
 /**
  * Cena nova nasce SEM neblina.
@@ -108,8 +167,9 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     walls: partial.walls ?? [],
     tiles: partial.tiles ?? [],
     // Passar pelas fabricas completa campos criados depois que a cena foi
-    // gravada (ou exportada): um token antigo chegaria sem `visibleTo`.
-    tokens: (partial.tokens ?? []).map((t) => createToken(t)),
+    // gravada (ou exportada): um token antigo chegaria sem `visibleTo`. As
+    // condicoes antigas (emojis) viram ids no caminho.
+    tokens: (partial.tokens ?? []).map((t) => createToken({ ...t, conditions: normalizeConditions(t.conditions) })),
     effects: (partial.effects ?? []).map((e) => createEffect(e)),
     globalLight: partial.globalLight ?? 1,
     weather: { ...DEFAULT_WEATHER, ...(partial.weather ?? {}) },
@@ -146,7 +206,9 @@ export function createToken(partial: Partial<Token> = {}): Token {
     scale: partial.scale ?? 1,
     rotation: partial.rotation ?? 0,
     layer: partial.layer ?? 3,
-    shape: partial.shape ?? 'circle',
+    // Arte inteira e o padrao: e assim que a peca aparece na mesa de verdade,
+    // e a ficha do personagem ja chega com uma imagem de corpo.
+    shape: partial.shape ?? 'art',
     visibility: partial.visibility ?? 'visible',
     opacity: partial.opacity ?? 1,
     gmOnly: partial.gmOnly ?? false,
@@ -280,13 +342,55 @@ export function createWall(partial: Partial<Wall> = {}): Wall {
  */
 export const CHARACTER_VISION_RADIUS = 1;
 
+/**
+ * Condicoes que o mestre marca sobre um token.
+ *
+ * O token guarda o `id`. O desenho do icone e da interface: o pacote
+ * compartilhado nao sabe de biblioteca de icones, e trocar o desenho de uma
+ * condicao nao pode exigir migrar os tokens gravados.
+ */
 export const CONDITION_PRESETS = [
-  { id: 'stunned', label: 'Atordoado', icon: '💫' },
-  { id: 'poisoned', label: 'Envenenado', icon: '🧪' },
-  { id: 'prone', label: 'Caido', icon: '⬇️' },
-  { id: 'blinded', label: 'Cego', icon: '🚫' },
-  { id: 'burning', label: 'Em chamas', icon: '🔥' },
-  { id: 'blessed', label: 'Abencoado', icon: '✨' },
-  { id: 'hasted', label: 'Acelerado', icon: '⚡' },
-  { id: 'dead', label: 'Morto', icon: '💀' },
-];
+  { id: 'stunned', label: 'Atordoado' },
+  { id: 'poisoned', label: 'Envenenado' },
+  { id: 'prone', label: 'Caido' },
+  { id: 'blinded', label: 'Cego' },
+  { id: 'burning', label: 'Em chamas' },
+  { id: 'blessed', label: 'Abencoado' },
+  { id: 'hasted', label: 'Acelerado' },
+  { id: 'dead', label: 'Morto' },
+] as const;
+
+export type ConditionId = (typeof CONDITION_PRESETS)[number]['id'];
+
+const CONDITION_IDS = new Set<string>(CONDITION_PRESETS.map((c) => c.id));
+
+/** Emojis que os tokens guardavam antes de a condicao ser gravada por id. */
+const LEGACY_CONDITION_GLYPHS: Record<string, ConditionId> = {
+  '💫': 'stunned',
+  '🧪': 'poisoned',
+  '⬇️': 'prone',
+  '⬇': 'prone',
+  '🚫': 'blinded',
+  '🔥': 'burning',
+  '✨': 'blessed',
+  '⚡': 'hasted',
+  '💀': 'dead',
+};
+
+/**
+ * Condicoes validas, sem repeticao, com os emojis antigos convertidos em id.
+ *
+ * Aplicado ao criar a cena (e portanto ao carregar do banco e ao importar
+ * backup) e em toda escrita vinda do cliente: nenhum token fica com um
+ * valor que a interface nao sabe desenhar.
+ */
+export function normalizeConditions(raw: unknown): ConditionId[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ConditionId[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    const id = CONDITION_IDS.has(value) ? (value as ConditionId) : LEGACY_CONDITION_GLYPHS[value];
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}

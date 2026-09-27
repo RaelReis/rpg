@@ -43,15 +43,8 @@ let cached: {
 
 /** Assinatura do caminho local: o que faria a visao mudar sem vir do servidor. */
 function localVisionKey(scene: Scene, playerId: string | null): string {
-  let key = `${scene.fog.mode}|${scene.globalLight}|${scene.fog.revealed.length}`;
-  key += `|${scene.fog.hidden.length}|${scene.fog.explored.length}|${scene.walls.length}`;
-  for (const wall of scene.walls) if (wall.door) key += `|d${wall.id}:${wall.open ? 1 : 0}`;
-  for (const tile of scene.tiles) if (tile.blocksVision) key += `|t${tile.id}:${tile.x},${tile.y}`;
-  for (const token of scene.tokens) {
-    if (token.visionRadius <= 0 && token.lightRadius <= 0) continue;
-    key += `|${token.id}:${Math.round(token.x)},${Math.round(token.y)}`;
-  }
-  return `${playerId ?? ''}|${key}`;
+  return JSON.stringify([playerId, scene.grid, scene.width, scene.height, scene.globalLight,
+    scene.fog, scene.walls, scene.tiles.filter(t => t.blocksVision), scene.tokens]);
 }
 
 export function resolveVision(scene: Scene | null, role: Role, playerId: string | null): VisionResult {

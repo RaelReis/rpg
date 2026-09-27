@@ -12,6 +12,7 @@ import {
 import { activeScene, useStore } from '../../state/store';
 import { deleteTriggerWithUndo, updateTriggerWithUndo } from '../../state/triggerOps';
 import { ColorField, Empty, SelectField, Section, Toggle } from '../common';
+import { Icon } from '../icons';
 
 /**
  * Gatilhos da cena: lista, edicao e registro de disparos.
@@ -93,13 +94,13 @@ export function TriggersPanel(): JSX.Element {
         title={`Gatilhos da cena (${triggers.length})`}
         actions={
           <button className="btn sm" onClick={() => setTool('trigger')} title="Desenhar uma area no mapa">
-            + Desenhar
+            <Icon name="add" size="sm" /> Desenhar
           </button>
         }
       >
         {triggers.length === 0 ? (
           <Empty>
-            Use o ⚡ do trilho para desenhar uma area. Quando um token de jogador entrar nela, as
+            Use a ferramenta de gatilho do trilho para desenhar uma area. Quando um token de jogador entrar nela, as
             acoes do gatilho acontecem — e ninguem alem de voce sabe que ela esta la.
           </Empty>
         ) : (
@@ -110,7 +111,9 @@ export function TriggersPanel(): JSX.Element {
                 className={`item${t.id === selectedId ? ' active' : ''}`}
                 onClick={() => selectTrigger(t.id)}
               >
-                <span className="swatch trigger-swatch">⚡</span>
+                <span className="swatch trigger-swatch">
+                  <Icon name="trigger" size="sm" />
+                </span>
                 <span className="name">
                   {t.name}
                   <span className="sub"> · {t.actions.length} acao(oes)</span>
@@ -291,23 +294,31 @@ function TriggerEditor({ sceneId, trigger }: { sceneId: string; trigger: Trigger
           <div className="row">
             <span className="trigger-action-n mono">{index + 1}</span>
             <strong style={{ flex: 1 }}>{ACTION_LABELS[action.type]}</strong>
-            <button className="btn ghost sm" disabled={index === 0} onClick={() => moveAction(index, -1)} title="Subir">
-              ↑
+            <button
+              className="btn ghost sm"
+              disabled={index === 0}
+              onClick={() => moveAction(index, -1)}
+              title="Subir"
+              aria-label="Subir"
+            >
+              <Icon name="moveUp" size="sm" />
             </button>
             <button
               className="btn ghost sm"
               disabled={index === trigger.actions.length - 1}
               onClick={() => moveAction(index, 1)}
               title="Descer"
+              aria-label="Descer"
             >
-              ↓
+              <Icon name="moveDown" size="sm" />
             </button>
             <button
               className="btn ghost sm danger"
               title="Remover acao"
+              aria-label="Remover acao"
               onClick={() => setActions(trigger.actions.filter((a) => a.id !== action.id), 'remover acao')}
             >
-              ✕
+              <Icon name="close" size="sm" />
             </button>
           </div>
           <ActionFields
@@ -340,7 +351,7 @@ function TriggerEditor({ sceneId, trigger }: { sceneId: string; trigger: Trigger
             className="btn sm"
             onClick={() => setActions([...trigger.actions, newAction(adding)], `adicionar acao "${ACTION_LABELS[adding]}"`)}
           >
-            + Acao
+            <Icon name="add" size="sm" /> Acao
           </button>
         </div>
       )}
@@ -576,7 +587,7 @@ function TriggerLog({ entries }: { entries: TriggerLogEntry[] }): JSX.Element {
                 {new Date(entry.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               </span>
               <span className="name">
-                ⚡ {entry.triggerName}
+                <Icon name="trigger" size="sm" /> {entry.triggerName}
                 <span className="sub">
                   {' '}
                   · {entry.tokenName}

@@ -1,3 +1,4 @@
+import { clearImages, forgetImage } from '../canvas/images';
 import { io, type Socket } from 'socket.io-client';
 import type {
   Ack,
@@ -26,22 +27,41 @@ export type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 const SESSION_KEY = 'rpg-vtt:session';
 
-export function storedSession(): Session | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
-  } catch {
-    return null;
-  }
+let activeSession: Session | null | undefined;
+function validSession(value: unknown): value is Session {
+  const s = value as Session | null;
+  return !!s && typeof s.token === 'string' && typeof s.tableId === 'string' && typeof s.playerId === 'string';
 }
-
-export function storeSession(session: Session | null): void {
+export function storedSession(): Session | null {
+  if (activeSession !== undefined) return activeSession;
   try {
-    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else localStorage.removeItem(SESSION_KEY);
-  } catch {
-    // Navegacao privada pode bloquear o storage; a sessao entao dura so a aba.
-  }
+    const registry = JSON.parse(localStorage.getItem(`${SESSION_KEY}:tables`) ?? '{}') as Record<string, Session>;
+    const tab = sessionStorage.getItem(SESSION_KEY);
+    const code = new URLSearchParams(window.location.search).get('mesa')?.replace(/[^a-z0-9]/gi, '').toUpperCase();
+    const requested = code ? Object.values(registry).find(s => s.tableCode.replace(/[^a-z0-9]/gi, '').toUpperCase() === code) : null;
+    const value = requested ?? (tab ? JSON.parse(tab) : code ? null : JSON.parse(localStorage.getItem(SESSION_KEY) ?? 'null'));
+    activeSession = validSession(value) ? value : null;
+  } catch { activeSession = null; }
+  return activeSession ?? null;
+}
+export function storeSession(session: Session | null): void {
+  const previous = activeSession;
+  activeSession = session;
+  try {
+    const registry = JSON.parse(localStorage.getItem(`${SESSION_KEY}:tables`) ?? '{}');
+    if (session) {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      registry[session.tableId] = session;
+    } else {
+      sessionStorage.removeItem(SESSION_KEY);
+      if (previous) {
+        delete registry[previous.tableId];
+        if (JSON.parse(localStorage.getItem(SESSION_KEY) ?? 'null')?.token === previous.token) localStorage.removeItem(SESSION_KEY);
+      }
+    }
+    localStorage.setItem(`${SESSION_KEY}:tables`, JSON.stringify(registry));
+  } catch { /* Memory still preserves identity when storage is unavailable. */ }
 }
 
 let socket: ClientSocket | null = null;
@@ -99,13 +119,26 @@ export function rpc<T>(
       settled = true;
       clearTimeout(timer);
       if (res.ok) resolve(res.data);
-      else reject(new Error(res.error));
+      else reject(Object.assign(new Error(res.error), { code: res.code }));
     };
 
-    // Eventos sem payload (initiative:next, initiative:roll) recebem so o ack.
+    // Eventos sem payload (turns:next, turns:previous) recebem so o ack.
     if (payload === undefined) (s.emit as (e: string, a: unknown) => void)(event, ack);
     else (s.emit as (e: string, p: unknown, a: unknown) => void)(event, payload, ack);
   });
+}
+
+const blockedListeners = new Set<(tokenId: string) => void>();
+
+/**
+ * Avisa quando o servidor para um token arrastado numa parede. Fica fora do
+ * store de proposito: e um sinal do gesto em curso, nao estado da mesa.
+ */
+export function onTokenBlocked(listener: (tokenId: string) => void): () => void {
+  blockedListeners.add(listener);
+  return () => {
+    blockedListeners.delete(listener);
+  };
 }
 
 /** Evento sem resposta, para o que e continuo (cursor, movimento em arraste). */
@@ -147,12 +180,14 @@ export async function connectAndResume(): Promise<boolean> {
     const data = await rpc<{ session: Session; state: TableState }>('session:resume', {
       token: session.token,
     });
+    if (storedSession()?.token !== session.token) return false;
     await applySession(data.session, data.state);
     return true;
-  } catch {
-    // Sessao invalida (mesa apagada, jogador removido): comeca do zero.
-    storeSession(null);
-    useStore.getState().setSession(null);
+  } catch (err) {
+    if ((err as { code?: string }).code === 'SESSION_INVALID') {
+      storeSession(null);
+      useStore.getState().setSession(null);
+    } else useStore.getState().notify('error', 'Nao foi possivel retomar a mesa. Sua sessao foi preservada; tente novamente.');
     return false;
   }
 }
@@ -190,6 +225,7 @@ async function applySession(session: Session, state: TableState): Promise<void> 
   // arte. Custa uma ida ao servidor na entrada.
   await grantImageAccess(session.token);
 
+  if (storedSession()?.token !== session.token) return;
   const store = useStore.getState();
   store.setSession(session);
   store.setTable(state);
@@ -197,6 +233,7 @@ async function applySession(session: Session, state: TableState): Promise<void> 
 }
 
 export function leaveTable(): void {
+  clearImages();
   const previous = storedSession();
   if (previous) void revokeImageAccess(previous.token);
 
@@ -240,6 +277,8 @@ function registerListeners(s: ClientSocket): void {
         .then(async (data) => {
           // O cookie pode ter expirado ou sido limpo enquanto a conexao caia.
           await grantImageAccess(data.session.token);
+          if (storedSession()?.token !== session.token) return;
+          storeSession(data.session);
           store().setSession(data.session);
           store().setTable(data.state);
           store().notify('info', 'Reconectado a mesa.');
@@ -257,7 +296,16 @@ function registerListeners(s: ClientSocket): void {
 
   s.on('connect_error', () => store().setConnected(false));
 
-  s.on('table:state', (state) => store().setTable(state));
+  s.on('table:state', (state) => {
+    const current = storedSession();
+    if (!current || current.tableId !== state.id) return;
+    const player = state.players.find(p => p.id === current.playerId);
+    if (player) {
+      const session = { ...current, role: player.role, name: player.name };
+      storeSession(session); store().setSession(session);
+    }
+    store().setTable(state);
+  });
   s.on('scene:patch', ({ sceneId, patch }) => store().patchScene(sceneId, patch));
   s.on('scene:removed', ({ sceneId }) => store().removeScene(sceneId));
   s.on('scene:activated', ({ sceneId }) => store().setActiveScene(sceneId));
@@ -269,6 +317,11 @@ function registerListeners(s: ClientSocket): void {
 
   s.on('token:moved', ({ sceneId, tokenId, x, y }) => {
     store().moveTokenLocal(sceneId, tokenId, x, y);
+  });
+
+  s.on('token:blocked', ({ sceneId, tokenId, x, y }) => {
+    store().moveTokenLocal(sceneId, tokenId, x, y);
+    for (const listener of blockedListeners) listener(tokenId);
   });
 
   s.on('tiles:patch', ({ sceneId, upsert, remove }) =>
@@ -285,9 +338,15 @@ function registerListeners(s: ClientSocket): void {
   s.on('sheets:patch', ({ upsert, remove }) => store().upsertSheets(upsert ?? [], remove ?? []));
   s.on('template:patch', (template) => store().setTemplate(template));
   s.on('players:patch', (players) => store().setPlayers(players));
-  s.on('initiative:patch', (initiative) => store().setInitiative(initiative));
+  s.on('turns:patch', (turns) => store().setTurns(turns));
   s.on('settings:patch', (settings) => store().setSettings(settings));
-  s.on('assets:patch', ({ upsert, remove }) => store().upsertAssets(upsert ?? [], remove ?? []));
+  s.on('assets:patch', ({ upsert, remove }) => {
+    for (const id of remove ?? []) {
+      const asset = store().table?.assets.find(a => a.id === id);
+      if (asset) { forgetImage(asset.url); if (asset.thumbUrl) forgetImage(asset.thumbUrl); }
+    }
+    store().upsertAssets(upsert ?? [], remove ?? []);
+  });
   s.on('handouts:patch', ({ upsert, remove }) =>
     store().upsertHandouts(upsert ?? [], remove ?? []),
   );

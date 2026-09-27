@@ -10,6 +10,7 @@ import {
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import {
   pushScene,
+  syncAssets,
   refreshVision,
   sendFullStateToAll,
   socketsOf,
@@ -56,6 +57,7 @@ export function updateScene(ctx: Ctx, payload: { sceneId: string; patch: Partial
   if (p.backgroundColor !== undefined) scene.backgroundColor = safeString(p.backgroundColor, 32, scene.backgroundColor);
   if (p.width !== undefined) scene.width = clampNumber(p.width, 100, 20000, scene.width);
   if (p.height !== undefined) scene.height = clampNumber(p.height, 100, 20000, scene.height);
+  if (p.width !== undefined || p.height !== undefined) visionAffected = true;
   if (p.order !== undefined) scene.order = clampNumber(p.order, 0, 9999, scene.order);
   if (p.introCardId !== undefined) {
     const known = ctx.room.state.sceneCards.some((c) => c.id === p.introCardId);
@@ -93,8 +95,18 @@ export function updateScene(ctx: Ctx, payload: { sceneId: string; patch: Partial
   }
 
   ctx.room.touchScene(scene.id);
-  pushScene(ctx.room, scene);
-  if (visionAffected) refreshVision(ctx.room, scene);
+  if (visionAffected) pushScene(ctx.room, scene);
+  else {
+    const patch: Partial<Scene> = {};
+    for (const key of ['name', 'backgroundAssetId', 'backgroundColor', 'width', 'height', 'order', 'weather'] as const) {
+      if (p[key] !== undefined) Object.assign(patch, { [key]: scene[key] });
+    }
+    for (const socket of socketsOf(ctx.room)) {
+      if (socket.data.viewer.role !== 'GM' && scene.id !== ctx.room.state.activeSceneId) continue;
+      syncAssets(ctx.room, socket, [scene.backgroundAssetId]);
+      socket.emit('scene:patch', { sceneId: scene.id, patch });
+    }
+  }
   ok(ack, null);
 }
 
@@ -180,6 +192,9 @@ export function updateSettings(ctx: Ctx, patch: Partial<TableSettings>, ack: Ack
   }
 
   const strictChanged = next.strictVision !== current.strictVision;
+  // As barras do grupo decidem quais fichas o jogador recebe: desligadas, os
+  // PV e PD dos colegas tem de sair do cliente dele, e nao so parar de chegar.
+  const partyBarsChanged = next.showPartyBars !== current.showPartyBars;
   ctx.room.state.settings = next;
   ctx.room.touch('table');
 
@@ -187,7 +202,7 @@ export function updateSettings(ctx: Ctx, patch: Partial<TableSettings>, ack: Ack
 
   // Ligar/desligar strictVision muda o formato do payload da cena (paredes vs.
   // celulas ja calculadas), entao os jogadores precisam do estado inteiro.
-  if (strictChanged) sendFullStateToAll(ctx.room);
+  if (strictChanged || partyBarsChanged) sendFullStateToAll(ctx.room);
   else {
     const scene = ctx.room.activeScene();
     if (scene) refreshVision(ctx.room, scene);

@@ -15,12 +15,14 @@ import {
   emitPlayers,
   roomChannel,
   sendFullState,
+  stateWithVisibilityCache,
   type TypedSocket,
 } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
 import { stateForViewer } from '../filter.js';
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import { spawnCharacterToken } from './characters.js';
+import { ensurePartyInTurns } from './play.js';
 import { rooms, type Room } from '../room.js';
 import { fail, ok, safeString } from './context.js';
 
@@ -48,6 +50,7 @@ async function createSheetForPlayer(room: Room, playerId: string, name: string):
     id: generateId('sht'),
     name,
     portraitAssetId: null,
+    bodyAssetId: null,
     ownerPlayerId: playerId,
     values: createSheetValues(room.state.sheetTemplate),
     sharedWithParty: false,
@@ -62,6 +65,7 @@ async function createSheetForPlayer(room: Room, playerId: string, name: string):
       name: sheet.name,
       ownerPlayerId: playerId,
       portraitAssetId: null,
+      bodyAssetId: null,
       values: toJson(sheet.values),
       sharedWithParty: false,
     },
@@ -81,22 +85,16 @@ async function createSheetForPlayer(room: Room, playerId: string, name: string):
  * mandar `token:moved`. O sintoma e cruel — depois de uma reconexao os tokens
  * congelam na tela do jogador, mas continuam se movendo para todos os outros.
  */
-function stateWithVisibilityCache(room: Room, socket: TypedSocket): TableState {
-  const state = stateForViewer(room, socket.data.viewer);
-  const scene =
-    state.scenes.find((s) => s.id === state.activeSceneId) ?? state.scenes[0] ?? null;
-
-  socket.data.currentSceneId = scene?.id ?? null;
-  socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
-  socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
-  socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
-  return state;
-}
-
 function attach(socket: TypedSocket, room: Room, playerId: string): void {
   const player = room.player(playerId);
   if (!player) return;
 
+  if (!socket.connected) throw new Error('Conexao encerrada.');
+  if (socket.data.tableId) {
+    const previousTable = socket.data.tableId;
+    handleDisconnect(socket);
+    void socket.leave(roomChannel(previousTable));
+  }
   socket.data.tableId = room.state.id;
   socket.data.viewer = { playerId, role: player.role };
   socket.data.visibleTokens = new Set();
@@ -149,15 +147,24 @@ export async function handleJoin(
       where: { id: room.state.id },
       select: { gmPasswordHash: true },
     });
-    // Mesa sem senha de mestre e com mestre: ninguem assume o papel pelo
-    // convite. Antes `verifyPassword` aceitava qualquer senha quando nao havia
-    // uma definida, e bastava marcar "entrar como mestre" e digitar qualquer
-    // coisa para tomar a mesa.
-    const hasGm = room.state.players.some((p) => p.role === 'GM');
-    if (!stored?.gmPasswordHash && hasGm) {
-      return fail(ack, 'Esta mesa ja tem um mestre.');
+    /*
+     * Sem senha definida, ninguem assume o papel de mestre pelo convite —
+     * independentemente de haver mestre na mesa ou nao.
+     *
+     * Antes a recusa dependia de a mesa ter um mestre no momento. Isso amarrava
+     * a seguranca a um estado que muda durante a sessao: qualquer caminho
+     * futuro que zerasse os mestres (uma limpeza de jogadores inativos, um
+     * script de manutencao) reabriria a porta sem ninguem perceber. Quem quer
+     * poder voltar como mestre de outro aparelho define uma senha ao criar a
+     * mesa; sem ela, a volta e pela sessao guardada no proprio navegador.
+     */
+    if (!stored?.gmPasswordHash) {
+      return fail(
+        ack,
+        'Esta mesa nao tem senha de mestre: o papel so volta pela sessao original.',
+      );
     }
-    if (!verifyPassword(req.gmPassword, stored?.gmPasswordHash ?? null)) {
+    if (!(await verifyPassword(req.gmPassword, stored.gmPasswordHash))) {
       return fail(ack, 'Senha de mestre incorreta.');
     }
     role = 'GM';
@@ -207,6 +214,7 @@ export async function handleJoin(
     name,
   };
 
+  ensurePartyInTurns(room);
   ok(ack, { session, state: stateWithVisibilityCache(room, socket) });
   emitPlayers(room);
 }
@@ -219,11 +227,11 @@ export async function handleResume(
   if (typeof req?.token !== 'string' || !req.token) return fail(ack, 'Sessao ausente.');
 
   const resolved = await rooms.resolveSession(req.token);
-  if (!resolved) return fail(ack, 'Sessao expirada ou invalida. Entre novamente.');
+  if (!resolved) return fail(ack, 'Sessao expirada ou invalida. Entre novamente.', 'SESSION_INVALID');
 
   const { room, playerId } = resolved;
   const player = room.player(playerId);
-  if (!player) return fail(ack, 'Jogador nao faz mais parte desta mesa.');
+  if (!player) return fail(ack, 'Jogador nao faz mais parte desta mesa.', 'SESSION_INVALID');
 
   attach(socket, room, playerId);
 
@@ -236,6 +244,7 @@ export async function handleResume(
     name: player.name,
   };
 
+  ensurePartyInTurns(room);
   ok(ack, { session, state: stateWithVisibilityCache(room, socket) });
   emitPlayers(room);
 }

@@ -5,9 +5,10 @@ import {
   cellsWithinRadius,
   cellHeight,
   tokenCell,
+  tokenCenter,
 } from './grid.js';
 import { isHallucination, perceives } from './perception.js';
-import type { Cell, Point, Scene, Token, Role, Wall } from './types.js';
+import type { Cell, GridConfig, Point, Scene, Token, Role, Wall } from './types.js';
 
 /**
  * Fog of war e linha de visao.
@@ -198,8 +199,14 @@ export function tokenVisionCells(
   const r = effectiveRadius(scene, radius);
   if (r <= 0) return out;
 
-  const from = tokenCell(scene.grid, { x: token.x, y: token.y }, token.scale);
-  const origin = cellCenter(scene.grid, from);
+  // A visao sai do centro GEOMETRICO do token, nao do centro da celula em que
+  // esse ponto cai. A diferenca so aparece em token grande, e era um vazamento:
+  // o snap encaixa tokens de tamanho par (2x2, 4x4) com o centro exatamente
+  // sobre uma linha da grade — onde ficam as paredes —, e arredondar para a
+  // celula jogava a origem para o outro lado do muro. O token enxergava a sala
+  // vizinha e ficava cego para a sala onde estava metade do corpo dele.
+  const origin = tokenCenter(scene.grid, { x: token.x, y: token.y }, token.scale);
+  const from = cellAt(scene.grid, origin);
 
   // `cellsWithinRadius` enumera os candidatos pela metrica da grade (Chebyshev
   // na quadrada), que descreve MOVIMENTO — andar na diagonal custa um passo.
@@ -370,10 +377,124 @@ export function newlyExploredCells(scene: Scene): string[] {
  *
  * Portas abertas nao barram, pelo mesmo motivo que nao barram a visao. Janelas
  * sao o contrario: deixam ver e barram a passagem.
+ *
+ * `from` e `to` sao os CENTROS do token, e `scale` o tamanho dele em celulas.
+ * Um token maior que uma celula testa o corpo inteiro, e nao so o centro: sem
+ * isso ele atravessava qualquer parede em dois passos. O snap encaixa tokens
+ * de tamanho par com o centro em cima das linhas da grade, e um trajeto que
+ * comeca ou termina exatamente sobre a parede nao tem as duas pontas em lados
+ * opostos dela — ninguem barrava o passo.
  */
-export function movementBlocked(scene: Scene, from: Point, to: Point): boolean {
+export function movementBlocked(scene: Scene, from: Point, to: Point, scale = 1): boolean {
   if (from.x === to.x && from.y === to.y) return false;
-  return !hasLineOfSight(from, to, collectBlockers(scene, 'movement'));
+
+  const blockers = collectBlockers(scene, 'movement');
+  const half = bodyHalf(scene.grid, scale);
+
+  /*
+   * Corpo que JA esta em cima de uma parede: o mestre posiciona onde quer, e
+   * pode desenhar uma parede por cima de um token que ja estava la. Medir o
+   * trajeto nao ajuda — de dentro do muro, toda saida cruza o muro, e o token
+   * ficaria preso para sempre. O que vale e onde ele chega: sair e permitido,
+   * afundar mais nao.
+   */
+  if (half && boxHitsBlocker(boxAt(from, half), blockers)) {
+    return boxHitsBlocker(boxAt(to, half), blockers);
+  }
+
+  // O trajeto: o centro e, em token grande, os quatro cantos do corpo.
+  for (const probe of bodyProbes(half)) {
+    const a = { x: from.x + probe.x, y: from.y + probe.y };
+    const b = { x: to.x + probe.x, y: to.y + probe.y };
+    if (!hasLineOfSight(a, b, blockers)) return true;
+  }
+
+  /*
+   * E a chegada: o corpo nao pode PARAR em cima de uma parede.
+   *
+   * So o trajeto nao basta. Um arraste entrega uma posicao por quadro, e o
+   * token grande entrava na parede meio passo por vez: cada passo isolado
+   * comecava ou terminava exatamente sobre a linha, e encostar na parede nao e
+   * cruza-la. Medir tambem onde o corpo para fecha isso de uma vez, e e o que
+   * faz o token grande deslizar ate encostar em vez de afundar no muro.
+   */
+  if (half && boxHitsBlocker(boxAt(to, half), blockers)) return true;
+
+  return false;
+}
+
+/**
+ * O proximo passo do arraste e permitido?
+ *
+ * E o mesmo teste que o servidor faz a cada evento de arraste, repetido no
+ * cliente para a previa nao atravessar o que ele conhece. So vale para as
+ * paredes que o cliente recebeu: com strictVision o jogador so ganha portas e
+ * janelas, e o resto chega como `token:blocked`, vindo do servidor.
+ */
+export function dragStepAllowed(scene: Scene, token: Token, x: number, y: number): boolean {
+  const center = (px: number, py: number): Point =>
+    tokenCenter(scene.grid, { x: px, y: py }, token.scale);
+  return !movementBlocked(scene, center(token.x, token.y), center(x, y), token.scale);
+}
+
+interface Box {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/**
+ * Meia largura e meia altura do corpo do token, com 1px de folga para que
+ * ENCOSTAR na parede continue valendo. Devolve `null` para token de uma celula
+ * ou menos: ele cabe na propria celula, e segue medido so pelo centro, como
+ * sempre foi.
+ */
+function bodyHalf(grid: GridConfig, scale: number): Point | null {
+  if (scale <= 1) return null;
+  return {
+    x: Math.max(0, (grid.size * scale) / 2 - 1),
+    y: Math.max(0, (cellHeight(grid) * scale) / 2 - 1),
+  };
+}
+
+function bodyProbes(half: Point | null): Point[] {
+  if (!half) return [{ x: 0, y: 0 }];
+  return [
+    { x: 0, y: 0 },
+    { x: -half.x, y: -half.y },
+    { x: half.x, y: -half.y },
+    { x: half.x, y: half.y },
+    { x: -half.x, y: half.y },
+  ];
+}
+
+function boxAt(center: Point, half: Point): Box {
+  return {
+    x1: center.x - half.x,
+    y1: center.y - half.y,
+    x2: center.x + half.x,
+    y2: center.y + half.y,
+  };
+}
+
+/** A parede corta o retangulo do corpo, ou cabe inteira dentro dele? */
+function boxHitsBlocker(box: Box, blockers: Segment[]): boolean {
+  const edges: Segment[] = [
+    { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y1 },
+    { x1: box.x2, y1: box.y1, x2: box.x2, y2: box.y2 },
+    { x1: box.x2, y1: box.y2, x2: box.x1, y2: box.y2 },
+    { x1: box.x1, y1: box.y2, x2: box.x1, y2: box.y1 },
+  ];
+  const inside = (x: number, y: number) => x > box.x1 && x < box.x2 && y > box.y1 && y < box.y2;
+
+  for (const b of blockers) {
+    if (inside(b.x1, b.y1) || inside(b.x2, b.y2)) return true;
+    for (const edge of edges) {
+      if (segmentsIntersect(edge, b)) return true;
+    }
+  }
+  return false;
 }
 
 /**
