@@ -4,11 +4,12 @@ import {
   encodeExploredCells,
   createScene,
   createSheetValues,
-  DEFAULT_INITIATIVE,
   DEFAULT_SETTINGS,
+  DEFAULT_TURNS,
   generateId,
   generateTableCode,
   normalizeTemplate,
+  normalizeTurns,
   type Asset,
   type ChatMessage,
   type Handout,
@@ -23,6 +24,7 @@ import { CHAT_HISTORY_SIZE } from '@rpg/shared';
 import { generateSessionToken, hashPassword, hashToken, normalizeTableCode } from './auth.js';
 import { fromJson, prisma, toJson, withRetry } from './db.js';
 import { PERSIST_DEBOUNCE_MS, ROOM_IDLE_TIMEOUT_MS } from './env.js';
+import { socketsOf } from './broadcast.js';
 import { assetUrl } from './uploads.js';
 
 /**
@@ -33,6 +35,9 @@ import { assetUrl } from './uploads.js';
  * que um arraste de token (dezenas de eventos por segundo) vire uma unica
  * escrita quando ele parar.
  */
+
+const SESSION_CACHE_MS = 60_000;
+const SESSION_CACHE_MAX = 4096;
 
 type DirtyKind = 'table' | 'players' | 'sheets';
 
@@ -62,6 +67,7 @@ export class Room {
   /** Sockets conectados, para saber quando a sala pode sair da memoria. */
   readonly sockets = new Set<string>();
   lastActivity = Date.now();
+  persistenceError = false;
 
   constructor(state: TableState) {
     this.state = state;
@@ -157,7 +163,7 @@ export class Room {
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.flush();
+      void this.flush().catch(() => {});
     }, PERSIST_DEBOUNCE_MS);
   }
 
@@ -178,9 +184,8 @@ export class Room {
       .then(() => this.persistPending());
 
     const mine = this.flushing;
-    void mine.finally(() => {
-      if (this.flushing === mine) this.flushing = null;
-    });
+    const settled = () => { if (this.flushing === mine) this.flushing = null; };
+    void mine.then(settled, settled);
     return mine;
   }
 
@@ -214,7 +219,24 @@ export class Room {
       return;
     }
 
-    await this.persist(kinds, scenes, sheetIds, playerIds, rmScenes, rmSheets, rmPlayers);
+    try {
+      await this.persist(kinds, scenes, sheetIds, playerIds, rmScenes, rmSheets, rmPlayers);
+      if (this.persistenceError) for (const socket of socketsOf(this)) socket.emit('notice', { level: 'info', message: 'As alteracoes pendentes foram salvas.' });
+      this.persistenceError = false;
+    } catch (err) {
+      // Merge rather than replace: changes made during I/O must also survive.
+      for (const v of kinds) this.dirty.add(v);
+      for (const v of scenes) if (this.scene(v)) this.dirtyScenes.add(v);
+      for (const v of sheetIds) if (this.sheet(v)) this.dirtySheetIds.add(v);
+      for (const v of playerIds) if (this.player(v)) this.dirtyPlayerIds.add(v);
+      for (const v of rmScenes) this.removedScenes.add(v);
+      for (const v of rmSheets) this.removedSheets.add(v);
+      for (const v of rmPlayers) this.removedPlayers.add(v);
+      if (!this.persistenceError) for (const socket of socketsOf(this)) socket.emit('notice', { level: 'error', message: 'Nao foi possivel salvar. Mantenha o servidor aberto; estamos tentando novamente.' });
+      this.persistenceError = true;
+      this.schedule();
+      throw err;
+    }
   }
 
   private async persist(
@@ -240,7 +262,9 @@ export class Room {
             activeSceneId: s.activeSceneId,
             settings: toJson(s.settings),
             sheetTemplate: toJson(s.sheetTemplate),
-            initiative: toJson(s.initiative),
+            // A coluna mantem o nome antigo: renomea-la exigiria migrar todas
+            // as mesas gravadas, e o conteudo e a ordem de turnos.
+            initiative: toJson(s.turns),
             chat: toJson(s.chat.slice(-CHAT_HISTORY_SIZE)),
             handouts: toJson(s.handouts),
           },
@@ -296,6 +320,7 @@ export class Room {
             name: sheet.name,
             ownerPlayerId: sheet.ownerPlayerId,
             portraitAssetId: sheet.portraitAssetId,
+            bodyAssetId: sheet.bodyAssetId,
             values: toJson(sheet.values),
             sharedWithParty: sheet.sharedWithParty,
           };
@@ -307,6 +332,7 @@ export class Room {
       // Uma falha de escrita nao pode derrubar a sessao em andamento: o estado
       // em memoria continua valido e a proxima mudanca tenta gravar de novo.
       console.error(`[room ${s.code}] falha ao persistir:`, err);
+      throw err;
     }
   }
 
@@ -364,6 +390,18 @@ class RoomManager {
   private codeIndex = new Map<string, string>();
   private loading = new Map<string, Promise<Room | null>>();
 
+  /**
+   * Cache curto de sessao.
+   *
+   * A autorizacao de `/uploads` resolve uma sessao POR IMAGEM, e cada resolucao
+   * era uma consulta ao banco: abrir uma cena com trinta imagens custava trinta
+   * idas ao SQLite, multiplicadas pelos tokens guardados no cookie. A entrada
+   * cacheada ainda e conferida contra a mesa em memoria a cada uso, entao
+   * expulsar alguem tem efeito imediato — o jogador some de `room.state.players`
+   * na hora, e a entrada e descartada.
+   */
+  private sessionCache = new Map<string, { tableId: string; playerId: string; at: number }>();
+
   constructor() {
     setInterval(() => void this.evictIdle(), 60_000).unref();
   }
@@ -384,11 +422,11 @@ class RoomManager {
         code,
         codeNormalized: normalizeTableCode(code),
         name: params.name.slice(0, 80) || 'Mesa sem nome',
-        gmPasswordHash: params.gmPassword ? hashPassword(params.gmPassword) : null,
+        gmPasswordHash: params.gmPassword ? await hashPassword(params.gmPassword) : null,
         activeSceneId: scene.id,
         settings: toJson(DEFAULT_SETTINGS),
         sheetTemplate: toJson(template),
-        initiative: toJson(DEFAULT_INITIATIVE),
+        initiative: toJson(DEFAULT_TURNS),
         chat: toJson([]),
         handouts: toJson([]),
       },
@@ -466,7 +504,7 @@ class RoomManager {
       activeSceneId: row.activeSceneId,
       settings: { ...DEFAULT_SETTINGS, ...fromJson(row.settings, DEFAULT_SETTINGS) },
       sheetTemplate: template,
-      initiative: { ...DEFAULT_INITIATIVE, ...fromJson(row.initiative, DEFAULT_INITIATIVE) },
+      turns: normalizeTurns(fromJson(row.initiative, DEFAULT_TURNS)),
       scenes: row.scenes.map((s) => createScene(sceneFromStorage(s.data))),
       players: row.players.map(
         (p): Player => ({
@@ -484,6 +522,7 @@ class RoomManager {
           id: s.id,
           name: s.name,
           portraitAssetId: s.portraitAssetId,
+          bodyAssetId: s.bodyAssetId,
           ownerPlayerId: s.ownerPlayerId,
           values: fromJson(s.values, createSheetValues(template)),
           sharedWithParty: s.sharedWithParty,
@@ -573,10 +612,41 @@ class RoomManager {
   /** Resolve um token de sessao para a mesa e o jogador correspondentes. */
   async resolveSession(token: string): Promise<{ room: Room; playerId: string } | null> {
     if (typeof token !== 'string' || !token || token.length > 256) return null;
-    const player = await prisma.player.findUnique({ where: { tokenHash: hashToken(token) } });
+
+    const hash = hashToken(token);
+    const cached = this.sessionCache.get(hash);
+    if (cached && Date.now() - cached.at < SESSION_CACHE_MS) {
+      const room = await this.load(cached.tableId);
+      // Confere contra a memoria: quem foi expulso ja nao esta na mesa, e a
+      // entrada cacheada nao pode servir de passe.
+      if (room?.player(cached.playerId)) return { room, playerId: cached.playerId };
+      this.sessionCache.delete(hash);
+    }
+
+    const player = await prisma.player.findUnique({ where: { tokenHash: hash } });
     if (!player) return null;
     const room = await this.load(player.tableId);
-    return room ? { room, playerId: player.id } : null;
+    if (!room) return null;
+
+    // A linha do banco sobrevive ao `player:kick` ate o proximo flush. Sem esta
+    // conferencia, quem acabou de ser expulso continuava baixando as imagens
+    // da mesa nessa janela — a memoria e a autoridade, nao o banco.
+    if (!room.player(player.id)) return null;
+
+    this.rememberSession(hash, player.tableId, player.id);
+    return { room, playerId: player.id };
+  }
+
+  private rememberSession(hash: string, tableId: string, playerId: string): void {
+    // Varre o vencido antes de crescer, para o mapa nao acumular sessao morta.
+    if (this.sessionCache.size >= SESSION_CACHE_MAX) {
+      const cutoff = Date.now() - SESSION_CACHE_MS;
+      for (const [key, entry] of this.sessionCache) {
+        if (entry.at < cutoff) this.sessionCache.delete(key);
+      }
+      if (this.sessionCache.size >= SESSION_CACHE_MAX) this.sessionCache.clear();
+    }
+    this.sessionCache.set(hash, { tableId, playerId, at: Date.now() });
   }
 
   /**
@@ -605,7 +675,8 @@ class RoomManager {
     for (const [id, room] of this.rooms) {
       if (room.sockets.size > 0) continue;
       if (now - room.lastActivity < ROOM_IDLE_TIMEOUT_MS) continue;
-      await room.flush();
+      try { await room.flush(); } catch { continue; }
+      if (room.sockets.size > 0 || Date.now() - room.lastActivity < ROOM_IDLE_TIMEOUT_MS) continue;
       this.rooms.delete(id);
       this.codeIndex.delete(room.state.code);
     }

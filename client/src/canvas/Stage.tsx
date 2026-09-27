@@ -5,6 +5,7 @@ import {
   cellCorners,
   cellKey,
   cellsWithinRadius,
+  dragStepAllowed,
   measureDistance,
   snapTokenPosition,
   tokenBarFields,
@@ -15,7 +16,7 @@ import {
   type Wall,
 } from '@rpg/shared';
 
-import { act, emit } from '../net/socket';
+import { act, emit, onTokenBlocked } from '../net/socket';
 import { activeScene, findAsset, findSheet, useStore, type WallKind } from '../state/store';
 import {
   centerOn,
@@ -42,6 +43,7 @@ import {
   type MarqueeKind,
 } from './render';
 import { partyVision, resolveVision } from './vision';
+import { Icon, type IconName } from '../ui/icons';
 
 /**
  * O palco: canvas do mapa e toda a interacao de ponteiro.
@@ -140,6 +142,12 @@ const WALL_LABELS: Record<WallKind, { one: string; many: string }> = {
   window: { one: 'janela', many: 'janelas' },
 };
 
+const WALL_ICONS: Record<WallKind, IconName> = {
+  wall: 'wall',
+  door: 'door',
+  window: 'window',
+};
+
 function wallKindOf(wall: Pick<Wall, 'door' | 'window'>): WallKind {
   return wall.door ? 'door' : wall.window ? 'window' : 'wall';
 }
@@ -180,6 +188,27 @@ export function Stage(): JSX.Element {
   const hoverRef = useRef<Point | null>(null);
   /** Ctrl segurado sob o cursor: a previa da parede solta da grade tambem. */
   const hoverFreeRef = useRef(false);
+
+  /**
+   * Posicoes de arraste ainda nao enviadas, uma por token.
+   *
+   * O envio sai uma vez por quadro, num lote so. Antes era um `token:move` por
+   * token a cada `pointermove`: arrastar um grupo estourava o limite de eventos
+   * do socket, e os movimentos recusados sumiam sem aviso.
+   */
+  const dragMovesRef = useRef(new Map<string, Point>());
+  const dragFrameRef = useRef<number | null>(null);
+  // Tokens que o servidor parou numa parede neste arraste. A previa local para
+  // de mexer neles e eles seguem so o que o servidor aceitar.
+  const dragBlockedRef = useRef(new Set<string>());
+
+  useEffect(
+    () =>
+      onTokenBlocked((tokenId) => {
+        if (gestureRef.current.kind === 'drag-token') dragBlockedRef.current.add(tokenId);
+      }),
+    [],
+  );
 
   const [zoomLabel, setZoomLabel] = useState(1);
   const [measureText, setMeasureText] = useState<{ text: string; at: Point } | null>(null);
@@ -279,8 +308,8 @@ export function Stage(): JSX.Element {
     const vision = resolveVision(currentScene, role, playerId);
 
     const sheets = new Map(state.table?.sheets.map((s) => [s.id, s]) ?? []);
-    const initiative = state.table?.initiative;
-    const activeEntry = initiative?.entries.find((e) => e.id === initiative.activeEntryId);
+    const turns = state.table?.turns;
+    const activeEntry = turns?.entries.find((e) => e.id === turns.activeEntryId);
 
     // Previa do pincel de neblina sob o cursor, so quando ele esta ativo.
     const painting = state.tool === 'fog-reveal' || state.tool === 'fog-hide';
@@ -580,6 +609,7 @@ export function Stage(): JSX.Element {
           if (canMove(token)) {
             gesture.kind = 'drag-token';
             gesture.tokenId = token.id;
+            dragBlockedRef.current.clear();
             gesture.tokenOffset = { x: world.x - token.x, y: world.y - token.y };
 
             // Tudo que estiver selecionado e movivel viaja junto.
@@ -671,11 +701,35 @@ export function Stage(): JSX.Element {
 
           // Aplicamos localmente e avisamos o servidor: o token acompanha o
           // dedo sem esperar a ida e volta pela rede.
+          //
+          // Para o jogador, com paredes barrando, a previa respeita a mesma
+          // regra do servidor: o token para encostado em vez de atravessar na
+          // tela e voltar ao soltar. O mestre passa por paredes de proposito.
+          const wallsBlock =
+            state.session?.role !== 'GM' && (state.table?.settings.wallsBlockMovement ?? false);
+
           for (const [id, start] of gesture.groupStart) {
             const x = start.x + dx;
             const y = start.y + dy;
-            state.moveTokenLocal(currentScene.id, id, x, y);
-            emit('token:move', { sceneId: currentScene.id, tokenId: id, x, y, dragging: true });
+            if (wallsBlock) {
+              const token = currentScene.tokens.find((t) => t.id === id);
+              if (token && !dragStepAllowed(currentScene, token, x, y)) continue;
+            }
+            // Parado pelo servidor: o pedido continua indo, para o token voltar
+            // a andar se o cursor recuar por um caminho livre, mas a posicao na
+            // tela passa a ser a que o servidor ecoar.
+            if (!dragBlockedRef.current.has(id)) state.moveTokenLocal(currentScene.id, id, x, y);
+            dragMovesRef.current.set(id, { x, y });
+          }
+
+          if (dragMovesRef.current.size > 0 && dragFrameRef.current === null) {
+            const sceneId = currentScene.id;
+            dragFrameRef.current = requestAnimationFrame(() => {
+              dragFrameRef.current = null;
+              const moves = [...dragMovesRef.current].map(([tokenId, p]) => ({ tokenId, x: p.x, y: p.y }));
+              dragMovesRef.current.clear();
+              if (moves.length > 0) emit('tokens:move', { sceneId, moves, dragging: true });
+            });
           }
 
           const distance = measureDistance(currentScene.grid, gesture.startWorld, world);
@@ -750,11 +804,22 @@ export function Stage(): JSX.Element {
             break;
           }
 
+          // Um lote de arraste ainda na fila chegaria DEPOIS das posicoes finais
+          // e puxaria os tokens de volta para o meio do caminho. Descarta antes
+          // de mandar o definitivo.
+          if (dragFrameRef.current !== null) {
+            cancelAnimationFrame(dragFrameRef.current);
+            dragFrameRef.current = null;
+          }
+          dragMovesRef.current.clear();
+
           const dx = world.x - gesture.startWorld.x;
           const dy = world.y - gesture.startWorld.y;
           const snap = currentScene.grid.snap && currentScene.grid.type !== 'none' && !e.ctrlKey;
           const before = new Map(gesture.groupStart);
           const after = new Map<string, Point>();
+          const wallsBlock =
+            state.session?.role !== 'GM' && (state.table?.settings.wallsBlockMovement ?? false);
 
           for (const [id, start] of gesture.groupStart) {
             const token = currentScene.tokens.find((t) => t.id === id);
@@ -768,6 +833,19 @@ export function Stage(): JSX.Element {
               const snapped = snapTokenPosition(currentScene.grid, { x, y }, token.scale);
               x = snapped.x;
               y = snapped.y;
+            }
+
+            // O encaixe final pode cair do outro lado da parede mesmo com o
+            // arraste parado antes dela: fica onde a previa ja estava.
+            if (wallsBlock && !dragStepAllowed(currentScene, token, x, y)) {
+              x = token.x;
+              y = token.y;
+            }
+            // Parado numa parede que o cliente nao conhece: solta onde o
+            // servidor o deixou, e nao no cursor — senao o soltar vira erro.
+            if (dragBlockedRef.current.has(id)) {
+              x = token.x;
+              y = token.y;
             }
 
             state.moveTokenLocal(currentScene.id, id, x, y);
@@ -1006,6 +1084,7 @@ export function Stage(): JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('dialog[open]')) return;
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
         return;
@@ -1192,9 +1271,8 @@ export function Stage(): JSX.Element {
 
       {tool === 'wall' && wallDraft.length > 0 && (
         <div className="stage-tip">
-          Desenhando <strong>{WALL_LABELS[wallKind].many}</strong> · cada clique grava um trecho ·{' '}
-          <strong>Enter</strong>, <strong>Esc</strong> ou duplo clique encerra · <strong>Ctrl+Z</strong> desfaz o
-          ultimo
+          Desenhando <strong>{WALL_LABELS[wallKind].many}</strong> · cada clique ja grava o trecho ·{' '}
+          duplo clique ou <strong>Esc</strong> encerra · <strong>Ctrl+Z</strong> desfaz o ultimo
         </div>
       )}
 
@@ -1215,8 +1293,9 @@ export function Stage(): JSX.Element {
             }
           }}
           title="Enquadrar o mapa (F)"
+          aria-label="Enquadrar o mapa"
         >
-          ⤢
+          <Icon name="fitMap" size="sm" />
         </button>
         <span>{Math.round(zoomLabel * 100)}%</span>
       </div>
@@ -1464,6 +1543,7 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
             onClose();
           }}
         >
+          <Icon name={wall.open ? 'doorClosed' : 'door'} size="sm" />
           {wall.open ? 'Fechar porta' : 'Abrir porta'}
         </button>
       )}
@@ -1471,6 +1551,7 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
         .filter((k) => k !== kind)
         .map((k) => (
           <button key={k} role="menuitem" onClick={() => convert(k)}>
+            <Icon name={WALL_ICONS[k]} size="sm" />
             Transformar em {WALL_LABELS[k].one}
           </button>
         ))}
@@ -1483,6 +1564,7 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
           onClose();
         }}
       >
+        <Icon name="delete" size="sm" />
         Excluir {label}
       </button>
     </div>

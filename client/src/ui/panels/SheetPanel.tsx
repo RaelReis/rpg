@@ -3,6 +3,7 @@ import type { Sheet } from '@rpg/shared';
 import { act } from '../../net/socket';
 import { activeScene, findAsset, isGm, useStore } from '../../state/store';
 import { Empty, SelectField, Section } from '../common';
+import { Icon } from '../icons';
 import { SheetView } from '../SheetView';
 
 /**
@@ -18,6 +19,7 @@ export function SheetPanel(): JSX.Element {
   const playerId = useStore((s) => s.session?.playerId ?? null);
   const selectedId = useStore((s) => s.selectedSheetId);
   const selectSheet = useStore((s) => s.selectSheet);
+  const openSheetModal = useStore((s) => s.openSheetModal);
 
   void rev;
   if (!table) return <Empty>Sem mesa carregada.</Empty>;
@@ -41,7 +43,7 @@ export function SheetPanel(): JSX.Element {
                 )
               }
             >
-              + Ficha
+              <Icon name="add" size="sm" /> Ficha
             </button>
           )
         }
@@ -91,17 +93,19 @@ export function SheetPanel(): JSX.Element {
         )}
       </Section>
 
-      <section className="section">
-        {selected ? (
-          <SheetView sheet={selected} />
-        ) : (
+      {selected ? (
+        // A ficha ja monta as proprias secoes (com o mesmo Section colapsavel
+        // dos outros paineis) — outro <section> em volta so duplicaria a borda.
+        <SheetView key={selected.id} sheet={selected} onExpand={() => openSheetModal(selected.id)} />
+      ) : (
+        <section className="section">
           <Empty>
             {gm
               ? 'Nenhuma ficha criada ainda.'
               : 'Sua ficha aparecera assim que o mestre configurar o modelo.'}
           </Empty>
-        )}
-      </section>
+        </section>
+      )}
     </>
   );
 }
@@ -153,7 +157,7 @@ function SheetRoster({
               title={onMap.has(sheet.id) ? 'Arraste para mover o personagem no mapa' : 'Arraste para colocar no mapa'}
             >
               <span className="grip" aria-hidden="true">
-                ⠿
+                <Icon name="grip" size="sm" />
               </span>
               {portrait ? (
                 <img className="swatch" src={portrait.thumbUrl ?? portrait.url} alt="" />

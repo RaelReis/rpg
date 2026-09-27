@@ -5,6 +5,7 @@ import { exportTable } from '../../net/api';
 import { act } from '../../net/socket';
 import { isGm, useStore } from '../../state/store';
 import { Empty, Section, Toggle } from '../common';
+import { Icon } from '../icons';
 
 /** Painel de mesa: participantes e regras gerais da sessao. */
 export function PlayersPanel(): JSX.Element {
@@ -50,8 +51,13 @@ export function PlayersPanel(): JSX.Element {
                 {player.role === 'GM' && <span className="tag gm">MJ</span>}
 
                 {sheet ? (
-                  <button className="btn ghost sm" onClick={() => openSheet(sheet.id)} title="Abrir ficha">
-                    ▤
+                  <button
+                    className="btn ghost sm icon-only"
+                    onClick={() => openSheet(sheet.id)}
+                    title="Abrir ficha"
+                    aria-label="Abrir ficha"
+                  >
+                    <Icon name="sheet" size="sm" />
                   </button>
                 ) : (
                   gm && (
@@ -68,8 +74,9 @@ export function PlayersPanel(): JSX.Element {
                           if (created) void act('sheet:assign', { sheetId: created.id, playerId: player.id });
                         })
                       }
+                      aria-label={`Criar ficha para ${player.name}`}
                     >
-                      + ▤
+                      <Icon name="newSheet" size="sm" />
                     </button>
                   )
                 )}
@@ -81,8 +88,10 @@ export function PlayersPanel(): JSX.Element {
                     onClick={() =>
                       setPreviewPlayer(previewPlayerId === player.id ? null : player.id)
                     }
+                    aria-label={`Ver o mapa pelos olhos de ${player.name}`}
+                    aria-pressed={previewPlayerId === player.id}
                   >
-                    👁
+                    <Icon name="vision" size="sm" />
                   </button>
                 )}
 
@@ -97,8 +106,9 @@ export function PlayersPanel(): JSX.Element {
                           role: player.role === 'GM' ? 'PLAYER' : 'GM',
                         })
                       }
+                      aria-label={player.role === 'GM' ? 'Tornar jogador' : 'Promover a mestre'}
                     >
-                      {player.role === 'GM' ? '↓' : '↑'}
+                      <Icon name={player.role === 'GM' ? 'demote' : 'promote'} size="sm" />
                     </button>
                     <button
                       className="btn ghost sm danger"
@@ -108,8 +118,9 @@ export function PlayersPanel(): JSX.Element {
                           void act('player:kick', { playerId: player.id });
                         }
                       }}
+                      aria-label={`Remover ${player.name} da mesa`}
                     >
-                      ✕
+                      <Icon name="kick" size="sm" />
                     </button>
                   </>
                 )}
@@ -120,7 +131,7 @@ export function PlayersPanel(): JSX.Element {
       </Section>
 
       {gm && (
-        <Section title="Regras da mesa">
+        <Section title="Regras da mesa" collapsible defaultOpen={false}>
           <Toggle
             label="Jogadores movem apenas os proprios tokens"
             hint="Desligado, qualquer jogador arrasta qualquer token que enxergue."
@@ -231,7 +242,7 @@ function BackupSection({ tableId }: { tableId: string }): JSX.Element {
   }
 
   return (
-    <Section title="Backup da mesa">
+    <Section title="Backup da mesa" collapsible defaultOpen={false}>
       <div className="row wrap">
         <button className="btn sm" disabled={busy} onClick={() => void download(true)}>
           Baixar com imagens

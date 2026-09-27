@@ -2,6 +2,10 @@ import { UPLOAD_LIMITS, type Asset, type AssetKind, type Session } from '@rpg/sh
 
 import { storedSession } from './socket';
 
+async function request(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(60_000) });
+}
+
 /** Chamadas HTTP: as poucas coisas que nao cabem no socket. */
 
 async function parse<T>(res: Response): Promise<T> {
@@ -26,19 +30,17 @@ async function parse<T>(res: Response): Promise<T> {
  * pedindo, e ele so vale para /uploads.
  */
 export async function grantImageAccess(token: string): Promise<void> {
-  await fetch('/api/session/image-access', {
+  const response = await request('/api/session/image-access', {
     method: 'POST',
     headers: { 'x-session-token': token },
     // A entrada na mesa espera por isto; um servidor lento nao pode prende-la.
     signal: AbortSignal.timeout(5000),
-  }).catch(() => {
-    // Sem isto as imagens nao carregam, mas o resto da mesa funciona: nao vale
-    // impedir a entrada por causa da falha.
   });
+  await parse(response);
 }
 
 export async function revokeImageAccess(token: string): Promise<void> {
-  await fetch('/api/session/image-access', {
+  await request('/api/session/image-access', {
     method: 'DELETE',
     headers: { 'x-session-token': token },
   }).catch(() => {});
@@ -49,7 +51,7 @@ export async function createTable(params: {
   gmName: string;
   gmPassword: string;
 }): Promise<Session> {
-  const res = await fetch('/api/tables', {
+  const res = await request('/api/tables', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -68,7 +70,7 @@ export interface TableSummary {
 }
 
 export async function lookupTable(code: string): Promise<TableSummary> {
-  const res = await fetch(`/api/tables/${encodeURIComponent(code)}`);
+  const res = await request(`/api/tables/${encodeURIComponent(code)}`);
   return parse<TableSummary>(res);
 }
 
@@ -100,7 +102,7 @@ export async function uploadAsset(file: File, kind: AssetKind): Promise<Asset> {
   form.append('kind', kind);
   form.append('file', file);
 
-  const res = await fetch('/api/assets', {
+  const res = await request('/api/assets', {
     method: 'POST',
     headers: { 'x-session-token': session.token },
     body: form,
@@ -117,7 +119,7 @@ export async function exportTable(tableId: string, withAssets: boolean): Promise
   const session = storedSession();
   if (!session) throw new Error('Sessao ausente.');
 
-  const res = await fetch(`/api/tables/${tableId}/export?assets=${withAssets ? '1' : '0'}`, {
+  const res = await request(`/api/tables/${tableId}/export?assets=${withAssets ? '1' : '0'}`, {
     headers: { 'x-session-token': session.token },
   });
   if (!res.ok) {
@@ -140,7 +142,7 @@ export async function importTable(
   gmName: string,
   gmPassword: string,
 ): Promise<{ session: Session; missingAssets: number }> {
-  const res = await fetch('/api/tables/import', {
+  const res = await request('/api/tables/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ backup, gmName, gmPassword }),

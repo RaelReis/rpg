@@ -1,8 +1,10 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { Notices } from './Notices';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { AssetKind } from '@rpg/shared';
 
 import { formatBytes, uploadAsset, uploadLimitFor } from '../net/api';
 import { useStore } from '../state/store';
+import { Icon } from './icons';
 
 /** Pecas reutilizadas pelos paineis. */
 
@@ -19,39 +21,91 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
 }): JSX.Element {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    const previous = document.activeElement as HTMLElement | null;
+    dialog?.showModal();
+    return () => { dialog?.close(); previous?.focus(); };
+  }, []);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <dialog ref={ref} className="modal-shell" aria-labelledby={titleId}
+      onCancel={e => { e.preventDefault(); onClose(); }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={wide ? { width: 'min(980px, 100%)' } : undefined}>
         <header>
-          <h2>{title}</h2>
-          <button className="btn ghost sm" onClick={onClose} aria-label="Fechar">
-            ✕
+          <h2 id={titleId}>{title}</h2>
+          <button type="button" className="btn ghost sm icon-only" onClick={onClose} aria-label="Fechar">
+            <Icon name="close" />
           </button>
         </header>
         <div className="body">{children}</div>
         {footer && <footer>{footer}</footer>}
       </div>
-    </div>
+      <Notices />
+    </dialog>
   );
+}
+
+/**
+ * Secao dobravel: o titulo vira botao, e o estado fica lembrado por titulo.
+ * O painel de cena empilha oito secoes — sem dobrar, toda visita comeca com
+ * uma rolagem longa ate a que importa naquele momento.
+ */
+function readSectionOpen(key: string, fallback: boolean): boolean {
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved !== null) return saved !== '0';
+  } catch {
+    // Sem storage, vale o padrao.
+  }
+  return fallback;
 }
 
 export function Section({
   title,
   actions,
   children,
+  collapsible,
+  defaultOpen = true,
 }: {
   title: string;
   actions?: ReactNode;
   children: ReactNode;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
 }): JSX.Element {
+  const storageKey = `rpg-vtt:section:${title}`;
+  const [open, setOpen] = useState(() => (collapsible ? readSectionOpen(storageKey, defaultOpen) : true));
+
+  const toggle = (): void => {
+    setOpen((was) => {
+      const next = !was;
+      try {
+        localStorage.setItem(storageKey, next ? '1' : '0');
+      } catch {
+        // Sem storage, a escolha dura so a aba.
+      }
+      return next;
+    });
+  };
+
   return (
     <section className="section">
       <header>
-        <h3>{title}</h3>
+        {collapsible ? (
+          <button type="button" className="section-toggle" onClick={toggle} aria-expanded={open}>
+            <Icon name={open ? 'expand' : 'collapsed'} size="sm" />
+            <h3>{title}</h3>
+          </button>
+        ) : (
+          <h3>{title}</h3>
+        )}
         <div className="spacer" />
         {actions}
       </header>
-      {children}
+      {open && children}
     </section>
   );
 }
@@ -234,7 +288,7 @@ export function Dropzone({
   const notify = useStore((s) => s.notify);
 
   async function send(files: FileList | null): Promise<void> {
-    if (!files || files.length === 0) return;
+    if (busy || !files || files.length === 0) return;
     setBusy(true);
     try {
       for (const file of Array.from(files).slice(0, multiple ? 20 : 1)) {
@@ -251,7 +305,9 @@ export function Dropzone({
 
   return (
     <>
-      <div
+      <button
+        type="button"
+        disabled={busy}
         className={`dropzone${over ? ' over' : ''}`}
         onClick={() => inputRef.current?.click()}
         onDragOver={(e) => {
@@ -266,10 +322,10 @@ export function Dropzone({
         }}
       >
         {busy ? 'Enviando...' : (label ?? 'Arraste uma imagem ou clique para escolher')}
-        <div className="hint" style={{ marginTop: 4 }}>
+        <span className="hint" style={{ display: 'block', marginTop: 4 }}>
           PNG, JPEG, WebP, GIF ou AVIF — ate {formatBytes(uploadLimitFor(kind))}
-        </div>
-      </div>
+        </span>
+      </button>
       <input
         ref={inputRef}
         type="file"

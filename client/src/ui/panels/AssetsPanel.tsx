@@ -5,6 +5,7 @@ import { formatBytes } from '../../net/api';
 import { act } from '../../net/socket';
 import { useStore } from '../../state/store';
 import { Dropzone, Empty, SelectField, Section } from '../common';
+import { Icon } from '../icons';
 
 /** Biblioteca de imagens da mesa. */
 
@@ -103,8 +104,10 @@ export function AssetsPanel(): JSX.Element {
                       void act('asset:delete', { assetId: asset.id });
                     }
                   }}
+                  aria-label="Excluir imagem"
+                  title="Excluir imagem"
                 >
-                  ✕
+                  <Icon name="delete" size="sm" />
                 </span>
               </button>
             ))}

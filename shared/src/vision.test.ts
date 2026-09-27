@@ -7,6 +7,7 @@ import {
   canPlayerSeeToken,
   collectBlockers,
   computeVision,
+  dragStepAllowed,
   hasLineOfSight,
   movementBlocked,
   segmentsIntersect,
@@ -286,5 +287,136 @@ describe('janelas', () => {
 
   it('uma parede nao pode ser porta e janela ao mesmo tempo', () => {
     expect(createWall({ door: true, window: true }).window).toBe(false);
+  });
+});
+
+describe('tokens grandes', () => {
+  /*
+   * O bug relatado: "as vezes o personagem ve atraves da parede, e isso
+   * acontece com token de tamanho grande".
+   *
+   * O snap encaixa tokens de tamanho PAR com o centro em cima das linhas da
+   * grade, que e onde as paredes ficam. Testando so o centro, o passo que para
+   * sobre a parede e o passo que sai dela nunca tinham as duas pontas em lados
+   * opostos: o token atravessava em dois movimentos. E a origem da visao, que
+   * era o centro da celula arredondada, caia do lado de la do muro.
+   */
+  const s = scene({ walls: [wallAt(500, 0, 1000)] });
+
+  it('o token 2x2 nao para em cima da parede', () => {
+    expect(movementBlocked(s, { x: 400, y: 300 }, { x: 500, y: 300 }, 2)).toBe(true);
+  });
+
+  it('e o que ja esta dentro da parede sai, mas nao afunda mais', () => {
+    // So o mestre coloca um token nessa posicao — ou desenha uma parede por
+    // cima de um token que ja estava ali. De dentro do muro toda saida cruza o
+    // muro, entao medir o trajeto deixaria o token preso para sempre.
+    expect(movementBlocked(s, { x: 500, y: 300 }, { x: 400, y: 300 }, 2)).toBe(false);
+    expect(movementBlocked(s, { x: 500, y: 300 }, { x: 600, y: 300 }, 2)).toBe(false);
+    expect(movementBlocked(s, { x: 500, y: 300 }, { x: 520, y: 300 }, 2)).toBe(true);
+  });
+
+  it('o token 4x4 tambem e barrado', () => {
+    // Corpo de quatro celulas: com o centro em x=300 ele ocupa de 100 a 500 e
+    // encosta na parede. O teste e sobre ENTRAR na parede, entao a posicao de
+    // partida precisa estar inteira do lado de ca.
+    expect(movementBlocked(s, { x: 300, y: 400 }, { x: 400, y: 400 }, 4)).toBe(true);
+  });
+
+  it('o token 3x3 continua barrado ao cruzar', () => {
+    expect(movementBlocked(s, { x: 350, y: 350 }, { x: 650, y: 350 }, 3)).toBe(true);
+  });
+
+  it('nem afunda na parede meio passo por vez', () => {
+    // Como o arraste entrega uma posicao por quadro, o token entrava na parede
+    // em passos curtos: cada passo isolado apenas ENCOSTAVA nela, e encostar
+    // nao e cruzar. Medir onde o corpo para fecha esse caminho.
+    expect(movementBlocked(s, { x: 350, y: 300 }, { x: 400, y: 300 }, 2)).toBe(false);
+    expect(movementBlocked(s, { x: 400, y: 300 }, { x: 450, y: 300 }, 2)).toBe(true);
+  });
+
+  it('um token que comeca limpo nunca termina do outro lado', () => {
+    // A garantia que fecha o bug: saindo de uma posicao livre, nenhum passo
+    // — curto, longo ou na diagonal — leva o corpo para o outro lado.
+    for (const destino of [450, 500, 550, 600, 900]) {
+      expect(movementBlocked(s, { x: 400, y: 300 }, { x: destino, y: 300 }, 2)).toBe(true);
+    }
+    expect(movementBlocked(s, { x: 400, y: 300 }, { x: 560, y: 600 }, 2)).toBe(true);
+  });
+
+  it('o token de uma celula mantem o teste de sempre', () => {
+    expect(movementBlocked(s, { x: 450, y: 350 }, { x: 550, y: 350 }, 1)).toBe(true);
+    expect(movementBlocked(s, { x: 150, y: 350 }, { x: 450, y: 350 }, 1)).toBe(false);
+  });
+
+  it('o token 2x2 passa por um vao de duas celulas', () => {
+    const gap = scene({ walls: [wallAt(500, 0, 200), wallAt(500, 400, 1000)] });
+    expect(movementBlocked(gap, { x: 400, y: 300 }, { x: 600, y: 300 }, 2)).toBe(false);
+  });
+
+  it('mas nao por um vao mais estreito que ele', () => {
+    const gap = scene({ walls: [wallAt(500, 0, 250), wallAt(500, 350, 1000)] });
+    expect(movementBlocked(gap, { x: 400, y: 300 }, { x: 600, y: 300 }, 2)).toBe(true);
+  });
+
+  it('porta aberta deixa o token 2x2 passar; fechada barra', () => {
+    const aberta = scene({ walls: [wallAt(500, 0, 1000, { door: true, open: true })] });
+    expect(movementBlocked(aberta, { x: 400, y: 300 }, { x: 600, y: 300 }, 2)).toBe(false);
+
+    const fechada = scene({ walls: [wallAt(500, 0, 1000, { door: true, open: false })] });
+    expect(movementBlocked(fechada, { x: 400, y: 300 }, { x: 600, y: 300 }, 2)).toBe(true);
+  });
+
+  it('janela barra a passagem do token 2x2', () => {
+    const janela = scene({ walls: [wallAt(500, 0, 1000, { window: true })] });
+    expect(movementBlocked(janela, { x: 400, y: 300 }, { x: 600, y: 300 }, 2)).toBe(true);
+  });
+
+  it('a visao do token 2x2 sai do centro dele, e nao da celula arredondada', () => {
+    // Centro exatamente sobre a parede (o mestre pode posicionar assim): ele
+    // enxerga os dois lados, como quem esta parado no vao. Antes enxergava so
+    // a sala da direita — cego justamente para o lado onde estava.
+    const emCima = scene({
+      walls: [wallAt(500, 0, 1000)],
+      tokens: [createToken({ x: 400, y: 200, scale: 2, ownerPlayerId: 'ply_1', visionRadius: 6 })],
+    });
+    const v = computeVision(emCima, { role: 'PLAYER', playerId: 'ply_1' });
+    expect(v.visible.has(cellKey({ a: 1, b: 3 }))).toBe(true);
+    expect(v.visible.has(cellKey({ a: 8, b: 3 }))).toBe(true);
+  });
+
+  it('encostado na parede, o token 2x2 enxerga so o lado dele', () => {
+    const aoLado = scene({
+      walls: [wallAt(500, 0, 1000)],
+      tokens: [createToken({ x: 300, y: 200, scale: 2, ownerPlayerId: 'ply_1', visionRadius: 6 })],
+    });
+    const v = computeVision(aoLado, { role: 'PLAYER', playerId: 'ply_1' });
+    expect(v.visible.has(cellKey({ a: 1, b: 3 }))).toBe(true);
+    expect(v.visible.has(cellKey({ a: 8, b: 3 }))).toBe(false);
+  });
+});
+
+describe('dragStepAllowed', () => {
+  /*
+   * A previa do arraste no cliente. O servidor ja barrava o passo; o cliente
+   * nao, e o token do jogador atravessava a parede na tela e voltava ao soltar.
+   */
+  const s = scene({ walls: [wallAt(500, 0, 1000)] });
+  // Celula de 100px: centro do token em (450, 250), uma celula antes da parede.
+  const token = createToken({ x: 400, y: 200, scale: 1 });
+
+  it('deixa andar ao longo da parede', () => {
+    expect(dragStepAllowed(s, token, 400, 450)).toBe(true);
+  });
+
+  it('barra o passo que cruza a parede', () => {
+    expect(dragStepAllowed(s, token, 520, 200)).toBe(false);
+  });
+
+  it('usa o corpo do token grande, nao so o centro', () => {
+    // Token 2x2 com o corpo encostado na parede: meio passo ja afundaria nela.
+    const big = createToken({ x: 300, y: 200, scale: 2 });
+    expect(dragStepAllowed(s, big, 350, 200)).toBe(false);
+    expect(dragStepAllowed(s, big, 300, 350)).toBe(true);
   });
 });

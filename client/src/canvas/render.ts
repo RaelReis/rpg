@@ -22,6 +22,7 @@ import {
   type Wall,
 } from '@rpg/shared';
 
+import { CONDITION_ICONS, iconDataUrl } from '../ui/icons';
 import { visibleWorldRect, worldToScreen, type Camera, type Viewport } from './camera';
 import { getImage } from './images';
 
@@ -768,22 +769,46 @@ function drawConditions(input: RenderInput, token: Token, cx: number, top: numbe
   if (token.conditions.length === 0) return;
 
   const { ctx, camera } = input;
-  const size = Math.max(10, w * 0.22);
-  const gap = size * 0.15;
-  const total = token.conditions.length * size + (token.conditions.length - 1) * gap;
-  let x = cx - total / 2;
-  const y = top - size * 0.7;
+  // So as condicoes que o padrao de icones conhece; um valor desconhecido nao
+  // vira um quadrado vazio sobre o token.
+  const shown = token.conditions.filter((c) => CONDITION_ICONS[c]).slice(0, 6);
+  if (shown.length === 0) return;
 
+  // Nunca menor que 15px de tela: com o mapa afastado, um selo proporcional ao
+  // token virava um ponto de 6px, e a condicao existia sem ninguem enxergar.
+  const size = Math.max(w * 0.26, 15 / camera.zoom);
+  const gap = size * 0.12;
+  const total = shown.length * size + (shown.length - 1) * gap;
+  let x = cx - total / 2;
+  const cy = top - size * 0.75;
+
+  /*
+   * Selo circular escuro com o icone na cor da condicao. Antes era o emoji
+   * desenhado como texto: cada sistema o pintava de um jeito, e sobre um mapa
+   * claro alguns sumiam. O fundo garante leitura em qualquer terreno.
+   */
   ctx.save();
-  ctx.font = `${size}px sans-serif`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  for (const condition of token.conditions.slice(0, 6)) {
-    ctx.fillText(condition, x, y);
+  for (const id of shown) {
+    const look = CONDITION_ICONS[id];
+    const r = size / 2;
+    const centerX = x + r;
+
+    ctx.beginPath();
+    ctx.arc(centerX, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(12, 14, 19, 0.88)';
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, size * 0.07);
+    ctx.strokeStyle = look.color;
+    ctx.stroke();
+
+    const img = getImage(iconDataUrl(look.icon, look.color, 2.25));
+    if (img) {
+      const inner = size * 0.6;
+      ctx.drawImage(img, centerX - inner / 2, cy - inner / 2, inner, inner);
+    }
     x += size + gap;
   }
   ctx.restore();
-  void camera;
 }
 
 // ---------------------------------------------------------------------------

@@ -6,13 +6,14 @@ import {
   type Asset,
   type ChatMessage,
   type Handout,
-  type InitiativeState,
   type Player,
   type Role,
   type Scene,
   type Sheet,
+  type SheetTemplate,
   type TableState,
   type Token,
+  type TurnState,
   type VisionResult,
 } from '@rpg/shared';
 
@@ -48,9 +49,10 @@ export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionRes
 }
 
 /** Aplica a semitransparencia de `dim` no que sai para o jogador. */
-function presentToken(token: Token): Token {
-  if (token.visibility === 'dim') return { ...token, opacity: Math.min(token.opacity, 0.45) };
-  return token;
+function presentToken(room: Room, token: Token): Token {
+  const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly).map(f => f.id));
+  return { ...token, bars: token.bars.filter(b => publicFields.has(b.fieldId)),
+    opacity: token.visibility === 'dim' ? Math.min(token.opacity, 0.45) : token.opacity };
 }
 
 export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene {
@@ -61,7 +63,7 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
 
   const tokens = scene.tokens
     .filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId))
-    .map(presentToken);
+    .map(t => presentToken(room, t));
 
   const tiles = scene.tiles.filter((t) => !t.gmOnly);
   const effects = scene.effects.filter((e) => !e.gmOnly && e.visibility !== 'hidden');
@@ -100,11 +102,12 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
  * pelo mestre precisam de valor. Devolvemos uma ficha reduzida so com os
  * campos que aquele token expoe.
  */
-function barOnlySheet(sheet: Sheet, tokens: Token[]): Sheet | null {
+function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
+  const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly && f.type === 'resource').map(f => f.id));
   const fieldIds = new Set<string>();
   for (const token of tokens) {
     if (token.sheetId !== sheet.id) continue;
-    for (const bar of token.bars) fieldIds.add(bar.fieldId);
+    for (const bar of token.bars) if (publicFields.has(bar.fieldId)) fieldIds.add(bar.fieldId);
   }
   if (fieldIds.size === 0) return null;
 
@@ -135,7 +138,7 @@ export function sheetForViewer(room: Room, sheet: Sheet, viewer: Viewer): Sheet 
 
   const vision = visionFor(scene, viewer);
   const visible = scene.tokens.filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId));
-  return barOnlySheet(sheet, visible);
+  return barOnlySheet(room, sheet, visible);
 }
 
 function sheetsForViewer(room: Room, viewer: Viewer, visibleTokens: Token[]): Sheet[] {
@@ -156,7 +159,7 @@ function sheetsForViewer(room: Room, viewer: Viewer, visibleTokens: Token[]): Sh
   if (room.state.settings.showPartyBars) {
     for (const sheet of room.state.sheets) {
       if (included.has(sheet.id)) continue;
-      const reduced = barOnlySheet(sheet, visibleTokens);
+      const reduced = barOnlySheet(room, sheet, visibleTokens);
       if (reduced) out.push(reduced);
     }
   }
@@ -178,10 +181,14 @@ export function assetIdsOfScene(scene: Scene): (string | null)[] {
 }
 
 /** Imagens que uma ficha usa: o retrato e os itens de inventario. */
-export function assetIdsOfSheet(sheet: Sheet): (string | null)[] {
-  const ids: (string | null)[] = [sheet.portraitAssetId];
+export function assetIdsOfSheet(sheet: Sheet, template: SheetTemplate): (string | null)[] {
+  const ids: (string | null)[] = [sheet.portraitAssetId, sheet.bodyAssetId];
   for (const value of Object.values(sheet.values)) {
     if (Array.isArray(value)) for (const item of value) ids.push(item.assetId);
+  }
+  for (const field of template.fields) {
+    const value = sheet.values[field.id];
+    if (field.type === 'image' && typeof value === 'string') ids.push(value);
   }
   return ids;
 }
@@ -213,7 +220,7 @@ function assetsForViewer(
   // Retratos da lista de presenca no cabecalho.
   for (const player of players) ids.add(player.portraitAssetId);
   if (scene) for (const id of assetIdsOfScene(scene)) ids.add(id);
-  for (const sheet of sheets) for (const id of assetIdsOfSheet(sheet)) ids.add(id);
+  for (const sheet of sheets) for (const id of assetIdsOfSheet(sheet, room.state.sheetTemplate)) ids.add(id);
   for (const handout of room.state.handouts) {
     if (handoutForViewer(handout, viewer)) ids.add(handout.assetId);
   }
@@ -232,9 +239,26 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
   return handout.sharedWith.includes(viewer.playerId) ? handout : null;
 }
 
-function initiativeForViewer(initiative: InitiativeState, viewer: Viewer): InitiativeState {
-  if (viewer.role === 'GM') return initiative;
-  return { ...initiative, entries: initiative.entries.filter((e) => !e.hiddenFromPlayers) };
+/**
+ * A ordem de turnos como este observador tem direito de ve-la.
+ *
+ * O historico acompanha o mesmo corte: um registro do monstro que o mestre
+ * escondeu entregaria que ele existe e em que rodada agiu — e a ordem esconde
+ * a miniatura justamente para que ninguem saiba disso ainda.
+ */
+export function turnsForViewer(turns: TurnState, viewer: Viewer): TurnState {
+  if (viewer.role === 'GM') return turns;
+
+  const hidden = new Set(turns.entries.filter((e) => e.hiddenFromPlayers).map((e) => e.id));
+  if (hidden.size === 0) return turns;
+
+  return {
+    ...turns,
+    entries: turns.entries.filter((e) => !e.hiddenFromPlayers),
+    history: turns.history.filter((r) => !hidden.has(r.entryId)),
+    activeEntryId:
+      turns.activeEntryId && hidden.has(turns.activeEntryId) ? null : turns.activeEntryId,
+  };
 }
 
 function chatForViewer(chat: ChatMessage[], viewer: Viewer): ChatMessage[] {
@@ -269,7 +293,7 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
       .filter((h): h is Handout => h !== null),
     assets: assetsForViewer(room, viewer, scene, sheets, players),
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
-    initiative: initiativeForViewer(s.initiative, viewer),
+    turns: turnsForViewer(s.turns, viewer),
     chat: chatForViewer(s.chat, viewer),
   };
 }
@@ -285,5 +309,5 @@ export function tokenForViewer(
   if (viewer.role === 'GM') return token;
   const v = vision ?? visionFor(scene, viewer);
   if (!canPlayerSeeToken(scene, token, v, viewer.playerId)) return null;
-  return presentToken(token);
+  return presentToken(room, token);
 }

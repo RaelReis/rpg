@@ -1,3 +1,6 @@
+import { stateForViewer } from './filter.js';
+import { hashToken } from './auth.js';
+import { asyncRoute } from './http.js';
 import path from 'node:path';
 
 import express from 'express';
@@ -24,7 +27,7 @@ import { rooms } from './room.js';
 const COOKIE = 'rpg_img';
 
 /** Alem disto o cookie so cresce; abas antigas cedem lugar as recentes. */
-const MAX_TOKENS = 4;
+
 
 const MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -45,26 +48,20 @@ function safeDecode(value: string): string | null {
 }
 
 function readTokens(req: express.Request): string[] {
-  const raw = req.headers.cookie;
-  if (!raw) return [];
-
-  for (const part of raw.split(';')) {
+  const tokens: string[] = [];
+  for (const part of (req.headers.cookie ?? '').split(';')) {
     const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() !== COOKIE) continue;
-    return (safeDecode(part.slice(eq + 1).trim()) ?? '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean)
-      .slice(0, MAX_TOKENS);
+    const name = part.slice(0, eq).trim();
+    if (eq < 0 || (name !== COOKIE && !name.startsWith(`${COOKIE}_`))) continue;
+    tokens.push(...(safeDecode(part.slice(eq + 1).trim()) ?? '').split(',').filter(Boolean));
   }
-  return [];
+  return tokens.slice(0, 24);
 }
 
-function writeCookie(res: express.Response, tokens: string[]): void {
+function writeCookie(res: express.Response, tokens: string[], name: string): void {
   const value = encodeURIComponent(tokens.join(','));
   const attrs = [
-    `${COOKIE}=${value}`,
+    `${name}=${value}`,
     // Restrito a /uploads: o cookie nao acompanha as chamadas de API, que ja
     // se autenticam pelo cabecalho.
     'Path=/uploads',
@@ -83,7 +80,7 @@ function writeCookie(res: express.Response, tokens: string[]): void {
  * `<img>` ser aceito depois.
  */
 export function registerImageAccessRoutes(app: express.Express): void {
-  app.post('/api/session/image-access', async (req, res) => {
+  app.post('/api/session/image-access', asyncRoute(async (req, res) => {
     const token = String(req.header('x-session-token') ?? '');
     if (!token) return res.status(401).json({ error: 'Sessao ausente.' });
     if (!(await rooms.resolveSession(token))) {
@@ -91,15 +88,14 @@ export function registerImageAccessRoutes(app: express.Express): void {
     }
 
     // O token novo vai para a frente; os antigos seguem validos ate o teto.
-    const kept = readTokens(req).filter((t) => t !== token);
-    writeCookie(res, [token, ...kept].slice(0, MAX_TOKENS));
+    writeCookie(res, [token], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
     res.json({ ok: true });
-  });
+  }));
 
   app.delete('/api/session/image-access', (req, res) => {
     const token = String(req.header('x-session-token') ?? '');
-    const kept = readTokens(req).filter((t) => t !== token);
-    writeCookie(res, kept);
+    if (!token || token.length > 256) return res.sendStatus(400);
+    writeCookie(res, [], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
     res.json({ ok: true });
   });
 }
@@ -107,8 +103,10 @@ export function registerImageAccessRoutes(app: express.Express): void {
 /**
  * Deixa passar apenas quem tem sessao numa mesa dona do arquivo.
  *
- * A conferencia e em memoria (a lista de assets da sala ja esta carregada),
- * entao custa uma varredura curta e nenhuma consulta ao banco no caso comum.
+ * A lista de assets da sala ja esta em memoria, e a sessao vem do cache curto
+ * de `rooms.resolveSession`. Sem esse cache, este comentario prometia "nenhuma
+ * consulta ao banco" enquanto cada imagem custava uma consulta por token
+ * guardado no cookie — trinta imagens numa cena, trinta idas ao SQLite.
  */
 export function guardUploads(): express.RequestHandler {
   return async (req, res, next) => {
@@ -126,7 +124,10 @@ export function guardUploads(): express.RequestHandler {
       const resolved = await rooms.resolveSession(token).catch(() => null);
       if (!resolved) continue;
 
-      const owns = resolved.room.state.assets.some(
+      const player = resolved.room.player(resolved.playerId);
+      if (!player) continue;
+      const allowed = new Set(stateForViewer(resolved.room, { playerId: player.id, role: player.role }).assets.map(a => a.id));
+      const owns = resolved.room.state.assets.filter(a => allowed.has(a.id) || a.uploadedBy === player.id).some(
         (a) => a.url.endsWith(`/${rel}`) || a.thumbUrl?.endsWith(`/${rel}`),
       );
       if (owns) return next();
@@ -139,8 +140,10 @@ export function guardUploads(): express.RequestHandler {
 }
 
 export const uploadsStatic = express.static(UPLOAD_DIR, {
-  maxAge: '30d',
-  immutable: true,
+  // Revalidate access after sharing changes; downloaded copies remain local.
+  maxAge: 0,
+  immutable: false,
+  setHeaders: res => res.setHeader('Cache-Control', 'private, no-cache'),
   index: false,
   dotfiles: 'ignore',
 });

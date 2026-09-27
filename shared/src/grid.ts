@@ -174,11 +174,24 @@ export function snapTokenPosition(
   return { x: c.x - w / 2, y: c.y - h / 2 };
 }
 
+/**
+ * Centro geometrico de um token, em pixels do mapa.
+ *
+ * E de onde sai a visao e em torno de que o corpo dele e testado contra as
+ * paredes. Num token de tamanho par este ponto cai exatamente sobre um vertice
+ * da grade — o mesmo lugar por onde passam as paredes —, entao arredondar para
+ * o centro da celula muda de lado do muro.
+ */
+export function tokenCenter(grid: GridConfig, topLeft: Point, sizeInCells: number): Point {
+  return {
+    x: topLeft.x + (grid.size * sizeInCells) / 2,
+    y: topLeft.y + (cellHeight(grid) * sizeInCells) / 2,
+  };
+}
+
 /** Celula ocupada pelo centro de um token. */
 export function tokenCell(grid: GridConfig, topLeft: Point, sizeInCells: number): Cell {
-  const w = grid.size * sizeInCells;
-  const h = cellHeight(grid) * sizeInCells;
-  return cellAt(grid, { x: topLeft.x + w / 2, y: topLeft.y + h / 2 });
+  return cellAt(grid, tokenCenter(grid, topLeft, sizeInCells));
 }
 
 /** Distancia em celulas. Quadrada usa Chebyshev; hex usa distancia cubica. */

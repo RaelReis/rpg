@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import type { GridType, Scene } from '@rpg/shared';
+import { LAYER_NAMES, type GridType, type Layer, type Scene } from '@rpg/shared';
 
 import { act } from '../../net/socket';
-import { activeScene, findAsset, useStore } from '../../state/store';
+import { confirmSceneActivation, editingScene, findAsset, useStore } from '../../state/store';
 import {
   ColorField,
   Dropzone,
@@ -13,6 +13,7 @@ import {
   TextField,
   Toggle,
 } from '../common';
+import { Icon } from '../icons';
 
 /** Painel do mestre: cenas, grid, fundo, neblina e iluminacao. */
 
@@ -29,10 +30,17 @@ export function ScenePanel(): JSX.Element {
   const [newSceneName, setNewSceneName] = useState('');
   const selectedWallId = useStore((s) => s.selectedWallId);
   const selectWall = useStore((s) => s.selectWall);
+  const hiddenLayers = useStore((s) => s.hiddenLayers);
+  const toggleLayer = useStore((s) => s.toggleLayer);
+  const editingSceneId = useStore((s) => s.editingSceneId);
+  const setEditingScene = useStore((s) => s.setEditingScene);
 
   void rev;
-  const scene = activeScene(useStore.getState());
+  const scene = editingScene(useStore.getState());
   if (!table) return <Empty>Sem mesa carregada.</Empty>;
+
+  const editingId = editingSceneId ?? table.activeSceneId;
+  const editingLive = scene?.id === table.activeSceneId;
 
   const patch = (p: Partial<Scene>): void => {
     if (scene) void act('scene:update', { sceneId: scene.id, patch: p });
@@ -42,46 +50,67 @@ export function ScenePanel(): JSX.Element {
     <>
       <Section
         title="Cenas"
+        collapsible
         actions={
           <button
             className="btn sm"
             onClick={() => {
-              void act('scene:create', { name: newSceneName.trim() || 'Nova cena' });
+              void act<Scene>('scene:create', { name: newSceneName.trim() || 'Nova cena' }).then(
+                (created) => created && setEditingScene(created.id),
+              );
               setNewSceneName('');
             }}
           >
-            + Nova
+            <Icon name="add" size="sm" /> Nova
           </button>
         }
       >
+        <span className="hint">
+          Clique numa cena para configura-la — so ativa para todos quando voce mandar.
+        </span>
         <div className="list">
           {table.scenes
             .slice()
             .sort((a, b) => a.order - b.order)
-            .map((s) => (
-              <div key={s.id} className={`item${s.id === table.activeSceneId ? ' active' : ''}`}>
-                <button
-                  className="name"
-                  style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left' }}
-                  onClick={() => void act('scene:activate', { sceneId: s.id })}
-                  title="Ativar para todos os jogadores"
-                >
-                  {s.name}
-                </button>
-                {s.id === table.activeSceneId && <span className="tag on">no ar</span>}
-                <button
-                  className="btn ghost sm"
-                  onClick={() => {
-                    if (window.confirm(`Excluir a cena "${s.name}"? Tokens e neblina dela serao perdidos.`)) {
-                      void act('scene:delete', { sceneId: s.id });
-                    }
-                  }}
-                  title="Excluir cena"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+            .map((s) => {
+              const live = s.id === table.activeSceneId;
+              return (
+                <div key={s.id} className={`item${s.id === editingId ? ' active' : ''}`}>
+                  <button
+                    className="name"
+                    style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+                    onClick={() => setEditingScene(s.id)}
+                    title="Configurar esta cena"
+                  >
+                    {s.name}
+                  </button>
+                  {live && <span className="tag on">no ar</span>}
+                  {!live && (
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => {
+                        if (confirmSceneActivation(table, s.name)) void act('scene:activate', { sceneId: s.id });
+                      }}
+                      title="Ativar para todos os jogadores"
+                    >
+                      Ativar
+                    </button>
+                  )}
+                  <button
+                    className="btn ghost sm"
+                    onClick={() => {
+                      if (window.confirm(`Excluir a cena "${s.name}"? Tokens e neblina dela serao perdidos.`)) {
+                        void act('scene:delete', { sceneId: s.id });
+                      }
+                    }}
+                    title="Excluir cena"
+                    aria-label={`Excluir a cena ${s.name}`}
+                  >
+                    <Icon name="delete" size="sm" />
+                  </button>
+                </div>
+              );
+            })}
         </div>
 
         <input
@@ -102,7 +131,30 @@ export function ScenePanel(): JSX.Element {
         </Section>
       ) : (
         <>
-          <Section title="Cena ativa">
+          <Section
+            title={editingLive ? 'Cena ativa' : 'Configurando (fora do ar)'}
+            collapsible
+            actions={
+              !editingLive && (
+                <button
+                  className="btn sm"
+                  onClick={() => {
+                    if (confirmSceneActivation(table, scene.name)) void act('scene:activate', { sceneId: scene.id });
+                  }}
+                  title="Ativar esta cena para todos os jogadores"
+                >
+                  Ativar para todos
+                </button>
+              )
+            }
+          >
+            {!editingLive && (
+              <span className="hint">
+                Fundo, grid, neblina e clima daqui valem so para esta cena, mesmo fora do ar. O mapa
+                que voce ve, porem, continua sendo o da cena ativa — parede, tile e token novos
+                desenhados nele vao para ela, nao para esta.
+              </span>
+            )}
             <TextField label="Nome" value={scene.name} onChange={(v) => patch({ name: v })} maxLength={80} />
 
             <div className="grid-2">
@@ -163,7 +215,7 @@ export function ScenePanel(): JSX.Element {
             />
           </Section>
 
-          <Section title="Grid">
+          <Section title="Grid" collapsible>
             <SelectField
               label="Tipo"
               value={scene.grid.type}
@@ -238,7 +290,7 @@ export function ScenePanel(): JSX.Element {
             />
           </Section>
 
-          <Section title="Neblina de guerra">
+          <Section title="Neblina de guerra" collapsible>
             <SelectField
               label="Modo"
               value={scene.fog.mode}
@@ -325,7 +377,7 @@ export function ScenePanel(): JSX.Element {
             </div>
           </Section>
 
-          <Section title="Iluminacao">
+          <Section title="Iluminacao" collapsible>
             <label className="field">
               <span className="label">Luz do ambiente</span>
               <input
@@ -343,7 +395,7 @@ export function ScenePanel(): JSX.Element {
             </span>
           </Section>
 
-          <Section title="Clima">
+          <Section title="Clima" collapsible>
             <SelectField
               label="Tipo"
               value={scene.weather?.kind ?? 'none'}
@@ -392,7 +444,35 @@ export function ScenePanel(): JSX.Element {
             </span>
           </Section>
 
-          <Section title="Paredes">
+          {/*
+            Camadas mudam so a tela do mestre, e nao o que os jogadores
+            recebem: sao configuracao da cena, e nao ferramenta. Ficavam como
+            quatro botoes permanentes no trilho, ao lado de coisas que se usam
+            a cada minuto — aqui ocupam uma linha e somem do caminho.
+          */}
+          <Section title="Sua visao" collapsible>
+            <span className="hint">
+              Oculta camadas apenas na sua tela. O que chega aos jogadores nao muda.
+            </span>
+            <div className="row wrap">
+              {([1, 2, 3, 4] as Layer[]).map((layer) => {
+                const visible = !hiddenLayers.includes(layer);
+                return (
+                  <button
+                    key={layer}
+                    className={`btn sm${visible ? '' : ' ghost'}`}
+                    onClick={() => toggleLayer(layer)}
+                    aria-pressed={visible}
+                    title={`${LAYER_NAMES[layer]} — mostrar ou ocultar na sua tela`}
+                  >
+                    <Icon name={visible ? 'vision' : 'blinded'} size="sm" /> {LAYER_NAMES[layer]}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section title="Paredes" collapsible defaultOpen={false}>
             <div className="row">
               <span className="hint" style={{ flex: 1 }}>
                 {scene.walls.length} parede(s) nesta cena.
@@ -434,7 +514,7 @@ export function ScenePanel(): JSX.Element {
                     }}
                   />
                   <span className="name">
-                    {wall.door ? 'Porta' : 'Parede'} {index + 1}
+                    {wall.door ? 'Porta' : wall.window ? 'Janela' : 'Parede'} {index + 1}
                     {wall.hidden && <span className="sub"> · secreta</span>}
                   </span>
 
@@ -457,6 +537,7 @@ export function ScenePanel(): JSX.Element {
                   <button
                     className="btn ghost sm"
                     title={wall.door ? 'Converter em parede comum' : 'Converter em porta'}
+                    aria-label={wall.door ? 'Converter em parede comum' : 'Converter em porta'}
                     onClick={(e) => {
                       e.stopPropagation();
                       void act('wall:update', {
@@ -466,30 +547,31 @@ export function ScenePanel(): JSX.Element {
                       });
                     }}
                   >
-                    {wall.door ? '▨' : '🚪'}
+                    <Icon name={wall.door ? 'wall' : 'door'} size="sm" />
                   </button>
 
                   <button
                     className="btn ghost sm danger"
                     title="Excluir"
+                    aria-label="Excluir"
                     onClick={(e) => {
                       e.stopPropagation();
                       void act('wall:delete', { sceneId: scene.id, wallId: wall.id });
                       selectWall(null);
                     }}
                   >
-                    ✕
+                    <Icon name="delete" size="sm" />
                   </button>
                 </div>
               ))}
             </div>
 
             <span className="hint">
-              Desenhe com a ferramenta de parede: cada clique fixa um vertice,{' '}
-              <strong>Enter</strong> encerra, <strong>Alt</strong> cria porta.
+              Desenhe com a ferramenta de parede: cada clique grava um trecho,{' '}
+              <strong>Enter</strong> encerra, <strong>Alt</strong> faz uma porta.
               <br />
-              Para remover uma parede especifica, clique nela no mapa com a ferramenta de selecao e
-              tecle <strong>Delete</strong> — ou use o ✕ desta lista.
+              Para excluir ou converter uma parede, clique nela com o <strong>botao direito</strong> no
+              mapa — ou use a lixeira desta lista.
             </span>
           </Section>
         </>

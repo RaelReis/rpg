@@ -24,6 +24,7 @@ import {
   TextField,
   Toggle,
 } from '../common';
+import { CONDITION_ICONS, Icon } from '../icons';
 
 /** Painel do mestre: tokens da cena, inspetor do token e efeitos de mapa. */
 
@@ -31,7 +32,9 @@ export function TokensPanel(): JSX.Element {
   const rev = useStore((s) => s.rev);
   const selectedIds = useStore((s) => s.selectedTokenIds);
   const selectToken = useStore((s) => s.selectToken);
+  const selectTokens = useStore((s) => s.selectTokens);
   const table = useStore((s) => s.table);
+  const [quantity, setQuantity] = useState(1);
 
   void rev;
   const scene = activeScene(useStore.getState());
@@ -40,19 +43,37 @@ export function TokensPanel(): JSX.Element {
   const selected =
     selectedIds.length === 1 ? (scene.tokens.find((t) => t.id === selectedIds[0]) ?? null) : null;
 
-  function createToken(assetId: string | null): void {
+  function createTokens(assetId: string | null): void {
     if (!scene) return;
-    // Nasce no centro do que o mestre esta vendo, nao no canto do mapa.
-    void act<Token>('token:create', {
-      sceneId: scene.id,
-      token: {
-        name: assetId ? (findAsset(assetId)?.originalName.replace(/\.[^.]+$/, '') ?? 'Token') : 'Token',
-        assetId,
-        x: scene.width / 2,
-        y: scene.height / 2,
-        layer: 3,
-      },
-    }).then((token) => token && selectToken(token.id));
+    const baseName = assetId ? (findAsset(assetId)?.originalName.replace(/\.[^.]+$/, '') ?? 'Token') : 'Token';
+    const count = Math.max(1, quantity);
+    const cell = scene.grid.size || 70;
+    // Um por goblin: em vez de nascerem todos empilhados no mesmo ponto, se
+    // espalham num quadrado em torno do centro, prontos para arrastar.
+    const cols = Math.ceil(Math.sqrt(count));
+    const rows = Math.ceil(count / cols);
+    const created = Array.from({ length: count }, (_, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      return act<Token>('token:create', {
+        sceneId: scene.id,
+        token: {
+          name: count > 1 ? `${baseName} ${i + 1}` : baseName,
+          assetId,
+          x: scene.width / 2 + (col - (cols - 1) / 2) * cell,
+          y: scene.height / 2 + (row - (rows - 1) / 2) * cell,
+          layer: 3,
+        },
+      });
+    });
+    void Promise.all(created).then((tokens) => {
+      const ids = tokens.filter((t): t is Token => !!t).map((t) => t.id);
+      if (ids.length === 1) selectToken(ids[0]);
+      else if (ids.length > 1) selectTokens(ids);
+    });
+    // So vale para esta leva: sem isto, um "5" esquecido ligado criaria um
+    // pelotao sem querer na proxima vez que alguem clicasse em "Vazio".
+    setQuantity(1);
   }
 
   return (
@@ -60,12 +81,25 @@ export function TokensPanel(): JSX.Element {
       <Section
         title="Novo token"
         actions={
-          <button className="btn sm" onClick={() => createToken(null)}>
-            + Vazio
+          <button className="btn sm" onClick={() => createTokens(null)}>
+            <Icon name="add" size="sm" /> Vazio
           </button>
         }
       >
-        <Dropzone kind="token" label="Enviar imagem e criar token" onUploaded={createToken} multiple />
+        <NumberField
+          label="Quantidade"
+          value={quantity}
+          min={1}
+          max={20}
+          onChange={(v) => setQuantity(Math.max(1, Math.min(20, Math.round(v))))}
+        />
+        {quantity > 1 && (
+          <span className="hint">
+            Cria {quantity} copias de cada imagem enviada (ou {quantity} tokens vazios), espalhadas
+            perto do centro — arraste para reposicionar.
+          </span>
+        )}
+        <Dropzone kind="token" label="Enviar imagem e criar token" onUploaded={createTokens} multiple />
       </Section>
 
       <Section title={`Tokens na cena (${scene.tokens.length})`}>
@@ -99,7 +133,11 @@ export function TokensPanel(): JSX.Element {
                         </span>
                         {token.gmOnly && <span className="tag gm">MJ</span>}
                         {token.visibility === 'hidden' && <span className="tag">oculto</span>}
-                        {token.visionRadius > 0 && <span className="tag">👁 {token.visionRadius}</span>}
+                        {token.visionRadius > 0 && (
+                          <span className="tag" title="Raio de visao">
+                            <Icon name="vision" size="sm" /> {token.visionRadius}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -134,6 +172,7 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
   const table = useStore((s) => s.table);
   const template = table?.sheetTemplate;
   const barFields = template ? tokenBarFields(template) : [];
+  const asset = findAsset(token.assetId);
 
   const patch = (p: Partial<Token>): void => {
     void act('token:update', { sceneId, tokenId: token.id, patch: p });
@@ -167,11 +206,19 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
         onChange={(v) => patch({ shape: v as TokenShape })}
       />
       {token.shape === 'art' && (
-        <span className="hint">
-          A ilustracao aparece por completo, de pe sobre a celula, com a transparencia da imagem
-          preservada — use um PNG recortado. O tamanho define a largura; a altura vem da propria
-          imagem. A area que o token ocupa na grade continua sendo o tamanho declarado.
-        </span>
+        <div className="row" style={{ alignItems: 'flex-start' }}>
+          {asset && (
+            <span className="art-preview">
+              <img src={asset.thumbUrl ?? asset.url} alt="" />
+            </span>
+          )}
+          <span className="hint" style={{ flex: 1 }}>
+            A ilustracao aparece por completo, de pe sobre a celula — use um PNG recortado, com a
+            transparencia preservada. O tamanho define a largura; a altura vem da propria imagem,
+            entao a figura sobe para fora da celula, e uma marca elipsoidal mostra onde ela pisa. O
+            tamanho declarado continua valendo para movimento, visao e alcance.
+          </span>
+        </div>
       )}
 
       <div className="grid-2">
@@ -321,25 +368,51 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
       <span className="label">Condicoes</span>
       <div className="row wrap">
         {CONDITION_PRESETS.map((condition) => {
-          const on = token.conditions.includes(condition.icon);
+          const on = token.conditions.includes(condition.id);
+          const look = CONDITION_ICONS[condition.id];
           return (
             <button
               key={condition.id}
-              className={`btn sm${on ? ' primary' : ''}`}
+              className={`btn sm condition-btn${on ? ' on' : ''}`}
+              style={{ ['--condition' as string]: look.color }}
               title={condition.label}
+              aria-label={condition.label}
+              aria-pressed={on}
               onClick={() =>
                 patch({
                   conditions: on
-                    ? token.conditions.filter((c) => c !== condition.icon)
-                    : [...token.conditions, condition.icon],
+                    ? token.conditions.filter((c) => c !== condition.id)
+                    : [...token.conditions, condition.id],
                 })
               }
             >
-              {condition.icon}
+              <Icon name={look.icon} size="sm" />
             </button>
           );
         })}
       </div>
+
+      <div className="divider" />
+
+      <span className="label">Efeitos do Outro Lado</span>
+      <div className="row wrap">
+        {PARANORMAL_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            className={`btn sm preset-${preset.id}`}
+            title={preset.hint}
+            onClick={() =>
+              void act('effect:create', {
+                sceneId,
+                effect: { kind: 'circle', anchor: 'token', tokenId: token.id, label: preset.label, ...preset.patch },
+              })
+            }
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <span className="hint">Cria uma area presa a este token, ja com a cor e o movimento do elemento.</span>
 
       <TextField
         label="Rotulo no mapa"
@@ -382,9 +455,11 @@ function TilesSection({ tiles, sceneId }: { tiles: Tile[]; sceneId: string }): J
   return (
     <Section
       title={`Tiles (${tiles.length})`}
+      collapsible
+      defaultOpen={tiles.length > 0}
       actions={
         <button className="btn sm" onClick={() => setTool('tile')} title="Arraste no mapa para criar">
-          + Colocar
+          <Icon name="add" size="sm" /> Colocar
         </button>
       }
     >
@@ -547,7 +622,7 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
   }
 
   return (
-    <Section title={`Efeitos de mapa (${effects.length})`}>
+    <Section title={`Efeitos de mapa (${effects.length})`} collapsible>
       <SelectField
         label="Tipo"
         value={kind}
@@ -632,8 +707,10 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
             e.stopPropagation();
             void act('effect:delete', { sceneId, effectId: effect.id });
           }}
+          title="Excluir efeito"
+          aria-label="Excluir efeito"
         >
-          ✕
+          <Icon name="delete" size="sm" />
         </button>
       </div>
 

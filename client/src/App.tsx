@@ -3,15 +3,18 @@ import { useEffect, useState } from 'react';
 import { Stage } from './canvas/Stage';
 import { connectAndResume } from './net/socket';
 import { useStore } from './state/store';
+import { CharacterSetup } from './ui/CharacterSetup';
 import { Gate } from './ui/Gate';
 import { HandoutModal } from './ui/HandoutModal';
 import { Notices } from './ui/Notices';
+import { Icon } from './ui/icons';
+import { PartyHud } from './ui/PartyHud';
 import { Rail } from './ui/Rail';
+import { SceneStrip } from './ui/SceneStrip';
 import { Side } from './ui/Side';
 import { SheetModal } from './ui/SheetModal';
 import { TemplateEditor } from './ui/TemplateEditor';
 import { Topbar } from './ui/Topbar';
-import { TurnBanner } from './ui/TurnBanner';
 
 export function App(): JSX.Element {
   const table = useStore((s) => s.table);
@@ -58,16 +61,18 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <Topbar />
+      <SceneStrip />
       <div className="workspace">
-        <Rail />
         <div className="stage-wrap">
           <Stage />
-          <TurnBanner />
+          <PartyHud />
+          <Rail />
           <SideToggle />
         </div>
         <Side />
       </div>
 
+      <CharacterSetup key={`${session.tableId}:${session.playerId}`} />
       {templateEditorOpen && <TemplateEditor />}
       {sheetModalId && <SheetModal sheetId={sheetModalId} />}
       {openHandoutId && <HandoutModal handoutId={openHandoutId} />}
@@ -94,7 +99,7 @@ function SideToggle(): JSX.Element {
       aria-label={open ? 'Ocultar painel' : 'Mostrar painel'}
       aria-expanded={open}
     >
-      {open ? '›' : '‹'}
+      <Icon name={open ? 'panelHide' : 'panelShow'} size="sm" />
     </button>
   );
 }

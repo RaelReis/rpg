@@ -10,6 +10,7 @@ import {
   normalizeTemplate,
   reconcileSheetValues,
   sanitizeSheetPatch,
+  vitalFields,
 } from './sheet.js';
 import type { Sheet, SheetField, SheetTemplate } from './types.js';
 
@@ -243,6 +244,7 @@ describe('filtragem por papel', () => {
     id: 'sht_1',
     name: 'Ravena',
     portraitAssetId: null,
+    bodyAssetId: null,
     ownerPlayerId: 'ply_1',
     values: { nome: 'Ravena', segredo: 'e uma espia' },
     sharedWithParty: false,
@@ -276,5 +278,74 @@ describe('createSheetValues', () => {
     for (const f of t.fields) {
       expect(values[f.id]).toBeDefined();
     }
+  });
+});
+
+describe('PV e PD', () => {
+  const legacyTemplate = () =>
+    ({
+      name: 'Antiga',
+      sections: [{ id: 'resources', label: 'Recursos', order: 0, collapsed: false }],
+      fields: [
+        { id: 'hp', label: 'Vida', type: 'resource', sectionId: 'resources', color: '#d9534f' },
+        { id: 'energy', label: 'Energia', type: 'resource', sectionId: 'resources', color: '#4a90d9' },
+        { id: 'actions', label: 'Acoes por turno', type: 'resource', sectionId: 'resources' },
+      ],
+    }) as unknown as Partial<SheetTemplate>;
+
+  it('o modelo padrao ja nasce com PV e PD', () => {
+    const { pv, pd } = vitalFields(createDefaultTemplate());
+    expect(pv?.label).toBe('PV');
+    expect(pd?.label).toBe('PD');
+  });
+
+  it('modelo antigo: Vida vira PV e Energia vira PD, sem mudar o id', () => {
+    // O id fica igual, entao os valores ja gravados nas fichas continuam valendo.
+    const { pv, pd } = vitalFields(normalizeTemplate(legacyTemplate()));
+    expect(pv).toMatchObject({ id: 'hp', label: 'PV', vital: 'pv' });
+    expect(pd).toMatchObject({ id: 'energy', label: 'PD', vital: 'pd' });
+  });
+
+  it('a migracao preserva o valor da ficha', () => {
+    const t = normalizeTemplate(legacyTemplate());
+    const out = reconcileSheetValues(t, { hp: { current: 7, max: 12 }, energy: { current: 3, max: 9 } });
+    expect(out.hp).toEqual({ current: 7, max: 12 });
+    expect(out.energy).toEqual({ current: 3, max: 9 });
+  });
+
+  it('recurso sem relacao com vida ou energia fica sem papel', () => {
+    const t = normalizeTemplate(legacyTemplate());
+    expect(t.fields.find((f) => f.id === 'actions')?.vital).toBeNull();
+  });
+
+  it('nome personalizado pelo mestre nao e trocado na deducao', () => {
+    const raw = legacyTemplate();
+    (raw.fields as SheetField[])[0].label = 'Folego';
+    const t = normalizeTemplate(raw);
+    // Sem nome antigo reconhecivel, o papel vem so pelo id — e o nome fica.
+    expect(vitalFields(t).pv).toMatchObject({ id: 'hp', label: 'Folego' });
+  });
+
+  it('o mestre pode tirar o papel: um null gravado nao e deduzido de novo', () => {
+    const once = normalizeTemplate(legacyTemplate());
+    const cleared = { ...once, fields: once.fields.map((f) => ({ ...f, vital: null })) };
+    expect(vitalFields(normalizeTemplate(cleared))).toEqual({ pv: null, pd: null });
+  });
+
+  it('no maximo um recurso de cada papel', () => {
+    const t = normalizeTemplate({
+      sections: [{ id: 'main', label: 'Geral', order: 0, collapsed: false }],
+      fields: [
+        field({ id: 'a', type: 'resource', vital: 'pv' }),
+        field({ id: 'b', type: 'resource', vital: 'pv' }),
+        field({ id: 'c', type: 'text', vital: 'pd' }),
+      ],
+    });
+    expect(t.fields.map((f) => f.vital)).toEqual(['pv', null, null]);
+  });
+
+  it('normalizar de novo nao muda o modelo migrado', () => {
+    const once = normalizeTemplate(legacyTemplate());
+    expect(normalizeTemplate(once)).toEqual(once);
   });
 });

@@ -86,6 +86,33 @@ nos dois lados**. O cliente a usa para desenhar a neblina; o servidor, para
 decidir o que sequer envia a cada jogador. Uma implementação só evita a classe
 de bug em que a interface esconde algo que o servidor já entregou no payload.
 
+### Padrão de ícones
+
+Todos os ícones vêm do [Lucide](https://lucide.dev) (pacote `lucide`) e passam
+por um único arquivo, [client/src/ui/icons.tsx](client/src/ui/icons.tsx). Nada
+de emoji ou caractere Unicode fazendo papel de ícone: cada sistema os desenhava
+de um jeito, e o mesmo gesto aparecia com símbolos diferentes em cada painel.
+
+```tsx
+<Icon name="delete" />                                  // decorativo, ao lado de texto
+<button aria-label="Fechar"><Icon name="close" /></button>  // botão só com ícone
+```
+
+- **Pelo significado, não pelo desenho.** O registro `ICONS` mapeia nomes como
+  `roll`, `vision`, `kick` para o desenho. Trocar o desenho de um significado
+  muda a mesa inteira de uma vez.
+- **`close` × `delete`.** O X fecha ou tira de uma lista sem perda; a lixeira
+  apaga de vez.
+- **Tamanhos.** `sm` (14px) em etiquetas e botões pequenos, `md` (16px) no resto,
+  `lg` (18px) no trilho de ferramentas. Os ícones herdam a cor do texto.
+- **Canvas.** `iconDataUrl(nome, cor)` gera o mesmo ícone como imagem; é assim
+  que as condições aparecem sobre os tokens.
+- **Condições gravadas por id** (`burning`, `dead`...). Tokens antigos, que
+  guardavam o emoji, são convertidos ao carregar (`normalizeConditions`).
+- **Guarda.** `client/src/ui/icons.test.ts` falha, apontando arquivo e linha, se
+  um emoji ou símbolo voltar ao código do cliente. Para um ícone novo: importe-o
+  do `lucide` em `icons.tsx` e dê a ele um nome no registro.
+
 ---
 
 ## Papéis e o que cada um recebe
@@ -123,7 +150,7 @@ terreno e os tokens — assim ela apaga o cenário e impede que um token dentro
 dela seja desenhado, em vez de apenas escurecê-lo por cima.
 
 O mestre pode ocultar camadas na própria tela sem afetar o que os jogadores
-recebem.
+recebem, em *Cena → Sua visão*.
 
 **Grid** quadrada ou hexagonal (ponta em cima ou lado em cima), com tamanho,
 deslocamento, cor e unidade de distância configuráveis, para casar com o desenho
@@ -231,13 +258,18 @@ olhos, em vez de ficar parado num canto do mapa quando você arrasta.
 
 Cada token escolhe como aparece, no inspetor da aba *Tokens*:
 
-- **Peça redonda** — a arte é recortada num disco e cabe na célula. É a peça
-  vista de cima, boa para mapa tático.
-- **Arte inteira** — a ilustração aparece por completo, de pé sobre a célula,
-  com a transparência preservada (use PNG recortado). A figura sobe para fora
-  do quadrado, e a célula deixa de ser a moldura para virar o chão onde ela
+- **Arte inteira** *(padrão)* — a ilustração aparece por completo, de pé sobre a
+  célula, com a transparência preservada (use PNG recortado). A figura sobe para
+  fora do quadrado, e a célula deixa de ser a moldura para virar o chão onde ela
   pisa: uma marca elipsoidal indica a posição e carrega a cor do dono e o
   destaque do turno.
+- **Peça redonda** — a arte é recortada num disco e cabe na célula. É a peça
+  vista de cima, boa para mapa tático.
+
+Todo token nasce como arte inteira, porque é assim que o personagem aparece na
+mesa — e a ficha já chega com uma imagem de corpo inteiro pedida na entrada. Sem
+imagem nenhuma, o token continua sendo desenhado como peça redonda, então nunca
+fica invisível.
 
 A escolha é **só visual**. A área que o token ocupa para movimento, visão e
 alcance continua sendo o tamanho declarado, não a altura do desenho — o
@@ -261,8 +293,8 @@ equivalente, com id novo, e o refazer seguinte apaga esse novo. Qualquer ação
 nova depois de um desfazer descarta o que havia para refazer.
 
 **Paredes** saem em sequência e **cada clique grava um trecho na hora** — não
-há rascunho a perder. `Enter`, `Esc` ou duplo clique encerram a sequência, e
-`Ctrl+Z` desmancha os trechos de trás para frente. Os vértices encaixam nos
+há rascunho a perder e não há nada a confirmar no fim. Duplo clique ou `Esc`
+encerram a sequência, e `Ctrl+Z` desmancha os trechos de trás para frente. Os vértices encaixam nos
 cantos da grade (`Ctrl` solta), então cercar uma sala são quatro cliques.
 
 Paredes vizinhas **se ligam sozinhas**: perto de uma ponta existente, o clique
@@ -287,6 +319,26 @@ dono, as barras do modelo e visão 1. Na aba *Fichas*, o mestre **arrasta uma
 ficha para o mapa**: se o personagem já está na cena, ele vai até o ponto; se
 não, nasce ali. Uma prévia encaixada na grade mostra onde e o que vai
 acontecer antes de soltar.
+
+### PV, PD e retratos do grupo
+
+As duas resistências do personagem são **PV** (Pontos de Vida, resistência
+física) e **PD** (Pontos de Determinação, resistência mental). O modelo padrão
+já nasce com elas; mesas antigas são migradas na leitura — "Vida" vira PV e
+"Energia" vira PD, sem mudar os valores das fichas.
+
+No canto inferior esquerdo do mapa ficam os **retratos do grupo**: a foto do
+personagem, o nome e PV e PD em quadradinhos, um por ponto, como na ficha
+impressa (acima de 20 pontos, vira barra). O retrato pisca ao perder ou
+recuperar pontos, pulsa com pouca resistência, ganha o selo *Morrendo* em 0 PV
+ou *Em colapso* em 0 PD, e brilha em latão na vez do personagem.
+
+- O jogador vê o próprio retrato primeiro e o dos colegas quando **Barras do
+  grupo** está ligado (aba *Mesa*); o mestre vê todos.
+- Clicar no retrato abre a ficha, para quem pode abri-la.
+- O botão **Grupo** recolhe os retratos.
+- O que conta como PV e PD é o **papel no retrato**, escolhido no editor do
+  modelo em cada recurso — o mestre pode renomear os campos à vontade.
 
 Ninguém vê o cursor dos outros — nem o mestre. Para apontar algo, use o ping.
 
@@ -325,6 +377,20 @@ Na prática o token **desliza até encostar** na parede e para lá, alinhado à
 grade. O teste é sobre a linha reta entre origem e destino, a mesma
 simplificação dos VTTs consagrados: contornar uma quina pode exigir mover em
 duas etapas.
+
+Token maior que uma célula é medido pelo **corpo inteiro**, de duas formas: o
+trajeto do centro e dos quatro cantos, e o lugar onde o corpo **para** — que não
+pode ficar em cima de uma parede. As duas coisas são necessárias. Tokens de
+tamanho par (2x2, 4x4) atravessavam qualquer parede porque o snap encaixa o
+centro deles exatamente sobre as linhas da grade, que é onde as paredes ficam, e
+um trajeto que apenas encosta na parede não a cruza: testando só o trajeto, o
+token afundava no muro meio passo por vez, já que o arraste entrega uma posição
+por quadro. Na prática o token grande desliza até encostar, igual ao pequeno.
+
+Pelo mesmo motivo, a visão sai do **centro geométrico** do token e não do centro
+da célula arredondada: num token de tamanho par esse arredondamento caía do
+outro lado do muro, e o personagem enxergava a sala vizinha enquanto ficava cego
+para a sala onde estava metade do corpo dele.
 
 ---
 
@@ -407,13 +473,80 @@ backup completo para quem tem acesso ao servidor.
 
 ## Turnos
 
-Ordem de iniciativa visível para todos, com a vez destacada na barra lateral e
-como anel pulsante no token ativo. O avanço é do mestre; ligando *"cada um passa
-o próprio turno"*, o jogador da vez encerra o próprio turno.
+As rodadas estão **sempre correndo** — elas não marcam combate, marcam o fluxo
+da mesa: de quem é a vez de agir e de descrever. Não há nada para abrir ou
+encerrar, a mesa começa na rodada 1 e o grupo já entra na ordem sozinho.
 
-`Rolar para todos` usa `1d20` somado ao campo `initiative` da ficha vinculada,
-quando ele existir — os valores continuam editáveis à mão, já que o sistema de
-regras é do mestre.
+A fila de miniaturas fica no **cabeçalho**, discreta e sempre visível, e **a
+ordem das miniaturas é a ordem dos turnos**. Quem a define é o mestre,
+arrastando cada uma para a posição que quiser.
+
+Não existe valor de iniciativa para digitar. Rolar `1d20` para decidir quem age
+primeiro é regra de um sistema específico, e um número fixo por participante não
+representa o que acontece de verdade numa briga: alguém atrasa a ação, um efeito
+adianta outro, um monstro entra no meio da rodada. Arrastar representa tudo isso
+e serve a qualquer sistema.
+
+| Gesto | O que faz |
+| --- | --- |
+| Arrastar a miniatura | Muda a posição dela na ordem |
+| Clicar na miniatura | Passa a vez para ela, sem percorrer a ordem |
+| `+` | Coloca na ordem quem está selecionado no mapa (monstros, aliados) |
+| Arrastar uma ficha do painel até a faixa | Coloca aquele personagem na ordem |
+| Pular / esconder / remover | Aparecem ao passar o mouse sobre a miniatura |
+
+A vez atual fica destacada na faixa (com o nome ao lado, ou *"sua vez"* para
+quem está com ela), no retrato do grupo e como anel pulsante no token do mapa. O
+**histórico** guarda quem agiu em cada rodada e responde a pergunta que sempre
+aparece: *"eu já agi nesta rodada?"*. Voltar a vez desfaz o registro, porque
+aquela vez não aconteceu.
+
+Nada ali rola: barra de rolagem no cabeçalho é um alvo minúsculo, e o que fica
+escondido dentro dela não é encontrado. A fila mostra até oito miniaturas — uma
+janela em volta de quem está com a vez — e conta o resto num `+N`; o histórico
+mostra as últimas doze vezes e conta as anteriores numa linha de texto.
+
+Quem entra na mesa já nasce na ordem, e quem sai dela sai da ordem junto.
+
+O que o mestre esconde, fica escondido: uma miniatura marcada como oculta não
+chega ao jogador — nem na ordem, nem no histórico, nem como "a vez de alguém".
+
+### Imagens do personagem
+
+Ao entrar, o jogador envia **duas** imagens, e a mesa só abre depois disso:
+
+- **Retrato** — o rosto. Vai para a ficha, para a lista de presença no cabeçalho
+  e para os retratos do grupo.
+- **Corpo inteiro** — vira a arte do token no mapa.
+
+São duas porque servem a enquadramentos diferentes: um retrato cortado no rosto
+fica irreconhecível visto de cima, e um corpo inteiro reduzido a um círculo de
+46px vira um borrão. As duas podem ser trocadas depois, pela ficha.
+
+---
+
+## Dados
+
+A rolagem acontece **no servidor** — decidida no navegador, seria só uma
+sugestão para quem abrisse o console.
+
+A bandeja fica embaixo do chat, com os sólidos que as mesas usam: **d4, d6, d8,
+d10, d12 e d20**. Cada clique soma mais um dado ao punhado (botão direito tira
+um), o campo `Mod` acrescenta o modificador fixo, e a fórmula montada aparece
+antes de rolar — `3d6+1d20+2`. É o gesto da mesa física: pegar os dados na mão
+antes de jogar, em vez de lembrar a sintaxe no meio da cena.
+
+Quem prefere digitar continua digitando, no campo de mensagem: `/r 2d6+3`,
+`/r 4d6kh3` (mantém os três melhores), `/r d20`. Os campos da ficha com fórmula
+também rolam sozinhos, pelo dado ao lado do campo.
+
+Enquanto o resultado não chega, o d20 do botão gira; quando chega, o total
+aparece no chat com os dados individuais entre colchetes.
+
+Cada mensagem do chat mostra o **retrato de quem falou** — o mesmo rosto da
+ficha, da lista de presença e da faixa de turnos. Num chat de cinco pessoas,
+reconhecer a cara é mais rápido do que ler o nome, ainda mais no meio de uma
+cena. Quem ainda não enviou retrato aparece com a inicial na própria cor.
 
 ---
 
@@ -449,11 +582,11 @@ na verdade é outra coisa é recusado.
 | `Delete` | Remover o que está selecionado (mestre) |
 | `Ctrl+Z` | Desfazer a última ação de mapa (mestre) |
 | `Ctrl+D` | Duplicar a seleção (mestre) |
-| `Enter` | Encerrar a parede em polilinha |
+| Duplo clique | Encerrar a parede em polilinha |
 | Botão direito / do meio | Move o mapa, em qualquer ferramenta |
 | `Shift` + clique | Soma o token à seleção |
 | `Ctrl` ao soltar | Ignora o encaixe na grid |
-| `Alt` ao encerrar a parede | Cria a sequência como porta |
+| `Alt` no clique da parede | Cria o trecho como porta avulsa |
 | `Alt` no dado da ficha | Sussurra a rolagem ao mestre |
 | `G` | Liga o medidor de quadros sobre o mapa |
 

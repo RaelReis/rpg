@@ -1,7 +1,7 @@
 import type { Ack, Result, Scene, Token } from '@rpg/shared';
 
 import type { TypedSocket } from '../broadcast.js';
-import type { Viewer } from '../filter.js';
+import { stateForViewer, type Viewer } from '../filter.js';
 import { rooms, type Room } from '../room.js';
 
 /** Utilidades compartilhadas pelos handlers: contexto, ack e permissoes. */
@@ -16,13 +16,15 @@ export function contextOf(socket: TypedSocket): Ctx | null {
   const data = socket.data;
   if (!data?.tableId || !data.viewer) return null;
   const room = rooms.get(data.tableId);
-  if (!room) return null;
-  return { room, viewer: data.viewer, socket };
+  const player = room?.player(data.viewer.playerId);
+  if (!room || !player || !room.sockets.has(socket.id)) return null;
+  socket.data.viewer = { playerId: player.id, role: player.role };
+  return { room, viewer: socket.data.viewer, socket };
 }
 
 /**
  * O ack vem do cliente e pode nao ser funcao: nos eventos sem payload
- * (`initiative:next`, por exemplo) ele e o PRIMEIRO argumento, e quem manda
+ * (`turns:next`, por exemplo) ele e o PRIMEIRO argumento, e quem manda
  * um objeto ali entrega um "ack" que `?.()` tentaria chamar. Conferir o tipo
  * aqui cobre todos os handlers de uma vez.
  */
@@ -30,8 +32,8 @@ export function ok<T>(ack: Ack<T> | undefined, data: T): void {
   if (typeof ack === 'function') ack({ ok: true, data });
 }
 
-export function fail(ack: Ack<never> | Ack<unknown> | undefined, error: string): void {
-  if (typeof ack === 'function') (ack as (r: Result<unknown>) => void)({ ok: false, error });
+export function fail(ack: Ack<never> | Ack<unknown> | undefined, error: string, code?: string): void {
+  if (typeof ack === 'function') (ack as (r: Result<unknown>) => void)({ ok: false, error, code });
 }
 
 export function isGm(ctx: Ctx): boolean {
@@ -90,7 +92,10 @@ export function canEditSheet(ctx: Ctx, sheetOwnerId: string | null): boolean {
  */
 export function ownedAsset(ctx: Ctx, id: unknown): string | null {
   if (typeof id !== 'string' || !id) return null;
-  return ctx.room.state.assets.some((a) => a.id === id) ? id : null;
+  const asset = ctx.room.state.assets.find(a => a.id === id);
+  if (!asset) return null;
+  if (isGm(ctx) || asset.uploadedBy === ctx.viewer.playerId) return id;
+  return stateForViewer(ctx.room, ctx.viewer).assets.some(a => a.id === id) ? id : null;
 }
 
 export function clampNumber(v: unknown, min: number, max: number, fallback: number): number {

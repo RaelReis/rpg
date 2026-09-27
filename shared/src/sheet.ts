@@ -8,6 +8,7 @@ import type {
   SheetField,
   SheetSection,
   SheetTemplate,
+  VitalRole,
 } from './types.js';
 
 /**
@@ -265,10 +266,80 @@ export function normalizeTemplate(raw: Partial<SheetTemplate> | null | undefined
         span: f?.span === 2 || f?.span === 3 ? f.span : 1,
         defaultValue: (f?.defaultValue ?? null) as FieldValue,
         rollFormula: text(f?.rollFormula, 100),
+        vital: f?.vital === 'pv' || f?.vital === 'pd' ? f.vital : null,
       };
     });
 
-  return { name: text(raw?.name, 60, 'Ficha'), sections, fields };
+  // Modelo gravado antes de existir o papel: nenhum campo traz a chave. So
+  // nesse caso o papel e deduzido; um `null` gravado e escolha do mestre.
+  const legacy = (Array.isArray(raw?.fields) ? raw.fields : []).every(
+    (f) => !f || typeof f !== 'object' || !('vital' in f),
+  );
+
+  return { name: text(raw?.name, 60, 'Ficha'), sections, fields: assignVitals(fields, legacy) };
+}
+
+/** Nomes que um modelo antigo usava para cada papel. */
+const LEGACY_VITALS: Record<VitalRole, { ids: string[]; labels: RegExp; label: string; description: string }> = {
+  pv: {
+    ids: ['hp', 'pv', 'vida', 'health'],
+    labels: /^(vida|pv|hp|pontos de vida|saude)$/i,
+    label: 'PV',
+    description: 'Pontos de Vida: resistencia fisica. Ferimentos tiram PV.',
+  },
+  pd: {
+    ids: ['energy', 'mana', 'mp', 'pd', 'determination', 'sanity'],
+    labels: /^(energia|mana|mp|pd|pontos de determinacao|determinacao|sanidade)$/i,
+    label: 'PD',
+    description: 'Pontos de Determinacao: resistencia mental. Traumas e esforco tiram PD.',
+  },
+};
+
+/**
+ * Garante no maximo um recurso de cada papel e, em modelos antigos, deduz
+ * quais eram eles.
+ *
+ * A deducao troca o nome so quando ele ainda e um dos nomes antigos ("Vida",
+ * "Energia", "Mana"): o valor da ficha fica no mesmo id, entao nenhum
+ * personagem perde o que ja tinha, e o recurso passa a aparecer como PV e PD.
+ */
+function assignVitals(fields: SheetField[], legacy: boolean): SheetField[] {
+  const taken = new Set<VitalRole>();
+
+  const out = fields.map((f) => {
+    if (f.type !== 'resource' || !f.vital || taken.has(f.vital)) return { ...f, vital: null };
+    taken.add(f.vital);
+    return f;
+  });
+
+  if (!legacy) return out;
+
+  for (const role of ['pv', 'pd'] as VitalRole[]) {
+    if (taken.has(role)) continue;
+    const spec = LEGACY_VITALS[role];
+    const index = out.findIndex(
+      (f) => f.type === 'resource' && !f.vital && (spec.ids.includes(f.id) || spec.labels.test(f.label.trim())),
+    );
+    if (index === -1) continue;
+
+    const f = out[index];
+    out[index] = {
+      ...f,
+      vital: role,
+      label: spec.labels.test(f.label.trim()) ? spec.label : f.label,
+      description: f.description || spec.description,
+    };
+    taken.add(role);
+  }
+  return out;
+}
+
+/** Os recursos de PV e PD do modelo, se existirem. */
+export function vitalFields(template: SheetTemplate): { pv: SheetField | null; pd: SheetField | null } {
+  return {
+    pv: template.fields.find((f) => f.type === 'resource' && f.vital === 'pv') ?? null,
+    pd: template.fields.find((f) => f.type === 'resource' && f.vital === 'pd') ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +361,7 @@ function field(partial: Partial<SheetField> & Pick<SheetField, 'id' | 'label' | 
     span: 1,
     defaultValue: null,
     rollFormula: '',
+    vital: null,
     ...partial,
   };
 }
@@ -314,8 +386,10 @@ export function createDefaultTemplate(): SheetTemplate {
       field({ id: 'level', label: 'Nivel', type: 'number', sectionId: 'identity', order: 1, min: 0, locked: true, defaultValue: 1 }),
       field({ id: 'background', label: 'Historia', type: 'longtext', sectionId: 'identity', order: 2, span: 3 }),
 
-      field({ id: 'hp', label: 'Vida', type: 'resource', sectionId: 'resources', order: 0, min: 0, max: 999, color: '#d9534f', showOnToken: true, defaultValue: { current: 20, max: 20 } }),
-      field({ id: 'energy', label: 'Energia', type: 'resource', sectionId: 'resources', order: 1, min: 0, max: 999, color: '#4a90d9', showOnToken: true, defaultValue: { current: 10, max: 10 } }),
+      // PV e PD: as duas resistencias do personagem. Os ids continuam `hp` e
+      // `energy` para as fichas antigas manterem os valores.
+      field({ id: 'hp', label: 'PV', type: 'resource', sectionId: 'resources', order: 0, min: 0, max: 999, color: '#d9534f', showOnToken: true, vital: 'pv', description: LEGACY_VITALS.pv.description, defaultValue: { current: 10, max: 10 } }),
+      field({ id: 'energy', label: 'PD', type: 'resource', sectionId: 'resources', order: 1, min: 0, max: 999, color: '#4a90d9', showOnToken: true, vital: 'pd', description: LEGACY_VITALS.pd.description, defaultValue: { current: 10, max: 10 } }),
       field({ id: 'actions', label: 'Acoes por turno', type: 'resource', sectionId: 'resources', order: 2, min: 0, max: 20, color: '#e0a33e', showOnToken: false, defaultValue: { current: 3, max: 3 } }),
 
       field({ id: 'defense', label: 'Defesa', type: 'number', sectionId: 'attributes', order: 0, min: 0, defaultValue: 10 }),
@@ -333,4 +407,15 @@ export function createDefaultTemplate(): SheetTemplate {
 /** Campos marcados para virar barra sobre o token. */
 export function tokenBarFields(template: SheetTemplate): SheetField[] {
   return template.fields.filter((f) => f.type === 'resource' && f.showOnToken);
+}
+
+/** Rewrite only image fields; arbitrary text can contain strings resembling IDs. */
+export function remapSheetImages(template: SheetTemplate, values: Sheet['values'], remap: (id: string | null) => string | null): Sheet['values'] {
+  const result = { ...values };
+  for (const field of template.fields) {
+    const value = result[field.id];
+    if (field.type === 'image' && typeof value === 'string') result[field.id] = remap(value);
+    if (field.type === 'inventory' && Array.isArray(value)) result[field.id] = value.map(item => ({ ...item, assetId: remap(item.assetId) }));
+  }
+  return result;
 }

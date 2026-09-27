@@ -3,9 +3,8 @@ import type {
   Cell,
   ChatMessage,
   FieldValue,
+  InventoryItem,
   Handout,
-  InitiativeEntry,
-  InitiativeState,
   Layer,
   MapEffect,
   Player,
@@ -16,6 +15,8 @@ import type {
   SheetTemplate,
   TableSettings,
   TableState,
+  TurnEntry,
+  TurnState,
   Tile,
   Token,
   Wall,
@@ -35,7 +36,17 @@ import type {
 
 export type Ack<T> = (response: Result<T>) => void;
 
-export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+export type Result<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
+
+export interface SheetOperation {
+  sheetId: string;
+  fieldId: string;
+  action: 'adjust' | 'resource' | 'add' | 'update' | 'remove';
+  delta?: number;
+  resource?: { current?: number; max?: number };
+  itemId?: string;
+  item?: Partial<InventoryItem>;
+}
 
 export interface JoinRequest {
   code: string;
@@ -62,6 +73,19 @@ export interface TokenMovePayload {
   x: number;
   y: number;
   /** Movimento ainda em curso (arraste): o servidor nao persiste ainda. */
+  dragging?: boolean;
+}
+
+/**
+ * Varios tokens movidos no mesmo quadro de arraste, num evento so.
+ *
+ * Um `token:move` por token por quadro estourava o limite de eventos do socket
+ * ao arrastar um grupo — e, sem ack, a recusa era silenciosa: os tokens
+ * voltavam ao lugar de antes quando a pessoa soltava.
+ */
+export interface TokensMovePayload {
+  sceneId: string;
+  moves: { tokenId: string; x: number; y: number }[];
   dragging?: boolean;
 }
 
@@ -149,6 +173,8 @@ export interface ClientToServerEvents {
   'token:create': (payload: { sceneId: string; token: Partial<Token> }, ack: Ack<Token>) => void;
   'token:update': (payload: { sceneId: string; tokenId: string; patch: Partial<Token> }, ack: Ack<null>) => void;
   'token:move': (payload: TokenMovePayload, ack?: Ack<null>) => void;
+  /** Lote de um quadro de arraste; sem ack, como o movimento continuo. */
+  'tokens:move': (payload: TokensMovePayload) => void;
   'token:delete': (payload: { sceneId: string; tokenId: string }, ack: Ack<null>) => void;
 
   'tile:create': (payload: { sceneId: string; tile: Partial<Tile> }, ack: Ack<Tile>) => void;
@@ -166,11 +192,12 @@ export interface ClientToServerEvents {
   'fog:paint': (payload: FogPaintPayload, ack?: Ack<null>) => void;
   'fog:reset': (payload: FogResetPayload, ack: Ack<null>) => void;
 
-  'template:update': (template: SheetTemplate, ack: Ack<null>) => void;
+  'template:update': (template: SheetTemplate, ack: Ack<true>) => void;
 
   'sheet:create': (payload: { name: string; ownerPlayerId?: string | null }, ack: Ack<Sheet>) => void;
   'sheet:update': (payload: { sheetId: string; values?: Record<string, FieldValue>; name?: string; portraitAssetId?: string | null; sharedWithParty?: boolean }, ack: Ack<null>) => void;
   'sheet:delete': (payload: { sheetId: string }, ack: Ack<null>) => void;
+  'sheet:operate': (payload: SheetOperation, ack: Ack<null>) => void;
   'sheet:assign': (payload: { sheetId: string; playerId: string | null }, ack: Ack<null>) => void;
   /**
    * Rola a formula de um campo da ficha. Quem resolve as referencias e joga
@@ -179,12 +206,24 @@ export interface ClientToServerEvents {
    */
   'sheet:roll': (payload: { sheetId: string; fieldId: string; whisper?: boolean }, ack: Ack<null>) => void;
 
-  'initiative:update': (patch: Partial<InitiativeState>, ack: Ack<null>) => void;
-  'initiative:add': (payload: { entry: Partial<InitiativeEntry> }, ack: Ack<null>) => void;
-  'initiative:remove': (payload: { entryId: string }, ack: Ack<null>) => void;
-  'initiative:next': (ack: Ack<null>) => void;
-  'initiative:previous': (ack: Ack<null>) => void;
-  'initiative:roll': (ack: Ack<null>) => void;
+  /**
+   * As duas imagens do personagem, enviadas pelo proprio jogador ao entrar:
+   * retrato (ficha e grupo) e corpo inteiro (token no mapa).
+   */
+  'character:images': (
+    payload: { portraitAssetId: string; bodyAssetId: string },
+    ack: Ack<null>,
+  ) => void;
+
+  'turns:add': (payload: { entries: Partial<TurnEntry>[] }, ack: Ack<null>) => void;
+  'turns:remove': (payload: { entryId: string }, ack: Ack<null>) => void;
+  /** Nova ordem completa, como o mestre deixou as miniaturas. */
+  'turns:reorder': (payload: { entryIds: string[] }, ack: Ack<null>) => void;
+  'turns:update': (payload: { entryId: string; patch: Partial<TurnEntry> }, ack: Ack<null>) => void;
+  /** Passa a vez para uma miniatura especifica, sem percorrer a ordem. */
+  'turns:set': (payload: { entryId: string }, ack: Ack<null>) => void;
+  'turns:next': (ack: Ack<null>) => void;
+  'turns:previous': (ack: Ack<null>) => void;
 
   'player:update': (patch: { name?: string; color?: string }, ack: Ack<null>) => void;
   'player:kick': (payload: { playerId: string }, ack: Ack<null>) => void;
@@ -219,6 +258,12 @@ export interface ServerToClientEvents {
 
   'tokens:patch': (payload: TokensPatch) => void;
   'token:moved': (payload: { sceneId: string; tokenId: string; x: number; y: number }) => void;
+  /**
+   * So para quem arrasta: o passo foi recusado por uma parede, e o token segue
+   * em `x`/`y`. Com strictVision o jogador nao recebe as paredes comuns, entao
+   * a previa local nao tem como saber sozinha onde parar.
+   */
+  'token:blocked': (payload: { sceneId: string; tokenId: string; x: number; y: number }) => void;
 
   'tiles:patch': (payload: { sceneId: string; upsert?: Tile[]; remove?: string[] }) => void;
   'effects:patch': (payload: { sceneId: string; upsert?: MapEffect[]; remove?: string[] }) => void;
@@ -228,7 +273,7 @@ export interface ServerToClientEvents {
   'sheets:patch': (payload: { upsert?: Sheet[]; remove?: string[] }) => void;
   'template:patch': (template: SheetTemplate) => void;
   'players:patch': (players: Player[]) => void;
-  'initiative:patch': (initiative: InitiativeState) => void;
+  'turns:patch': (turns: TurnState) => void;
   'settings:patch': (settings: TableSettings) => void;
   'assets:patch': (payload: { upsert?: Asset[]; remove?: string[] }) => void;
   'handouts:patch': (payload: { upsert?: Handout[]; remove?: string[] }) => void;

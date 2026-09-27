@@ -12,8 +12,9 @@ import {
 
 import { uploadAsset } from '../net/api';
 import { act } from '../net/socket';
+import { Icon } from './icons';
 import { findAsset, isGm, useStore } from '../state/store';
-import { Empty } from './common';
+import { Empty, Section } from './common';
 
 /**
  * Renderiza uma ficha a partir do template da mesa.
@@ -26,7 +27,15 @@ import { Empty } from './common';
 
 const COMMIT_DELAY_MS = 420;
 
-export function SheetView({ sheet }: { sheet: Sheet }): JSX.Element {
+export function SheetView({
+  sheet,
+  onExpand,
+}: {
+  sheet: Sheet;
+  /** So passado por quem mostra a ficha espremida na aba lateral (~320px);
+   * a ficha aberta no modal largo ja e o destino, entao nao ganha o botao. */
+  onExpand?: () => void;
+}): JSX.Element {
   const table = useStore((s) => s.table);
   const gm = useStore(isGm);
   const playerId = useStore((s) => s.session?.playerId ?? null);
@@ -57,12 +66,11 @@ export function SheetView({ sheet }: { sheet: Sheet }): JSX.Element {
   const role = gm ? 'GM' : 'PLAYER';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <SheetHeader sheet={sheet} canEdit={gm || isOwner} />
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <SheetHeader sheet={sheet} canEdit={gm || isOwner} onExpand={onExpand} />
 
       {sections.map(({ section, fields }) => (
-        <div key={section.id} style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-          <span className="label">{section.label}</span>
+        <Section key={section.id} title={section.label} collapsible>
           <div className="fields">
             {fields.map((field) => (
               <div key={field.id} className={`span-${field.span}`}>
@@ -70,11 +78,12 @@ export function SheetView({ sheet }: { sheet: Sheet }): JSX.Element {
                   field={field}
                   sheet={sheet}
                   editable={canEditField(field, role, isOwner)}
+                  allFields={template.fields}
                 />
               </div>
             ))}
           </div>
-        </div>
+        </Section>
       ))}
     </div>
   );
@@ -82,10 +91,19 @@ export function SheetView({ sheet }: { sheet: Sheet }): JSX.Element {
 
 // ---------------------------------------------------------------------------
 
-function SheetHeader({ sheet, canEdit }: { sheet: Sheet; canEdit: boolean }): JSX.Element {
+function SheetHeader({
+  sheet,
+  canEdit,
+  onExpand,
+}: {
+  sheet: Sheet;
+  canEdit: boolean;
+  onExpand?: () => void;
+}): JSX.Element {
   const notify = useStore((s) => s.notify);
   const gm = useStore(isGm);
   const inputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLInputElement>(null);
   const portrait = findAsset(sheet.portraitAssetId);
 
   async function uploadPortrait(file: File | undefined): Promise<void> {
@@ -115,11 +133,21 @@ function SheetHeader({ sheet, canEdit }: { sheet: Sheet; canEdit: boolean }): JS
           onClick={() => canEdit && inputRef.current?.click()}
           title={canEdit ? 'Enviar retrato' : undefined}
         >
-          ☺
+          <Icon name="portrait" size="lg" />
         </div>
       )}
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 7, minWidth: 0 }}>
+        {canEdit && <div className="row wrap">
+          <button className="btn sm" onClick={() => inputRef.current?.click()}>Trocar retrato</button>
+          <button className="btn sm" onClick={() => bodyRef.current?.click()}>Trocar corpo inteiro</button>
+        </div>}
+        <input ref={bodyRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden onChange={async e => {
+          const file = e.target.files?.[0]; if (!file) return;
+          try { const asset = await uploadAsset(file, 'token'); await act('sheet:update', { sheetId: sheet.id, bodyAssetId: asset.id }); }
+          catch (err) { notify('error', (err as Error).message); }
+          finally { if (bodyRef.current) bodyRef.current.value = ''; }
+        }} />
         <DebouncedInput
           className="input"
           value={sheet.name}
@@ -155,6 +183,18 @@ function SheetHeader({ sheet, canEdit }: { sheet: Sheet; canEdit: boolean }): JS
         )}
       </div>
 
+      {onExpand && (
+        <button
+          type="button"
+          className="btn ghost sm icon-only"
+          onClick={onExpand}
+          title="Abrir a ficha inteira numa janela maior"
+          aria-label="Abrir a ficha inteira numa janela maior"
+        >
+          <Icon name="expandView" size="sm" />
+        </button>
+      )}
+
       <input
         ref={inputRef}
         type="file"
@@ -172,10 +212,12 @@ function FieldEditor({
   field,
   sheet,
   editable,
+  allFields,
 }: {
   field: SheetField;
   sheet: Sheet;
   editable: boolean;
+  allFields: SheetField[];
 }): JSX.Element {
   const value = sheet.values[field.id];
 
@@ -183,7 +225,7 @@ function FieldEditor({
     void act('sheet:update', { sheetId: sheet.id, values: { [field.id]: next } });
   };
 
-  const label = <FieldLabel field={field} sheet={sheet} editable={editable} />;
+  const label = <FieldLabel field={field} sheet={sheet} editable={editable} allFields={allFields} />;
 
   switch (field.type) {
     case 'longtext':
@@ -255,12 +297,14 @@ function FieldEditor({
           value={isResourceValue(value) ? value : { current: 0, max: 0 }}
           editable={editable}
           onCommit={commit}
+          allFields={allFields}
         />
       );
 
     case 'inventory':
       return (
         <InventoryEditor
+          sheet={sheet}
           field={field}
           items={Array.isArray(value) ? value : []}
           editable={editable}
@@ -304,16 +348,21 @@ function FieldLabel({
   field,
   sheet,
   editable,
+  allFields,
 }: {
   field: SheetField;
   sheet: Sheet;
   editable: boolean;
+  allFields: SheetField[];
 }): JSX.Element {
   const [rolling, setRolling] = useState(false);
   // O servidor normaliza o template ao carregar, mas nao custa nada aceitar
   // um campo incompleto aqui: derrubar a ficha inteira por causa de uma
   // propriedade ausente e uma troca ruim.
   const canRoll = (field.rollFormula ?? '').trim().length > 0;
+  // So aparecia ao passar o mouse no dado — quem ve a ficha pela primeira vez
+  // nao tinha como saber, so olhando, que Pesquisar soma com Mente.
+  const linkedWith = canRoll ? referencedFieldLabels(field, allFields) : [];
 
   async function roll(e: React.MouseEvent): Promise<void> {
     // Alt rola em sussurro: teste de percepcao sem entregar o resultado.
@@ -325,10 +374,16 @@ function FieldLabel({
 
   return (
     <span className="label label-row" title={field.description || undefined}>
-      <span>
-        {field.label}
-        {field.gmOnly && ' · mestre'}
-        {field.locked && !editable && ' 🔒'}
+      <span className="label-main">
+        <span className="label-text">
+          {field.label}
+          {field.gmOnly && ' · mestre'}
+          {field.locked && !editable && <Icon name="locked" size="sm" label="travado" className="inline-icon" />}
+        </span>
+        {/* Altura reservada mesmo vazia (ver CSS `.label-main`): perícias
+            vizinhas sem legenda nao podem empurrar so a delas pra baixo,
+            desalinhando a grade de 3 colunas linha a linha. */}
+        {linkedWith.length > 0 && <span className="field-linked">{linkedWith.join(' + ')}</span>}
       </span>
       {canRoll && (
         <button
@@ -337,12 +392,35 @@ function FieldLabel({
           disabled={rolling}
           onClick={(e) => void roll(e)}
           title={`Rolar ${field.rollFormula} — Alt para sussurrar ao mestre`}
+          aria-label={`Rolar ${field.label}`}
         >
-          🎲
+          <Icon name="roll" size="sm" />
         </button>
       )}
     </span>
   );
+}
+
+/**
+ * Outros campos citados na formula, pelo nome — nao pelo id.
+ *
+ * `1d@per_pesquisar+1d@atr_mente` na propria Pesquisar deve mostrar so
+ * "Mente": a propria perícia ja esta escrita no rotulo, repeti-la no
+ * subtitulo so faria ruido.
+ */
+function referencedFieldLabels(field: SheetField, allFields: SheetField[]): string[] {
+  const ids = [...field.rollFormula.matchAll(/@([A-Za-z0-9_-]+)/g)]
+    .map((m) => m[1])
+    .filter((id) => id !== field.id);
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const label = allFields.find((f) => f.id === id)?.label;
+    if (label) labels.push(label);
+  }
+  return labels;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,23 +432,24 @@ function ResourceEditor({
   value,
   editable,
   onCommit,
+  allFields,
 }: {
   field: SheetField;
   sheet: Sheet;
   value: ResourceValue;
   editable: boolean;
   onCommit: (v: FieldValue) => void;
+  allFields: SheetField[];
 }): JSX.Element {
   const ratio = value.max > 0 ? Math.max(0, Math.min(1, value.current / value.max)) : 0;
 
   const adjust = (delta: number): void => {
-    const current = Math.max(field.min ?? 0, Math.min(value.max, value.current + delta));
-    onCommit({ ...value, current });
+    void act('sheet:operate', { sheetId: sheet.id, fieldId: field.id, action: 'adjust', delta });
   };
 
   return (
     <div className="resource">
-      <FieldLabel field={field} sheet={sheet} editable={editable} />
+      <FieldLabel field={field} sheet={sheet} editable={editable} allFields={allFields} />
 
       <div className="bar">
         <div
@@ -388,11 +467,11 @@ function ResourceEditor({
       <div className="row">
         {editable && (
           <>
-            <button className="btn sm" onClick={() => adjust(-1)} title="-1">
-              −
+            <button className="btn sm icon-only" onClick={() => adjust(-1)} title="-1" aria-label="Diminuir 1">
+              <Icon name="remove" size="sm" />
             </button>
-            <button className="btn sm" onClick={() => adjust(1)} title="+1">
-              +
+            <button className="btn sm icon-only" onClick={() => adjust(1)} title="+1" aria-label="Aumentar 1">
+              <Icon name="add" size="sm" />
             </button>
           </>
         )}
@@ -401,7 +480,7 @@ function ResourceEditor({
           type="number"
           value={String(value.current)}
           disabled={!editable}
-          onCommit={(v) => onCommit({ ...value, current: Number(v) || 0 })}
+          onCommit={(v) => void act('sheet:operate', { sheetId: sheet.id, fieldId: field.id, action: 'resource', resource: { current: Number(v) || 0 } })}
         />
         <span className="hint">de</span>
         <DebouncedInput
@@ -412,7 +491,7 @@ function ResourceEditor({
           onCommit={(v) => {
             const max = Number(v) || 0;
             // Reduzir o maximo nao pode deixar o atual acima dele.
-            onCommit({ max, current: Math.min(value.current, max) });
+            void act('sheet:operate', { sheetId: sheet.id, fieldId: field.id, action: 'resource', resource: { max } });
           }}
         />
       </div>
@@ -424,12 +503,14 @@ function ResourceEditor({
 
 /** Inventario: itens com quantidade, icone proprio e marcacao de equipado. */
 function InventoryEditor({
+  sheet,
   field,
   items,
   editable,
   onCommit,
 }: {
   field: SheetField;
+  sheet: Sheet;
   items: InventoryItem[];
   editable: boolean;
   onCommit: (v: FieldValue) => void;
@@ -439,7 +520,7 @@ function InventoryEditor({
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
 
   const update = (id: string, patch: Partial<InventoryItem>): void => {
-    onCommit(items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    void act('sheet:operate', { sheetId: sheet.id, fieldId: field.id, action: 'update', itemId: id, item: patch });
   };
 
   async function uploadIcon(file: File | undefined): Promise<void> {
@@ -464,20 +545,10 @@ function InventoryEditor({
           <button
             className="btn sm"
             onClick={() =>
-              onCommit([
-                ...items,
-                {
-                  id: generateId('itm'),
-                  name: 'Novo item',
-                  quantity: 1,
-                  assetId: null,
-                  description: '',
-                  equipped: false,
-                },
-              ])
+              void act('sheet:operate', { sheetId: sheet.id, fieldId: field.id, action: 'add' })
             }
           >
-            + Item
+            <Icon name="add" size="sm" /> Item
           </button>
         )}
       </div>
@@ -492,6 +563,10 @@ function InventoryEditor({
               <div key={item.id} className={`inv-item${item.equipped ? ' equipped' : ''}`}>
                 {asset ? (
                   <img
+                    role={editable ? 'button' : undefined}
+                    tabIndex={editable ? 0 : undefined}
+                    aria-label="Trocar imagem do item"
+                    onKeyDown={e => { if (editable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setUploadingFor(item.id); fileRef.current?.click(); } }}
                     className="inv-icon"
                     src={asset.thumbUrl ?? asset.url}
                     alt=""
@@ -503,6 +578,10 @@ function InventoryEditor({
                   />
                 ) : (
                   <div
+                    role={editable ? 'button' : undefined}
+                    tabIndex={editable ? 0 : undefined}
+                    aria-label="Trocar imagem do item"
+                    onKeyDown={e => { if (editable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setUploadingFor(item.id); fileRef.current?.click(); } }}
                     className="inv-icon"
                     onClick={() => {
                       if (!editable) return;
@@ -546,15 +625,19 @@ function InventoryEditor({
                     <button
                       className={`btn sm${item.equipped ? ' primary' : ''}`}
                       title="Equipado"
+                      aria-label="Equipado"
+                      aria-pressed={item.equipped}
                       onClick={() => update(item.id, { equipped: !item.equipped })}
                     >
-                      ⚔
+                      <Icon name="equipped" size="sm" />
                     </button>
                     <button
-                      className="btn ghost sm"
-                      onClick={() => onCommit(items.filter((i) => i.id !== item.id))}
+                      className="btn ghost sm icon-only"
+                      title="Excluir item"
+                      aria-label="Excluir item"
+                      onClick={() => void act('sheet:operate', { sheetId: sheet.id, fieldId: field.id, action: 'remove', itemId: item.id })}
                     >
-                      ✕
+                      <Icon name="delete" size="sm" />
                     </button>
                   </>
                 )}
@@ -617,6 +700,7 @@ function ImageFieldEditor({
           Enviar imagem
         </button>
       )}
+      {asset && editable && <button className="btn sm" onClick={() => inputRef.current?.click()}>Trocar imagem</button>}
       <input
         ref={inputRef}
         type="file"
@@ -637,80 +721,37 @@ function ImageFieldEditor({
  * replicada para a mesa inteira. O valor externo so sobrescreve o local
  * quando o campo nao esta em foco, para nao arrancar o texto de quem digita.
  */
-function DebouncedInput({
-  value,
-  onCommit,
-  ...rest
-}: {
-  value: string;
-  onCommit: (v: string) => void;
-} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>): JSX.Element {
+function useDebouncedValue(value: string, onCommit: (value: string) => void) {
   const [local, setLocal] = useState(value);
   const focused = useRef(false);
-  const timer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    if (!focused.current) setLocal(value);
-  }, [value]);
-
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-
-  return (
-    <input
-      {...rest}
-      value={local}
-      onFocus={() => (focused.current = true)}
-      onBlur={() => {
-        focused.current = false;
-        window.clearTimeout(timer.current);
-        if (local !== value) onCommit(local);
-      }}
-      onChange={(e) => {
-        const next = e.target.value;
-        setLocal(next);
-        window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(() => onCommit(next), COMMIT_DELAY_MS);
-      }}
-    />
-  );
+  const pending = useRef<string | undefined>();
+  const timer = useRef<number>();
+  const commit = useRef(onCommit); commit.current = onCommit;
+  const flush = () => {
+    window.clearTimeout(timer.current);
+    if (pending.current !== undefined) { const next = pending.current; pending.current = undefined; commit.current(next); }
+  };
+  useEffect(() => { if (!focused.current && pending.current === undefined) setLocal(value); }, [value]);
+  useEffect(() => () => flush(), []);
+  return {
+    value: local,
+    onFocus: () => { focused.current = true; },
+    onBlur: () => { focused.current = false; flush(); },
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const next = e.target.value; setLocal(next); pending.current = next;
+      window.clearTimeout(timer.current); timer.current = window.setTimeout(flush, COMMIT_DELAY_MS);
+    },
+  };
 }
-
-function DebouncedTextarea({
-  value,
-  onCommit,
-  disabled,
-}: {
-  value: string;
-  onCommit: (v: string) => void;
-  disabled?: boolean;
+function DebouncedInput({ value, onCommit, ...rest }: {
+  value: string; onCommit: (v: string) => void;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>): JSX.Element {
+  const props = useDebouncedValue(value, onCommit);
+  return <input {...rest} {...props} />;
+}
+function DebouncedTextarea({ value, onCommit, disabled }: {
+  value: string; onCommit: (v: string) => void; disabled?: boolean;
 }): JSX.Element {
-  const [local, setLocal] = useState(value);
-  const focused = useRef(false);
-  const timer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    if (!focused.current) setLocal(value);
-  }, [value]);
-
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-
-  return (
-    <textarea
-      className="textarea"
-      value={local}
-      disabled={disabled}
-      onFocus={() => (focused.current = true)}
-      onBlur={() => {
-        focused.current = false;
-        window.clearTimeout(timer.current);
-        if (local !== value) onCommit(local);
-      }}
-      onChange={(e) => {
-        const next = e.target.value;
-        setLocal(next);
-        window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(() => onCommit(next), COMMIT_DELAY_MS);
-      }}
-    />
-  );
+  const props = useDebouncedValue(value, onCommit);
+  return <textarea className="textarea" disabled={disabled} {...props} />;
 }

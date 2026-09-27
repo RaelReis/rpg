@@ -1,9 +1,13 @@
 import {
   createSheetValues,
+  canEditField,
+  isResourceValue,
+  type SheetOperation,
   filterTemplateForRole,
   generateId,
   normalizeTemplate,
   reconcileSheetValues,
+  remapSheetImages,
   resolveFormulaRefs,
   rollFormula,
   sanitizeSheetPatch,
@@ -16,11 +20,11 @@ import {
   type SheetTemplate,
 } from '@rpg/shared';
 
-import { emitPlayers, emitTokenUpsert, socketsOf, syncAssets } from '../broadcast.js';
+import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, socketsOf, syncAssets } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import { assetIdsOfSheet, sheetForViewer } from '../filter.js';
-import { spawnCharacterToken, syncCharacterOwner } from './characters.js';
+import { applyCharacterArt, spawnCharacterToken, syncCharacterOwner } from './characters.js';
 import { publishChat } from './play.js';
 import type { Room } from '../room.js';
 import { clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
@@ -35,18 +39,18 @@ import { clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from '.
  */
 
 /** Envia uma ficha a cada socket na versao que ele pode ver. */
-function emitSheet(room: Room, sheet: Sheet): void {
+export function emitSheet(room: Room, sheet: Sheet): void {
   for (const socket of socketsOf(room)) {
     const visible = sheetForViewer(room, sheet, socket.data.viewer);
     if (visible) {
-      syncAssets(room, socket, assetIdsOfSheet(visible));
+      syncAssets(room, socket, assetIdsOfSheet(visible, room.state.sheetTemplate));
       socket.emit('sheets:patch', { upsert: [visible] });
     }
     else socket.emit('sheets:patch', { remove: [sheet.id] });
   }
 }
 
-export function updateTemplate(ctx: Ctx, raw: SheetTemplate, ack: Ack<null>): void {
+export function updateTemplate(ctx: Ctx, raw: SheetTemplate, ack: Ack<true>): void {
   const template = normalizeTemplate(raw);
   ctx.room.state.sheetTemplate = template;
 
@@ -58,17 +62,18 @@ export function updateTemplate(ctx: Ctx, raw: SheetTemplate, ack: Ack<null>): vo
   ctx.room.touch('table');
   ctx.room.touch('sheets');
 
-  for (const socket of socketsOf(ctx.room)) {
-    const viewer = socket.data.viewer;
-    socket.emit('template:patch', filterTemplateForRole(template, viewer.role));
-
-    const sheets = ctx.room.state.sheets
-      .map((s) => sheetForViewer(ctx.room, s, viewer))
-      .filter((s): s is Sheet => s !== null);
-    syncAssets(ctx.room, socket, sheets.flatMap(assetIdsOfSheet));
-    socket.emit('sheets:patch', { upsert: sheets });
+  for (const scene of ctx.room.state.scenes) {
+    for (const token of scene.tokens) {
+      token.bars = token.bars.filter(b => template.fields.some(f => f.id === b.fieldId && !f.gmOnly && f.type === 'resource'));
+    }
+    ctx.room.touchScene(scene.id);
   }
-  ok(ack, null);
+  sendFullStateToAll(ctx.room);
+  // `null` seria ambiguo aqui: e o mesmo valor que `act()` devolve numa
+  // falha, entao quem chama nunca saberia distinguir "salvou" de "nao salvou"
+  // so olhando o retorno. Isso deixava o modal do editor de ficha sem fechar
+  // depois de salvar, mesmo quando o modelo ja tinha ido para a mesa.
+  ok(ack, true);
 }
 
 export async function createSheet(
@@ -82,6 +87,7 @@ export async function createSheet(
     id: generateId('sht'),
     name: safeString(payload?.name, 60, 'Nova ficha') || 'Nova ficha',
     portraitAssetId: null,
+    bodyAssetId: null,
     ownerPlayerId: payload?.ownerPlayerId ?? null,
     values: createSheetValues(ctx.room.state.sheetTemplate),
     sharedWithParty: false,
@@ -97,6 +103,7 @@ export async function createSheet(
         name: sheet.name,
         ownerPlayerId: sheet.ownerPlayerId,
         portraitAssetId: null,
+        bodyAssetId: null,
         values: toJson(sheet.values),
         sharedWithParty: false,
       },
@@ -138,6 +145,7 @@ export function updateSheet(
     values?: Record<string, FieldValue>;
     name?: string;
     portraitAssetId?: string | null;
+    bodyAssetId?: string | null;
     sharedWithParty?: boolean;
   },
   ack: Ack<null>,
@@ -153,7 +161,8 @@ export function updateSheet(
     // O patch e filtrado campo a campo: o cliente pode mandar qualquer coisa,
     // mas campos travados ou exclusivos do mestre sao descartados aqui.
     const safe = sanitizeSheetPatch(ctx.room.state.sheetTemplate, payload.values, ctx.viewer.role, isOwner);
-    Object.assign(sheet.values, safe);
+    const linked = remapSheetImages(ctx.room.state.sheetTemplate, safe, id => ownedAsset(ctx, id));
+    Object.assign(sheet.values, linked);
   }
 
   if (payload.name !== undefined && (gm || isOwner)) {
@@ -163,6 +172,12 @@ export function updateSheet(
     const previous = sheet.portraitAssetId;
     sheet.portraitAssetId = ownedAsset(ctx, payload.portraitAssetId);
     if (sheet.portraitAssetId !== previous) portraitChanged(ctx, sheet, previous);
+  }
+  if (payload.bodyAssetId !== undefined && (gm || isOwner)) {
+    const previous = sheet.bodyAssetId;
+    sheet.bodyAssetId = ownedAsset(ctx, payload.bodyAssetId);
+    // A imagem de corpo E a arte do token: trocar uma troca a outra.
+    if (sheet.bodyAssetId !== previous) applyCharacterArt(ctx.room, sheet);
   }
   if (payload.sharedWithParty !== undefined && (gm || isOwner)) {
     sheet.sharedWithParty = Boolean(payload.sharedWithParty);
@@ -195,6 +210,17 @@ export function deleteSheet(ctx: Ctx, payload: { sheetId: string }, ack: Ack<nul
       player.sheetId = null;
       ctx.room.touchPlayer(player.id);
     }
+  }
+
+  // A ficha apagada sai da ordem de turnos com o resto dos vinculos.
+  const turns = ctx.room.state.turns;
+  const remaining = turns.entries.filter((e) => e.sheetId !== removed.id);
+  if (remaining.length !== turns.entries.length) {
+    const goneActive = !remaining.some((e) => e.id === turns.activeEntryId);
+    turns.entries = remaining;
+    if (goneActive) turns.activeEntryId = remaining.find((e) => !e.skipped)?.id ?? null;
+    ctx.room.touch('table');
+    emitTurns(ctx.room);
   }
 
   for (const socket of socketsOf(ctx.room)) socket.emit('sheets:patch', { remove: [removed.id] });
@@ -278,3 +304,40 @@ export function assignSheet(
 }
 
 export { clampNumber };
+
+/** Operations are applied synchronously against current state, never a client snapshot. */
+export function operateSheet(ctx: Ctx, payload: SheetOperation, ack: Ack<null>): void {
+  const sheet = ctx.room.sheet(payload?.sheetId);
+  const field = ctx.room.state.sheetTemplate.fields.find(f => f.id === payload?.fieldId);
+  if (!sheet || !field || !canEditField(field, ctx.viewer.role, sheet.ownerPlayerId === ctx.viewer.playerId)) return fail(ack, 'Voce nao pode editar este campo.');
+  const value = sheet.values[field.id];
+  let next: FieldValue;
+  if (field.type === 'resource' && isResourceValue(value)) {
+    if (payload.action === 'adjust') next = { ...value, current: value.current + clampNumber(payload.delta, -10000, 10000, 0) };
+    else if (payload.action === 'resource') next = {
+      current: clampNumber(payload.resource?.current, -1000000, 1000000, value.current),
+      max: clampNumber(payload.resource?.max, 0, 1000000, value.max),
+    };
+    else return fail(ack, 'Operacao invalida.');
+  } else if (field.type === 'inventory' && Array.isArray(value)) {
+    if (payload.action === 'add') {
+      if (value.length >= 200) return fail(ack, 'Limite de itens atingido.');
+      next = [...value, { id: generateId('itm'), name: 'Novo item', quantity: 1, description: '', equipped: false, assetId: null }];
+    } else {
+      const item = value.find(i => i.id === payload.itemId);
+      if (!item) return fail(ack, 'Item nao encontrado.');
+      if (payload.action === 'remove') next = value.filter(i => i.id !== item.id);
+      else if (payload.action === 'update') {
+        const patch = payload.item ?? {};
+        next = value.map(i => i.id !== item.id ? i : { ...i,
+          name: safeString(patch.name, 120, i.name),
+          description: safeString(patch.description, 2000, i.description),
+          quantity: clampNumber(patch.quantity, 0, 1000000, i.quantity),
+          equipped: typeof patch.equipped === 'boolean' ? patch.equipped : i.equipped,
+          assetId: patch.assetId === undefined ? i.assetId : ownedAsset(ctx, patch.assetId),
+        });
+      } else return fail(ack, 'Operacao invalida.');
+    }
+  } else return fail(ack, 'Tipo de campo incompativel.');
+  updateSheet(ctx, { sheetId: sheet.id, values: { [field.id]: next } }, ack);
+}

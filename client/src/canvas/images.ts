@@ -16,6 +16,7 @@ interface Entry {
   failures: number;
   /** Antes disto, um erro continua valendo e nao dispara nova tentativa. */
   retryAt: number;
+  lastUsed: number;
 }
 
 /**
@@ -31,6 +32,8 @@ const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 30_000;
 
 const cache = new Map<string, Entry>();
+let lastPruned = 0;
+const MAX_DECODED_BYTES = 256 * 1024 * 1024;
 const listeners = new Set<() => void>();
 
 /** Avisa quando uma imagem nova termina de carregar. */
@@ -49,11 +52,13 @@ function load(url: string, entry: Entry): void {
   entry.status = 'loading';
 
   image.onload = () => {
+    if (cache.get(url) !== entry) return;
     entry.status = 'ready';
     entry.failures = 0;
     announce();
   };
   image.onerror = () => {
+    if (cache.get(url) !== entry) return;
     entry.status = 'error';
     entry.failures += 1;
     const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (entry.failures - 1));
@@ -68,14 +73,16 @@ function load(url: string, entry: Entry): void {
 export function getImage(url: string | null | undefined): HTMLImageElement | null {
   if (!url) return null;
 
+  pruneImages();
   const cached = cache.get(url);
   if (cached) {
+    cached.lastUsed = Date.now();
     if (cached.status === 'ready') return cached.image;
     if (cached.status === 'error' && Date.now() >= cached.retryAt) load(url, cached);
     return null;
   }
 
-  const entry: Entry = { status: 'loading', image: new Image(), failures: 0, retryAt: 0 };
+  const entry: Entry = { status: 'loading', image: new Image(), failures: 0, retryAt: 0, lastUsed: Date.now() };
   cache.set(url, entry);
   load(url, entry);
   return null;
@@ -88,5 +95,22 @@ export function isLoading(url: string | null | undefined): boolean {
 
 /** Descarta uma imagem removida da mesa, para nao segurar memoria a toa. */
 export function forgetImage(url: string): void {
+  const entry = cache.get(url);
+  if (entry) { entry.image.onload = null; entry.image.onerror = null; }
   cache.delete(url);
+}
+
+export function clearImages(): void { for (const url of cache.keys()) forgetImage(url); }
+function pruneImages(): void {
+  const now = Date.now(); if (now - lastPruned < 1000) return; lastPruned = now;
+  const sorted = [...cache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  const size = (entry: Entry) => entry.image.naturalWidth * entry.image.naturalHeight * 4;
+  let bytes = sorted.reduce((total, [, entry]) => total + size(entry), 0);
+  for (const [url, entry] of sorted) {
+    // Keep the current frame's working set; evict old scenes first.
+    if (now - entry.lastUsed < 2000) continue;
+    if (bytes > MAX_DECODED_BYTES || cache.size > 200 || now - entry.lastUsed > 60000) {
+      bytes -= size(entry); forgetImage(url);
+    }
+  }
 }

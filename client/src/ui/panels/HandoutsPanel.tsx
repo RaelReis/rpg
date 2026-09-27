@@ -4,6 +4,7 @@ import type { Handout } from '@rpg/shared';
 import { act } from '../../net/socket';
 import { findAsset, isGm, useStore } from '../../state/store';
 import { Dropzone, Empty, Section, TextField, Toggle } from '../common';
+import { Icon } from '../icons';
 
 /**
  * Materiais do grupo.
@@ -37,7 +38,7 @@ export function HandoutsPanel(): JSX.Element {
                   <img className="swatch" src={findAsset(h.assetId)?.thumbUrl ?? ''} alt="" />
                 ) : (
                   <span className="swatch" style={{ display: 'grid', placeItems: 'center' }}>
-                    ✉
+                    <Icon name="handout" size="sm" />
                   </span>
                 )}
                 <span className="name">{h.title}</span>
@@ -63,7 +64,7 @@ export function HandoutsPanel(): JSX.Element {
               setTitle('');
             }}
           >
-            + Criar
+            <Icon name="add" size="sm" /> Criar
           </button>
         }
       >
@@ -118,7 +119,7 @@ function HandoutRow({ handout }: { handout: Handout }): JSX.Element {
           <img className="swatch" src={findAsset(handout.assetId)?.thumbUrl ?? ''} alt="" />
         ) : (
           <span className="swatch" style={{ display: 'grid', placeItems: 'center' }}>
-            ✉
+            <Icon name="handout" size="sm" />
           </span>
         )}
         <span className="name">
@@ -127,14 +128,15 @@ function HandoutRow({ handout }: { handout: Handout }): JSX.Element {
         </span>
 
         <button
-          className="btn ghost sm"
+          className="btn ghost sm icon-only"
           title="Abrir na sua tela"
+          aria-label="Abrir na sua tela"
           onClick={(e) => {
             e.stopPropagation();
             openHandout(handout.id);
           }}
         >
-          👁
+          <Icon name="vision" size="sm" />
         </button>
         <button
           className="btn sm"
@@ -144,7 +146,7 @@ function HandoutRow({ handout }: { handout: Handout }): JSX.Element {
             void act('handout:present', { handoutId: handout.id });
           }}
         >
-          Apresentar
+          <Icon name="present" size="sm" /> Apresentar
         </button>
       </div>
 

@@ -92,3 +92,14 @@ export function rateLimit(options: {
     next();
   };
 }
+
+const attempts = new Map<string, Bucket>();
+export function allowAttempt(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  for (const [id, bucket] of attempts) if (bucket.resetAt <= now) attempts.delete(id);
+  const bucket = attempts.get(key);
+  if (bucket) return ++bucket.count <= max;
+  if (attempts.size >= 10000) return false;
+  attempts.set(key, { count: 1, resetAt: now + windowMs });
+  return true;
+}

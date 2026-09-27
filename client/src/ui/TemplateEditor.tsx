@@ -10,6 +10,7 @@ import {
 import { act } from '../net/socket';
 import { useStore } from '../state/store';
 import { Modal, SelectField, Toggle } from './common';
+import { Icon } from './icons';
 
 /**
  * Editor do modelo de ficha.
@@ -95,6 +96,7 @@ export function TemplateEditor(): JSX.Element {
           span: 1,
           defaultValue: null,
           rollFormula: '',
+          vital: null,
         },
       ],
     }));
@@ -103,7 +105,13 @@ export function TemplateEditor(): JSX.Element {
   function patchField(id: string, patch: Partial<SheetField>): void {
     setDraft((d) => ({
       ...d,
-      fields: d.fields.map((f) => (f.id === id ? { ...f, ...patch } : f)),
+      fields: d.fields.map((f) => {
+        if (f.id === id) return { ...f, ...patch };
+        // PV e PD sao unicos: marcar um campo tira o papel do anterior, em vez
+        // de deixar o retrato sem saber qual dos dois mostrar.
+        if (patch.vital && f.vital === patch.vital) return { ...f, vital: null };
+        return f;
+      }),
     }));
   }
 
@@ -243,7 +251,7 @@ export function TemplateEditor(): JSX.Element {
                 />
                 <div className="spacer" />
                 <button className="btn sm" onClick={() => addField(section.id)}>
-                  + Campo
+                  <Icon name="add" size="sm" /> Campo
                 </button>
                 <button className="btn ghost sm danger" onClick={() => removeSection(section.id)}>
                   Remover secao
@@ -258,6 +266,7 @@ export function TemplateEditor(): JSX.Element {
                     key={field.id}
                     field={field}
                     sections={sections}
+                    allFields={draft.fields}
                     onPatch={(p) => patchField(field.id, p)}
                     onRemove={() =>
                       setDraft((d) => ({ ...d, fields: d.fields.filter((f) => f.id !== field.id) }))
@@ -271,7 +280,7 @@ export function TemplateEditor(): JSX.Element {
         })}
 
         <button className="btn" onClick={addSection}>
-          + Nova secao
+          <Icon name="add" /> Nova secao
         </button>
 
         <input
@@ -291,26 +300,60 @@ export function TemplateEditor(): JSX.Element {
 function FieldRow({
   field,
   sections,
+  allFields,
   onPatch,
   onRemove,
   onMove,
 }: {
   field: SheetField;
   sections: SheetSection[];
+  allFields: SheetField[];
   onPatch: (patch: Partial<SheetField>) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const formulaRef = useRef<HTMLInputElement>(null);
+  const [refTarget, setRefTarget] = useState('');
+
+  /**
+   * Insere a referencia no cursor, nao no fim — quem monta `1d@forca+@nex`
+   * clica duas vezes em campos diferentes sem precisar reordenar o texto.
+   *
+   * `asDie` decide a forma: perícia com dado proprio soma `1d@id` (o valor
+   * vira o tamanho do dado); atributo ou modificador fixo soma so `@id` (o
+   * valor entra direto na conta), que e o uso mais comum em outros sistemas
+   * e por isso o padrao.
+   */
+  function insertRef(id: string, asDie: boolean): void {
+    const input = formulaRef.current;
+    const snippet = asDie ? `1d@${id}` : `@${id}`;
+    const current = field.rollFormula;
+    if (!input) {
+      onPatch({ rollFormula: current ? `${current}+${snippet}` : snippet });
+      return;
+    }
+    const start = input.selectionStart ?? current.length;
+    const end = input.selectionEnd ?? current.length;
+    const needsSign = start > 0 && /[^+-]$/.test(current.slice(0, start));
+    const insert = needsSign ? `+${snippet}` : snippet;
+    const next = current.slice(0, start) + insert + current.slice(end);
+    onPatch({ rollFormula: next });
+    requestAnimationFrame(() => {
+      const caret = start + insert.length;
+      input.focus();
+      input.setSelectionRange(caret, caret);
+    });
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div className={`field-row${field.gmOnly ? ' gm' : ''}`}>
-        <button className="btn ghost sm" onClick={() => onMove(-1)} title="Subir">
-          ↑
+        <button className="btn ghost sm icon-only" onClick={() => onMove(-1)} title="Subir" aria-label="Subir">
+          <Icon name="moveUp" size="sm" />
         </button>
-        <button className="btn ghost sm" onClick={() => onMove(1)} title="Descer">
-          ↓
+        <button className="btn ghost sm icon-only" onClick={() => onMove(1)} title="Descer" aria-label="Descer">
+          <Icon name="moveDown" size="sm" />
         </button>
 
         <input
@@ -334,11 +377,17 @@ function FieldRow({
           ))}
         </select>
 
-        <button className="btn ghost sm" onClick={() => setOpen((o) => !o)} title="Mais opcoes">
-          {open ? '▴' : '▾'}
+        <button
+          className="btn ghost sm icon-only"
+          onClick={() => setOpen((o) => !o)}
+          title="Mais opcoes"
+          aria-label="Mais opcoes"
+          aria-expanded={open}
+        >
+          <Icon name={open ? 'collapse' : 'expand'} size="sm" />
         </button>
-        <button className="btn ghost sm danger" onClick={onRemove} title="Remover campo">
-          ✕
+        <button className="btn ghost sm danger icon-only" onClick={onRemove} title="Excluir campo" aria-label="Excluir campo">
+          <Icon name="delete" size="sm" />
         </button>
       </div>
 
@@ -428,23 +477,73 @@ function FieldRow({
                 checked={field.showOnToken}
                 onChange={(v) => onPatch({ showOnToken: v })}
               />
+              <SelectField
+                label="Papel no retrato"
+                value={field.vital ?? ''}
+                options={[
+                  { value: '', label: 'Nenhum' },
+                  { value: 'pv', label: 'PV — Pontos de Vida' },
+                  { value: 'pd', label: 'PD — Pontos de Determinacao' },
+                ]}
+                onChange={(v) => onPatch({ vital: v === 'pv' || v === 'pd' ? v : null })}
+              />
             </div>
           )}
 
           <label className="field">
             <span className="label">Formula de rolagem</span>
             <input
+              ref={formulaRef}
               className="input mono"
               value={field.rollFormula}
               maxLength={100}
-              placeholder="Ex.: 1d20+@destreza"
+              placeholder="Ex.: 1d20+@destreza ou 1d@forca+1d@mente"
               onChange={(e) => onPatch({ rollFormula: e.target.value })}
             />
+
+            <div className="row wrap" style={{ gap: 6 }}>
+              <select
+                className="input select"
+                style={{ flex: 1, minWidth: 160 }}
+                value={refTarget}
+                onChange={(e) => setRefTarget(e.target.value)}
+              >
+                <option value="">Referenciar um campo...</option>
+                <option value={field.id}>Este campo ({field.label || 'sem nome'})</option>
+                {allFields
+                  .filter((f) => f.id !== field.id)
+                  .map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label || 'sem nome'} ({sections.find((s) => s.id === f.sectionId)?.label ?? '?'})
+                    </option>
+                  ))}
+              </select>
+              <button
+                type="button"
+                className="btn sm"
+                disabled={!refTarget}
+                title="Soma o campo como dado — o valor dele vira o tamanho do dado (ex.: 1d@id)"
+                onClick={() => refTarget && insertRef(refTarget, true)}
+              >
+                + Dado
+              </button>
+              <button
+                type="button"
+                className="btn sm"
+                disabled={!refTarget}
+                title="Soma o valor do campo direto na conta (ex.: +@id)"
+                onClick={() => refTarget && insertRef(refTarget, false)}
+              >
+                + Valor
+              </button>
+            </div>
+
             <span className="hint">
-              Preenchida, o campo ganha um dado clicavel na ficha. Use{' '}
-              <span className="mono">@id_do_campo</span> para somar outro valor da mesma ficha —
-              o id aparece no topo de cada campo. Aceita <span className="mono">4d6kh3</span> para
-              manter os melhores dados.
+              Preenchida, o campo ganha um dado clicavel na ficha. Uma pericia com dado proprio —
+              perícia 1d8 + atributo 1d6 — usa <span className="mono">1d@id_pericia+1d@id_atributo</span>;
+              um teste com modificador fixo usa <span className="mono">1d20+@id_atributo</span>. O
+              menu acima insere a referencia certa sem precisar copiar o id na mao. Aceita{' '}
+              <span className="mono">4d6kh3</span> para manter os melhores dados.
             </span>
             <span className="hint mono">id deste campo: {field.id}</span>
           </label>

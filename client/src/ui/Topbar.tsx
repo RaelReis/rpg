@@ -2,6 +2,7 @@ import type { Player } from '@rpg/shared';
 
 import { act, leaveTable } from '../net/socket';
 import { findAsset, isGm, useStore } from '../state/store';
+import { TurnBar } from './TurnBar';
 
 /** Acima disto, os demais viram um contador para o cabecalho nao estourar. */
 const MAX_AVATARS = 7;
@@ -50,10 +51,17 @@ export function Topbar(): JSX.Element {
         {table.code}
       </button>
 
-      <span className={`conn${connected ? '' : ' off'}`}>
+      {/* Conectado e o estado normal: basta o ponto. So a queda merece texto. */}
+      <span className={`conn${connected ? '' : ' off'}`} title={connected ? 'conectado' : 'reconectando'}>
         <span className="dot" />
-        {connected ? 'conectado' : 'reconectando'}
+        {!connected && 'reconectando'}
       </span>
+
+      <div className="spacer" />
+
+      {/* A vez de agir fica no meio do cabecalho: e a informacao que a mesa
+          consulta o tempo todo, e no mapa ela tampava o proprio mapa. */}
+      <TurnBar />
 
       <div className="spacer" />
 
@@ -68,10 +76,7 @@ export function Topbar(): JSX.Element {
             </span>
           )}
         </div>
-        <span className="presence-count">{online.length} na mesa</span>
       </div>
-
-      {gm && <span className="tag gm">Mestre</span>}
 
       <span className="topbar-sep" aria-hidden="true" />
 

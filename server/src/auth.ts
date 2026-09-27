@@ -1,3 +1,4 @@
+import { MAX_GM_PASSWORD_LENGTH } from '@rpg/shared';
 import crypto from 'node:crypto';
 
 /**
@@ -23,23 +24,45 @@ export function hashToken(token: string): string {
 
 const SCRYPT_KEYLEN = 32;
 
-export function hashPassword(password: string): string {
+export async function hashPassword(password: string): Promise<string> {
+  if (password.length > MAX_GM_PASSWORD_LENGTH) throw new Error('Senha deve ter no maximo 200 caracteres.');
   const salt = crypto.randomBytes(16);
-  const key = crypto.scryptSync(password, salt, SCRYPT_KEYLEN);
+  const key = await deriveKey(password, salt);
   return `scrypt:${salt.toString('hex')}:${key.toString('hex')}`;
 }
 
-export function verifyPassword(password: string, stored: string | null): boolean {
-  if (!stored) return true; // mesa sem senha de mestre
+/**
+ * Sem hash gravado NAO existe senha correta.
+ *
+ * Devolver `true` para "mesa sem senha" fazia desta funcao uma armadilha:
+ * bastava um chamador esquecer a checagem de contexto para qualquer texto
+ * digitado virar o papel de mestre. O unico chamador hoje ja recusa antes de
+ * chegar aqui; o padrao seguro elimina a chance de o proximo nao recusar.
+ */
+export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
+  if (!stored || password.length > MAX_GM_PASSWORD_LENGTH) return false;
   const [scheme, saltHex, keyHex] = stored.split(':');
-  if (scheme !== 'scrypt' || !saltHex || !keyHex) return false;
+  if (scheme !== 'scrypt' || !/^[a-f0-9]{32}$/i.test(saltHex ?? '') || !/^[a-f0-9]{64}$/i.test(keyHex ?? '')) return false;
 
   const expected = Buffer.from(keyHex, 'hex');
-  const actual = crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length);
+  const actual = await deriveKey(password, Buffer.from(saltHex, 'hex'));
   return crypto.timingSafeEqual(expected, actual);
 }
 
 /** Comparacao de codigo de mesa: sem diferenciar maiusculas nem hifens. */
 export function normalizeTableCode(code: string): string {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+let activeHashes = 0;
+/** Bounded CPU work, without blocking the event loop or accumulating a queue. */
+function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
+  if (activeHashes >= 4) return Promise.reject(new Error('Muitas entradas simultaneas. Tente novamente em instantes.'));
+  activeHashes++;
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, SCRYPT_KEYLEN, (err, key) => {
+      activeHashes--;
+      if (err) reject(err); else resolve(key);
+    });
+  });
 }

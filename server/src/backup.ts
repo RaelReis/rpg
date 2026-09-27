@@ -1,13 +1,17 @@
+import { validateBackup } from './backup-validation.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   createDefaultTemplate,
-  DEFAULT_INITIATIVE,
   DEFAULT_SETTINGS,
   createScene,
+  createToken, createTile, createEffect, createWall,
   generateId,
   normalizeTemplate,
+  reconcileSheetValues,
+  remapSheetImages,
+  normalizeTurns,
   type Handout,
   type Scene,
   type Sheet,
@@ -54,7 +58,9 @@ export interface TableBackup {
   name: string;
   settings: TableState['settings'];
   sheetTemplate: TableState['sheetTemplate'];
-  initiative: TableState['initiative'];
+  turns: TableState['turns'];
+  /** Backups anteriores traziam o rastreador de iniciativa neste campo. */
+  initiative?: unknown;
   handouts: Handout[];
   scenes: Scene[];
   sheets: Sheet[];
@@ -65,11 +71,12 @@ export interface TableBackup {
 }
 
 export async function exportTable(room: Room, includeAssets: boolean): Promise<TableBackup> {
-  const s = room.state;
+  const s = structuredClone(room.state);
 
   const rows = await prisma.asset.findMany({ where: { tableId: s.id } });
   const totalBytes = rows.reduce((sum, a) => sum + a.size, 0);
-  const embed = includeAssets && totalBytes <= MAX_EMBEDDED_BYTES;
+  if (includeAssets && totalBytes > MAX_EMBEDDED_BYTES) throw new BackupError('Backup com imagens excede 120 MB. Use o backup do banco e da pasta uploads ou reduza as imagens antes de exportar.');
+  const embed = includeAssets;
 
   const assets: BackupAsset[] = [];
   for (const row of rows) {
@@ -87,8 +94,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
         const buffer = await fs.readFile(path.join(UPLOAD_DIR, row.filename));
         entry.data = buffer.toString('base64');
       } catch {
-        // Arquivo sumiu do disco: o backup segue sem ele, e a referencia
-        // apenas ficara vazia na importacao.
+        throw new BackupError(`A imagem "${row.originalName}" esta ausente. O backup completo nao foi gerado.`);
       }
     }
     assets.push(entry);
@@ -100,7 +106,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
     name: s.name,
     settings: s.settings,
     sheetTemplate: s.sheetTemplate,
-    initiative: s.initiative,
+    turns: s.turns,
     handouts: s.handouts,
     scenes: s.scenes,
     sheets: s.sheets,
@@ -131,6 +137,8 @@ export async function importTable(
   if (!Array.isArray(backup.scenes) || backup.scenes.length === 0) {
     throw new BackupError('O backup nao contem nenhuma cena.');
   }
+
+  try { validateBackup(backup); } catch (err) { throw new BackupError((err as Error).message); }
 
   const created = await rooms.createTable({
     name: `${backup.name ?? 'Mesa importada'}`.slice(0, 80),
@@ -204,20 +212,24 @@ async function buildImportedTable(
     return idMap.get(id) ?? null;
   };
 
-  // Cenas: a primeira do backup vira a ativa.
+  for (const initial of room.state.scenes) room.removeSceneRecord(initial.id);
+
+  // Cenas: a primeira do backup vira a ativa. Os tetos de LIMITS ja foram
+  // conferidos em validateBackup, antes de a mesa existir.
   room.state.scenes = (backup.scenes ?? []).map((raw, index) => {
     const scene = createScene({ ...raw, id: generateId('scn'), order: index });
     scene.backgroundAssetId = remap(raw.backgroundAssetId);
-    scene.tokens = scene.tokens.map((t) => ({ ...t, assetId: remap(t.assetId) }));
-    scene.tiles = scene.tiles.map((t) => ({ ...t, assetId: remap(t.assetId) }));
-    scene.effects = scene.effects.map((e) => ({ ...e, assetId: remap(e.assetId) }));
+    scene.tokens = scene.tokens.map((t) => createToken({ ...t, assetId: remap(t.assetId) }));
+    scene.tiles = scene.tiles.map((t) => createTile({ ...t, assetId: remap(t.assetId) }));
+    scene.effects = scene.effects.map((e) => createEffect({ ...e, assetId: remap(e.assetId) }));
+    scene.walls = scene.walls.map((w) => createWall(w));
     return scene;
   });
   room.state.activeSceneId = room.state.scenes[0]?.id ?? null;
 
   room.state.sheetTemplate = normalizeTemplate(backup.sheetTemplate ?? createDefaultTemplate());
   room.state.settings = { ...DEFAULT_SETTINGS, ...(backup.settings ?? {}) };
-  room.state.initiative = { ...DEFAULT_INITIATIVE, ...(backup.initiative ?? {}) };
+  room.state.turns = normalizeTurns(backup.turns ?? backup.initiative);
 
   room.state.handouts = (backup.handouts ?? []).map((h) => ({
     ...h,
@@ -235,6 +247,8 @@ async function buildImportedTable(
     id: generateId('sht'),
     ownerPlayerId: null,
     portraitAssetId: remap(sheet.portraitAssetId),
+    bodyAssetId: remap(sheet.bodyAssetId),
+    values: remapSheetImages(room.state.sheetTemplate, reconcileSheetValues(room.state.sheetTemplate, sheet.values), remap),
   }));
 
   // Em uma transacao: ou a mesa importada tem todas as fichas do backup, ou
@@ -250,6 +264,7 @@ async function buildImportedTable(
             name: sheet.name,
             ownerPlayerId: null,
             portraitAssetId: sheet.portraitAssetId,
+            bodyAssetId: sheet.bodyAssetId,
             values: toJson(sheet.values),
             sharedWithParty: sheet.sharedWithParty,
           },
@@ -265,6 +280,8 @@ async function buildImportedTable(
     const fresh = room.state.sheets[i];
     if (old?.id && fresh) sheetByOldId.set(old.id, fresh.id);
   });
+
+  room.state.turns.entries = room.state.turns.entries.map(e => ({ ...e, playerId: null, sheetId: e.sheetId ? sheetByOldId.get(e.sheetId) ?? null : null }));
 
   for (const scene of room.state.scenes) {
     scene.tokens = scene.tokens.map((t) => ({
@@ -293,3 +310,5 @@ export function parseBackup(raw: unknown): Partial<TableBackup> {
   if (raw && typeof raw === 'object') return raw as Partial<TableBackup>;
   throw new BackupError('Nao foi possivel ler o arquivo de backup.');
 }
+
+export { remapSheetImages } from '@rpg/shared';

@@ -304,6 +304,13 @@ export interface SheetField {
   /** resource: cor da barra e se aparece no token */
   color: string;
   showOnToken: boolean;
+  /**
+   * resource: papel do recurso na mesa — Pontos de Vida (resistencia fisica)
+   * ou Pontos de Determinacao (resistencia mental). E o que o retrato do
+   * personagem sobre o mapa le, e nao o nome do campo: o mestre pode chamar
+   * o recurso do que quiser sem quebrar o retrato. No maximo um de cada.
+   */
+  vital: VitalRole | null;
   /** Largura no layout: 1 = 1/3, 2 = 2/3, 3 = linha inteira. */
   span: 1 | 2 | 3;
   defaultValue: FieldValue;
@@ -317,6 +324,8 @@ export interface SheetField {
    */
   rollFormula: string;
 }
+
+export type VitalRole = 'pv' | 'pd';
 
 export interface SheetSection {
   id: string;
@@ -356,7 +365,16 @@ export type FieldValue =
 export interface Sheet {
   id: string;
   name: string;
+  /** Rosto do personagem: a ficha, a lista de presenca e os retratos do grupo. */
   portraitAssetId: string | null;
+  /**
+   * Corpo inteiro: e esta a arte que vai para o token no mapa.
+   *
+   * Sao duas imagens porque servem a enquadramentos diferentes — um retrato
+   * cortado no rosto fica irreconhecivel visto de cima, e um corpo inteiro
+   * reduzido a um circulo de 46px vira um borrao.
+   */
+  bodyAssetId: string | null;
   /** Jogador dono. Null = ficha de NPC/monstro do mestre. */
   ownerPlayerId: string | null;
   values: Record<string, FieldValue>;
@@ -367,7 +385,7 @@ export interface Sheet {
 }
 
 // ---------------------------------------------------------------------------
-// Participantes, iniciativa e mesa
+// Participantes, turnos e mesa
 // ---------------------------------------------------------------------------
 
 export interface Player {
@@ -386,28 +404,48 @@ export interface Player {
   portraitAssetId?: string | null;
 }
 
-export interface InitiativeEntry {
+/**
+ * Um participante na ordem de turnos.
+ *
+ * Nao ha valor de iniciativa: a ordem e a da lista, e quem a define e o mestre,
+ * arrastando as miniaturas. Rolar um d20 para decidir quem age primeiro e
+ * regra de um sistema especifico; arrastar serve a qualquer mesa, inclusive
+ * quando a ordem muda no meio do combate por uma habilidade.
+ */
+export interface TurnEntry {
   id: string;
   tokenId: string | null;
-  name: string;
-  value: number;
-  /** Desempate manual. */
-  tiebreak: number;
+  /** Ficha do personagem, quando houver: e dela que vem o retrato. */
+  sheetId: string | null;
   playerId: string | null;
-  /** Continua listado, mas o turno pula (ex.: inconsciente). */
+  name: string;
+  /** Continua listado, mas a vez pula (ex.: inconsciente). */
   skipped: boolean;
   hiddenFromPlayers: boolean;
 }
 
-export interface InitiativeState {
-  active: boolean;
+/** Uma vez que ja terminou, para o historico do combate. */
+export interface TurnRecord {
+  round: number;
+  entryId: string;
+  name: string;
+  at: number;
+}
+
+/**
+ * As rodadas estao SEMPRE correndo.
+ *
+ * Elas nao marcam combate: marcam o fluxo da mesa — de quem e a vez de agir e
+ * de descrever. Por isso nao ha um estado "ligado/desligado" nem um botao para
+ * abrir e fechar: a mesa comeca na rodada 1 e o grupo ja entra na ordem.
+ */
+export interface TurnState {
   round: number;
   activeEntryId: string | null;
-  entries: InitiativeEntry[];
-  /** Turno avanca sozinho ao fim do tempo, em vez de so pelo mestre. */
-  autoAdvance: boolean;
-  /** Segundos por turno quando autoAdvance esta ligado. 0 = sem limite. */
-  turnSeconds: number;
+  /** A ORDEM DA LISTA e a ordem dos turnos. */
+  entries: TurnEntry[];
+  /** Vezes ja jogadas, da mais antiga para a mais recente. */
+  history: TurnRecord[];
 }
 
 export interface TableSettings {
@@ -494,7 +532,7 @@ export interface TableState {
   activeSceneId: string | null;
   settings: TableSettings;
   sheetTemplate: SheetTemplate;
-  initiative: InitiativeState;
+  turns: TurnState;
   scenes: Scene[];
   players: Player[];
   sheets: Sheet[];
