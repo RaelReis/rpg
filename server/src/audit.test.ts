@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createScene, createToken, createWall, createDefaultTemplate, createSheetValues, DEFAULT_SETTINGS, DEFAULT_TURNS, type TableState, type Sheet } from '@rpg/shared';
+import { createScene, createTile, createToken, createWall, createDefaultTemplate, createSheetValues, DEFAULT_SETTINGS, DEFAULT_TURNS, type TableState, type Sheet } from '@rpg/shared';
 
 vi.mock('./db.js', () => ({
   prisma: { table: { update: vi.fn(), findUnique: vi.fn() }, player: { findUnique: vi.fn(), create: vi.fn() }, sheet: { create: vi.fn() }, asset: { findMany: vi.fn() } },
@@ -182,5 +182,28 @@ describe('portas abertas pelo jogador', () => {
     const other = createScene({ walls: [createWall({ id: 'outra', x1: 70, y1: 0, x2: 70, y2: 70, door: true })] });
     room.state.scenes.push(other);
     expect(open('outra', other.id)).toMatchObject({ ok: false, error: 'Esta cena nao esta no ar.' });
+  });
+});
+
+describe('parada encostada no obstaculo', () => {
+  // Tile que bloqueia, desalinhado da grade (comeca em x=720, a grade em 700).
+  // Com a visao estrita o cliente nao o conhece: o arraste para onde o
+  // servidor barra, no meio de uma celula, e o soltar pede a celula encaixada.
+  it('encaixa na celula vizinha que o token alcanca, e nao em cima do obstaculo', () => {
+    const room = fixture();
+    const scene = room.activeScene()!;
+    scene.tiles.push(createTile({ id: 'estante', x: 720, y: 0, width: 70, height: 210, blocksVision: true }));
+    scene.tokens.push(createToken({ id: 'bruno', ownerPlayerId: 'p', x: 630, y: 70 }));
+    room.state.players.push({ id: 'p', name: 'P', role: 'PLAYER', color: '#ffffff', connected: true, lastSeen: 0, sheetId: null });
+    const ctx = { room, viewer: { playerId: 'p', role: 'PLAYER' }, socket: { emit: vi.fn() } } as unknown as Ctx;
+
+    // Arraste ate o centro encostar no obstaculo (centro em 719, ele comeca em 720).
+    moveToken(ctx, { sceneId: scene.id, tokenId: 'bruno', x: 684, y: 70, dragging: true }, vi.fn());
+    expect(scene.tokens.find((t) => t.id === 'bruno')!.x).toBe(684);
+
+    // Soltar pede a celula encaixada mais proxima (700), que cruza o obstaculo.
+    moveToken(ctx, { sceneId: scene.id, tokenId: 'bruno', x: 700, y: 70 }, vi.fn());
+    const bruno = scene.tokens.find((t) => t.id === 'bruno')!;
+    expect({ x: bruno.x, y: bruno.y }).toEqual({ x: 630, y: 70 });
   });
 });

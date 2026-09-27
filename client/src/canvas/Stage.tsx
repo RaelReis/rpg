@@ -20,7 +20,7 @@ import {
   type Wall,
 } from '@rpg/shared';
 
-import { act, emit, onTokenBlocked } from '../net/socket';
+import { act, emit, onTokenBlocked, rpc } from '../net/socket';
 import { createTriggerWithUndo } from '../state/triggerOps';
 import { activeScene, findAsset, findSheet, useStore, type WallKind } from '../state/store';
 import {
@@ -955,28 +955,35 @@ export function Stage(): JSX.Element {
               y = snapped.y;
             }
 
-            // O encaixe final pode cair do outro lado da parede mesmo com o
-            // arraste parado antes dela: fica onde a previa ja estava.
-            if (wallsBlock && !dragStepAllowed(currentScene, token, x, y)) {
-              x = token.x;
-              y = token.y;
-            }
-            // Parado numa parede que o cliente nao conhece: solta onde o
-            // servidor o deixou, e nao no cursor — senao o soltar vira erro.
-            if (dragBlockedRef.current.has(id)) {
-              x = token.x;
-              y = token.y;
+            // Parado numa parede — que o cliente conhece (porta, janela) ou nao
+            // (com a visao estrita, as comuns e os tiles que bloqueiam) —: solta
+            // onde a previa ou o servidor o deixou, e nao no cursor, senao o
+            // soltar vira erro. Encaixado na grade: sem isso o token ficava no
+            // meio da celula, com o corpo em cima do obstaculo. Se a celula
+            // encaixada cair do outro lado, o servidor escolhe a vizinha que o
+            // token alcanca.
+            if ((wallsBlock && !dragStepAllowed(currentScene, token, x, y)) || dragBlockedRef.current.has(id)) {
+              const settled = snap
+                ? snapTokenPosition(currentScene.grid, { x: token.x, y: token.y }, token.scale)
+                : { x: token.x, y: token.y };
+              x = settled.x;
+              y = settled.y;
             }
 
             state.moveTokenLocal(currentScene.id, id, x, y);
             after.set(id, { x, y });
-            void act('token:move', {
-              sceneId: currentScene.id,
-              tokenId: id,
-              x,
-              y,
-              dragging: false,
-            });
+            const drop = { sceneId: currentScene.id, tokenId: id, x, y, dragging: false };
+            if (blockedHintShownRef.current) {
+              // O arraste ja parou num obstaculo e o aviso ja apareceu: a
+              // recusa do soltar e esperada, e o servidor ja encaixou o token
+              // na celula que ele alcanca. Repetir "ha uma parede" em toast
+              // so dobraria o aviso.
+              void rpc('token:move', drop).catch((err: Error & { code?: string }) => {
+                if (err.code !== 'MOVE_BLOCKED') useStore.getState().notify('error', err.message);
+              });
+            } else {
+              void act('token:move', drop);
+            }
           }
 
           if (gesture.moved) {

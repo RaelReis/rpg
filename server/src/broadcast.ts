@@ -13,10 +13,11 @@ import type {
 
 import {
   assetIdsOfScene,
-  effectVisibleTo,
+  effectShownTo,
   playersWithPortraits,
   sceneForViewer,
   stateForViewer,
+  tileShownTo,
   tokenForViewer,
   turnsForViewer,
   visibleTokenIds,
@@ -36,6 +37,11 @@ export interface SocketData {
    * alucinacao (ou de um efeito exclusivo do mestre) a quem nunca a viu.
    */
   visibleEffects: Set<string>;
+  /**
+   * Tiles que este socket recebeu. Com a visao estrita, o jogador so recebe o
+   * cenario que ja viu; o conjunto muda com a visao e da o delta a enviar.
+   */
+  visibleTiles: Set<string>;
   currentSceneId: string | null;
   /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
   knownAssets: Set<string>;
@@ -125,6 +131,7 @@ export function stateWithVisibilityCache(room: Room, socket: TypedSocket) {
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
   socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
+  socket.data.visibleTiles = new Set(scene?.tiles.map((t) => t.id) ?? []);
   socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
   return state;
 }
@@ -149,7 +156,10 @@ export function pushScene(room: Room, scene: Scene): void {
     socket.data.fogSignature = JSON.stringify([filtered.id, filtered.fog.computedVisible, filtered.fog.computedExplored]);
     socket.data.currentSceneId = filtered.id;
     socket.data.visibleTokens = new Set(filtered.tokens.map((t) => t.id));
-    if (viewer.role !== 'GM') socket.data.visibleEffects = new Set(filtered.effects.map((e) => e.id));
+    if (viewer.role !== 'GM') {
+      socket.data.visibleEffects = new Set(filtered.effects.map((e) => e.id));
+      socket.data.visibleTiles = new Set(filtered.tiles.map((t) => t.id));
+    }
     syncAssets(room, socket, assetIdsOfScene(filtered));
     socket.emit('scene:patch', { sceneId: scene.id, patch: filtered });
   }
@@ -192,6 +202,26 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
     if (upsert.length || remove.length) {
       syncAssets(room, socket, upsert.map((t) => t.assetId));
       socket.emit('tokens:patch', { sceneId: scene.id, upsert, remove });
+    }
+
+    // Cenario e efeitos acompanham a visao como os tokens: entram quando o
+    // jogador passa a ve-los e saem quando deixam de valer (o efeito acima da
+    // neblina que ficou no escuro, o tile que o mestre cobriu).
+    if (strict) {
+      const tiles = diffShown(scene.tiles, (socket.data.visibleTiles ??= new Set()), (t) =>
+        tileShownTo(room, scene, t, viewer, vision),
+      );
+      if (tiles.upsert.length || tiles.remove.length) {
+        syncAssets(room, socket, tiles.upsert.map((t) => t.assetId));
+        socket.emit('tiles:patch', { sceneId: scene.id, ...tiles });
+      }
+      const effects = diffShown(scene.effects, (socket.data.visibleEffects ??= new Set()), (e) =>
+        effectShownTo(room, scene, e, viewer, vision),
+      );
+      if (effects.upsert.length || effects.remove.length) {
+        syncAssets(room, socket, effects.upsert.map((e) => e.assetId));
+        socket.emit('effects:patch', { sceneId: scene.id, ...effects });
+      }
     }
 
     if (strict) {
@@ -255,12 +285,57 @@ export function emitTokenRemoved(room: Room, scene: Scene, tokenId: string): voi
   }
 }
 
+/**
+ * Compara o que o observador deve ver agora com o que ele ja recebeu e atualiza
+ * o conjunto. Devolve o que entrar (inteiro) e os ids que sairem.
+ */
+function diffShown<T extends { id: string }>(
+  items: T[],
+  known: Set<string>,
+  shown: (item: T) => boolean,
+): { upsert: T[]; remove: string[] } {
+  const upsert: T[] = [];
+  const remove: string[] = [];
+  const present = new Set<string>();
+  for (const item of items) {
+    present.add(item.id);
+    const visible = shown(item);
+    if (visible && !known.has(item.id)) {
+      known.add(item.id);
+      upsert.push(item);
+    } else if (!visible && known.has(item.id)) {
+      known.delete(item.id);
+      remove.push(item.id);
+    }
+  }
+  // O que sumiu da cena sai por quem apagou (emitTiles/emitEffects); aqui so
+  // se limpa a memoria, sem anunciar id.
+  for (const id of known) if (!present.has(id)) known.delete(id);
+  return { upsert, remove };
+}
+
 export function emitTiles(room: Room, scene: Scene, upsert: Tile[], remove: string[] = []): void {
+  const strict = room.state.settings.strictVision;
   for (const socket of socketsOf(room)) {
-    const gm = socket.data.viewer.role === 'GM';
+    const viewer = socket.data.viewer;
+    const gm = viewer.role === 'GM';
     if (!gm && scene.id !== room.state.activeSceneId) continue;
-    const visible = gm ? upsert : upsert.filter((t) => !t.gmOnly);
-    const hide = gm ? remove : [...remove, ...upsert.filter((t) => t.gmOnly).map((t) => t.id)];
+
+    let visible = upsert;
+    let hide = remove;
+    if (!gm) {
+      // Envio so do cenario que o jogador ve; remocao so para quem tinha o
+      // tile. Antes, apagar um tile exclusivo do mestre mandava o id a todos.
+      const vision = strict ? visionFor(scene, viewer) : undefined;
+      const known = (socket.data.visibleTiles ??= new Set());
+      visible = upsert.filter((t) => tileShownTo(room, scene, t, viewer, vision));
+      const shownIds = new Set(visible.map((t) => t.id));
+      hide = [...remove, ...upsert.filter((t) => !shownIds.has(t.id)).map((t) => t.id)].filter((id) =>
+        known.has(id),
+      );
+      for (const id of hide) known.delete(id);
+      for (const t of visible) known.add(t.id);
+    }
     if (visible.length || hide.length) {
       syncAssets(room, socket, visible.map((t) => t.assetId));
       socket.emit('tiles:patch', { sceneId: scene.id, upsert: visible, remove: hide });
@@ -280,9 +355,11 @@ export function emitEffects(room: Room, scene: Scene, upsert: MapEffect[], remov
       // Remocao so para quem tinha o efeito; envio so para quem pode ve-lo.
       // E isto que tira a alucinacao da tela de quem saiu da lista e a
       // entrega a quem entrou, sem anunciar o id a mais ninguem.
+      const vision = room.state.settings.strictVision ? visionFor(scene, viewer) : undefined;
       const known = (socket.data.visibleEffects ??= new Set());
-      visible = upsert.filter((e) => effectVisibleTo(e, viewer));
-      hide = [...remove, ...upsert.filter((e) => !effectVisibleTo(e, viewer)).map((e) => e.id)].filter((id) =>
+      visible = upsert.filter((e) => effectShownTo(room, scene, e, viewer, vision));
+      const shownIds = new Set(visible.map((e) => e.id));
+      hide = [...remove, ...upsert.filter((e) => !shownIds.has(e.id)).map((e) => e.id)].filter((id) =>
         known.has(id),
       );
       for (const id of hide) known.delete(id);

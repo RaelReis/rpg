@@ -5,6 +5,8 @@ import {
   filterSheetForRole,
   boardForViewer,
   filterTemplateForRole,
+  isEffectSeen,
+  isTileSeen,
   perceives,
   reduceScreenEffect,
   type ActiveScreenEffect,
@@ -18,6 +20,7 @@ import {
   type Scene,
   type Sheet,
   type SheetTemplate,
+  type Tile,
   type TableState,
   type Token,
   type TurnState,
@@ -72,8 +75,8 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
     .filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId))
     .map(t => presentToken(room, t));
 
-  const tiles = scene.tiles.filter((t) => !t.gmOnly);
-  const effects = scene.effects.filter((e) => effectVisibleTo(e, viewer));
+  const tiles = scene.tiles.filter((t) => tileShownTo(room, scene, t, viewer, vision));
+  const effects = scene.effects.filter((e) => effectShownTo(room, scene, e, viewer, vision));
 
   // Com strictVision as paredes ficam no servidor: elas descrevem a planta do
   // mapa e apareceriam inteiras no inspecionador de rede do navegador. O que
@@ -104,6 +107,35 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
   // A cartela de abertura e preparacao do mestre: nem o id sai daqui.
   // Gatilhos e cartela de abertura sao preparacao do mestre: nem o id sai.
   return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null, triggers: [] };
+}
+
+/**
+ * O tile chega a este observador? Exclusivo do mestre nunca. Com a visao
+ * estrita, tambem nao o que esta fora do que o jogador viu: o bau da sala que
+ * ninguem explorou chegava com posicao e arte, e o tile que bloqueia a visao
+ * entregava a planta que as paredes escondem (ver `isTileSeen`).
+ */
+export function tileShownTo(room: Room, scene: Scene, tile: Tile, viewer: Viewer, vision?: VisionResult): boolean {
+  if (viewer.role === 'GM') return true;
+  if (tile.gmOnly) return false;
+  if (!room.state.settings.strictVision) return true;
+  return isTileSeen(scene, vision ?? visionFor(scene, viewer), tile);
+}
+
+/**
+ * O efeito chega a este observador, considerando tambem a neblina quando a
+ * visao estrita esta ligada? Mesma regra do renderizador (`isEffectSeen`).
+ */
+export function effectShownTo(
+  room: Room,
+  scene: Scene,
+  effect: MapEffect,
+  viewer: Viewer,
+  vision?: VisionResult,
+): boolean {
+  if (!effectVisibleTo(effect, viewer)) return false;
+  if (viewer.role === 'GM' || !room.state.settings.strictVision) return true;
+  return isEffectSeen(scene, vision ?? visionFor(scene, viewer), effect);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultTemplate,
+  createEffect,
   createScene,
   createSheetValues,
   createTile,
@@ -30,7 +31,7 @@ import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
 import { stateForViewer } from './filter.js';
 import type { Ctx } from './handlers/context.js';
 import { updateHandout } from './handlers/handouts.js';
-import { deleteToken, updateToken } from './handlers/map.js';
+import { deleteTile, deleteToken, moveToken, updateToken } from './handlers/map.js';
 import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
 import { handleJoin } from './handlers/session.js';
 import { Room, rooms } from './room.js';
@@ -281,10 +282,10 @@ describe('vazamentos: achados do relatorio de QA', () => {
     expect(lastTurns()?.entries.map((e) => e.name)).not.toContain('Cultista');
   });
 
-  // Q-003. O filtro de cena so tira tiles `gmOnly`: um bau numa sala que
+  // Q-003. O filtro de cena so tirava tiles `gmOnly`: um bau numa sala que
   // ninguem viu e um tile que bloqueia a visao (a mesma planta que as paredes
-  // escondem) chegam inteiros ao jogador.
-  it.fails('Q-003: tiles fora da visao e tiles que bloqueiam a visao nao chegam ao jogador', () => {
+  // escondem) chegavam inteiros ao jogador.
+  it('Q-003: tiles fora da visao e tiles que bloqueiam a visao nao chegam ao jogador', () => {
     const room = table();
     const scene = room.activeScene()!;
     scene.tiles.push(createTile({ id: 'SEGREDO-bau', x: 1400, y: 1050, width: 70, height: 70 }));
@@ -292,6 +293,57 @@ describe('vazamentos: achados do relatorio de QA', () => {
     const alice = connect(room, 'alice');
 
     expect(secretsIn(traffic(room, alice))).toEqual([]);
+  });
+
+  it('Q-003: o tile entra quando o jogador passa a ve-lo, e o que bloqueia a visao nunca entra', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.tiles.push(createTile({ id: 'tile-bau', x: 700, y: 0, width: 70, height: 70 }));
+    scene.tiles.push(createTile({ id: 'SEGREDO-estante', x: 840, y: 0, width: 70, height: 70, blocksVision: true }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    const received = () => JSON.stringify(alice.received);
+
+    expect(received()).not.toContain('tile-bau');
+    // O mestre leva a Alice para perto do bau.
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 560, y: 0 }, vi.fn());
+    expect(received()).toContain('tile-bau');
+    expect(secretsIn(received())).toEqual([]);
+  });
+
+  it('Q-003: efeito acima da neblina so vai com a ancora iluminada, e sai quando ela escurece', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.effects.push(createEffect({ id: 'efeito-runas', anchor: 'free', x: 735, y: 35, layer: 4 }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    expect(JSON.stringify(stateForViewer(room, alice.socket.data.viewer))).not.toContain('efeito-runas');
+
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 630, y: 0 }, vi.fn());
+    const patches = () => alice.received.filter(([ev]) => ev === 'effects:patch').map(([, p]) => p);
+    expect(JSON.stringify(patches())).toContain('efeito-runas');
+
+    // Afastada, a ancora fica no escuro: explorada nao basta acima da neblina.
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 0, y: 0 }, vi.fn());
+    expect(patches().at(-1)).toMatchObject({ remove: ['efeito-runas'] });
+  });
+
+  it('apagar um tile exclusivo do mestre nao manda o id a quem nunca o recebeu', () => {
+    const room = table();
+    room.activeScene()!.tiles.push(createTile({ id: 'SEGREDO-tile-mestre', x: 0, y: 0, gmOnly: true }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    deleteTile(ctxOf(room, gm), { sceneId: 'scn-ativa', tileId: 'SEGREDO-tile-mestre' }, vi.fn());
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+  });
+
+  it('com a neblina desligada, o cenario inteiro continua indo ao jogador', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.fog.mode = 'off';
+    scene.tiles.push(createTile({ id: 'tile-longe', x: 1400, y: 1050 }));
+    const alice = connect(room, 'alice');
+    expect(JSON.stringify(stateForViewer(room, alice.socket.data.viewer))).toContain('tile-longe');
   });
 
   // Q-004. Mudar o compartilhamento de um material mandava `remove` com o id

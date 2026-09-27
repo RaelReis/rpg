@@ -2,13 +2,14 @@ import {
   cellAt,
   cellCenter,
   cellKey,
+  cellsInRect,
   cellsWithinRadius,
   cellHeight,
   tokenCell,
   tokenCenter,
 } from './grid.js';
 import { concealedFromPlayers, isHallucination, perceives } from './perception.js';
-import type { Cell, GridConfig, Point, Scene, Token, Role, Wall } from './types.js';
+import type { Cell, GridConfig, MapEffect, Point, Scene, Tile, Token, Role, Wall } from './types.js';
 
 /**
  * Fog of war e linha de visao.
@@ -301,6 +302,79 @@ export function isCellExplored(vision: VisionResult, cell: Cell): boolean {
 export function isPointVisible(scene: Scene, vision: VisionResult, p: Point): boolean {
   if (vision.unrestricted) return true;
   return vision.visible.has(cellKey(cellAt(scene.grid, p)));
+}
+
+/**
+ * Ponto onde o efeito esta ancorado: o centro da celula, o centro do token que
+ * ele segue (mais o deslocamento) ou a coordenada solta. `null` quando o token
+ * da ancora nao existe mais.
+ */
+export function effectAnchorPoint(
+  scene: Scene,
+  effect: Pick<MapEffect, 'anchor' | 'tokenId' | 'cell' | 'x' | 'y'>,
+): Point | null {
+  if (effect.anchor === 'token') {
+    const token = scene.tokens.find((t) => t.id === effect.tokenId);
+    if (!token) return null;
+    const h = scene.grid.type === 'none' ? scene.grid.size : cellHeight(scene.grid);
+    return {
+      x: token.x + (scene.grid.size * token.scale) / 2 + effect.x,
+      y: token.y + (h * token.scale) / 2 + effect.y,
+    };
+  }
+  if (effect.anchor === 'grid' && effect.cell) {
+    const c = cellCenter(scene.grid, effect.cell);
+    return { x: c.x + effect.x, y: c.y + effect.y };
+  }
+  return { x: effect.x, y: effect.y };
+}
+
+/**
+ * O jogador enxerga este tile — ou ja o viu?
+ *
+ * Tiles sao cenario (camadas 1 e 2): ficam no mapa em penumbra depois de
+ * explorados, entao contam as celulas visiveis e as exploradas. Um tile que
+ * bloqueia a visao e obstaculo, a mesma planta que as paredes descrevem, e
+ * nunca vai ao jogador: o efeito dele ja esta nas celulas calculadas.
+ *
+ * Com a neblina desligada (ou para o mestre), tudo vale — so a visao estrita
+ * no servidor chama isto para filtrar.
+ */
+export function isTileSeen(scene: Scene, vision: VisionResult, tile: Tile): boolean {
+  if (vision.gm || vision.unrestricted) return true;
+  if (tile.blocksVision) return false;
+
+  // Tile girado: vale o quadrado que o contem em qualquer angulo, que e o
+  // retangulo mais barato que nunca deixa a peca de fora.
+  const rect = tile.rotation
+    ? (() => {
+        const side = Math.hypot(tile.width, tile.height);
+        const cx = tile.x + tile.width / 2;
+        const cy = tile.y + tile.height / 2;
+        return { x: cx - side / 2, y: cy - side / 2, width: side, height: side };
+      })()
+    : { x: tile.x, y: tile.y, width: tile.width, height: tile.height };
+
+  for (const cell of cellsInRect(scene.grid, rect)) {
+    const key = cellKey(cell);
+    if (vision.visible.has(key) || vision.explored.has(key)) return true;
+  }
+  return false;
+}
+
+/**
+ * O jogador enxerga este efeito? Mesma regra que o renderizador usa para
+ * desenha-lo: nas camadas de cenario (1 e 2), a ancora numa celula vista ou
+ * explorada; acima da neblina (3 e 4), a ancora numa celula iluminada agora.
+ * Mandar o que o cliente nao desenharia so entregaria o efeito ao inspetor
+ * de rede.
+ */
+export function isEffectSeen(scene: Scene, vision: VisionResult, effect: MapEffect): boolean {
+  if (vision.gm || vision.unrestricted) return true;
+  const origin = effectAnchorPoint(scene, effect);
+  if (!origin) return false;
+  const key = cellKey(cellAt(scene.grid, origin));
+  return vision.visible.has(key) || (effect.layer <= 2 && vision.explored.has(key));
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createScene, createToken, createWall } from './defaults.js';
+import { createEffect, createScene, createTile, createToken, createWall } from './defaults.js';
 import { cellKey } from './grid.js';
 import type { Scene, Token, Wall } from './types.js';
 import {
@@ -10,6 +10,8 @@ import {
   dragStepAllowed,
   hasLineOfSight,
   isDoorWithinSight,
+  isEffectSeen,
+  isTileSeen,
   movementBlocked,
   segmentsIntersect,
   visibleWalls,
@@ -439,5 +441,26 @@ describe('isDoorWithinSight', () => {
     const off = scene({ fog: { ...createScene().fog, mode: 'off' } });
     expect(isDoorWithinSight(off, seen, wallAt(5 * SIZE, 0, SIZE, { door: true }))).toBe(true);
     expect(isDoorWithinSight(scene(), { ...seen, gm: true }, wallAt(5 * SIZE, 0, SIZE, { door: true }))).toBe(true);
+  });
+});
+
+describe('isTileSeen e isEffectSeen', () => {
+  const lit = new Set([cellKey({ a: 0, b: 0 })]);
+  const remembered = new Set([cellKey({ a: 2, b: 0 })]);
+  const vision = { visible: lit, explored: remembered, unrestricted: false, gm: false };
+  const tile = (x: number, extra = {}) => createTile({ x, y: 0, width: SIZE, height: SIZE, ...extra });
+  const effect = (x: number, layer: 1 | 2 | 3 | 4) => createEffect({ anchor: 'free', x, y: SIZE / 2, layer });
+
+  it('tile conta no visivel e no explorado, e o que bloqueia a visao nunca conta', () => {
+    expect(isTileSeen(scene(), vision, tile(0))).toBe(true);
+    expect(isTileSeen(scene(), vision, tile(2 * SIZE))).toBe(true);
+    expect(isTileSeen(scene(), vision, tile(5 * SIZE))).toBe(false);
+    expect(isTileSeen(scene(), vision, tile(0, { blocksVision: true }))).toBe(false);
+  });
+
+  it('efeito de cenario vale no explorado; acima da neblina, so no iluminado', () => {
+    expect(isEffectSeen(scene(), vision, effect(2.5 * SIZE, 2))).toBe(true);
+    expect(isEffectSeen(scene(), vision, effect(2.5 * SIZE, 4))).toBe(false);
+    expect(isEffectSeen(scene(), vision, effect(0.5 * SIZE, 4))).toBe(true);
   });
 });

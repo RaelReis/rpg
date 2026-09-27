@@ -41,6 +41,32 @@ import { checkTriggers } from './triggers.js';
 
 /** Tokens, tiles, efeitos, paredes e neblina. */
 
+/**
+ * Posicao encaixada na grade mais proxima do token que ele alcanca sem cruzar
+ * parede ou obstaculo, entre a celula dele e as oito vizinhas.
+ */
+function nearestReachableCell(
+  scene: Scene,
+  token: Token,
+  center: (p: { x: number; y: number }) => { x: number; y: number },
+): { x: number; y: number } | null {
+  const stepX = scene.grid.size;
+  const stepY = cellHeight(scene.grid);
+  const seen = new Set<string>();
+  const candidates: { x: number; y: number }[] = [];
+  for (const dy of [0, -1, 1]) {
+    for (const dx of [0, -1, 1]) {
+      const c = snapTokenPosition(scene.grid, { x: token.x + dx * stepX, y: token.y + dy * stepY }, token.scale);
+      const key = `${c.x},${c.y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push(c);
+    }
+  }
+  candidates.sort((a, b) => Math.hypot(a.x - token.x, a.y - token.y) - Math.hypot(b.x - token.x, b.y - token.y));
+  return candidates.find((c) => !movementBlocked(scene, center(token), center(c), token.scale)) ?? null;
+}
+
 const MAX_CELLS_PER_PAINT = 20000;
 const VISIBILITIES = ['visible', 'hidden', 'dim'] as const;
 const EFFECT_KINDS = ['circle', 'cone', 'rect', 'line', 'text', 'image'] as const;
@@ -278,11 +304,15 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
         return ok(ack, null);
       }
 
-      // Ao soltar, o token para onde o arraste chegou — encostado na parede.
-      // Sem isto ele ficaria fora da grade, porque o arraste nao usa snap.
+      // Ao soltar, o token para onde o arraste chegou — encostado na parede —
+      // e encaixado na grade. A celula mais proxima pode ficar do outro lado
+      // do obstaculo; entao vale a mais proxima que o token alcanca sem
+      // cruza-lo. Testar so a mais proxima deixava o token fora da grade, com
+      // o corpo em cima do obstaculo, sempre que o arraste parava no meio de
+      // uma celula.
       if (scene.grid.snap && scene.grid.type !== 'none') {
-        const settled = snapTokenPosition(scene.grid, { x: token.x, y: token.y }, token.scale);
-        if (!movementBlocked(scene, center(token), center(settled), token.scale)) {
+        const settled = nearestReachableCell(scene, token, (p) => center(p));
+        if (settled) {
           token.x = settled.x;
           token.y = settled.y;
           ctx.room.touchScene(scene.id);
@@ -293,7 +323,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
       refreshVision(ctx.room, scene);
       // So conta o trecho percorrido: da origem ate onde o token parou.
       checkTriggers(ctx, scene, token, from);
-      return fail(ack, 'Ha uma parede no caminho.');
+      return fail(ack, 'Ha uma parede no caminho.', 'MOVE_BLOCKED');
     }
   }
 

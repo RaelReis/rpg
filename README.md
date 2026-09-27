@@ -124,6 +124,10 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - tokens dentro da neblina (quando a visão estrita está ligada);
 - as **paredes** da cena — elas descrevem a planta do mapa e apareceriam
   inteiras no inspecionador de rede do navegador;
+- **tiles que bloqueiam a visão**, pelo mesmo motivo das paredes, e os demais
+  tiles e efeitos de mapa fora do que o jogador viu (com a visão estrita): o
+  cenário chega quando entra na visão ou na área explorada, e o efeito acima da
+  neblina só enquanto a âncora dele está iluminada;
 - campos de ficha marcados como exclusivos do mestre;
 - **alucinações** destinadas a outros jogadores — nem o id chega;
 - cenas ainda não ativadas (material de preparação);
