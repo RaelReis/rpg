@@ -85,6 +85,11 @@ quando o corte era do meu próprio recorte de screenshot.
   vez de agir e descrever), não marcam combate: não existe abrir nem encerrar. O
   grupo entra na ordem sozinho, e a ordem da lista **é** a ordem dos turnos —
   quem a define é o mestre, arrastando as miniaturas no cabeçalho.
+- **A vez de um token oculto é escondida no envio, não gravada.** `turnsForViewer`
+  lê `concealedFromPlayers(token)` a cada envio; `hiddenFromPlayers` na vez é só
+  o ajuste manual do mestre. Não volte a copiar a ocultação do token para a flag
+  ao pôr alguém na ordem: o caminho da ficha arrastada não copiava, e o NPC
+  oculto vazava para os jogadores.
 - **A coluna `initiative` do banco guarda o `TurnState`.** O nome é legado;
   renomear exigiria migrar todas as mesas gravadas. O mapeamento fica em
   `server/src/room.ts`.

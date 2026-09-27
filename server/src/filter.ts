@@ -1,6 +1,7 @@
 import {
   canPlayerSeeToken,
   computeVision,
+  concealedFromPlayers,
   filterSheetForRole,
   boardForViewer,
   filterTemplateForRole,
@@ -310,11 +311,17 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
 /**
  * A ordem de turnos como este observador tem direito de ve-la.
  *
- * Saem duas coisas: as miniaturas que o mestre escondeu e as de alucinacoes
- * que este jogador nao percebe — essas trariam o id e o nome do token, e a
- * ordem de turno entregaria o monstro que so a Alice ve. O historico e a vez
- * atual acompanham o mesmo corte: um registro do monstro escondido entregaria
- * que ele existe e em que rodada agiu.
+ * Saem tres coisas: as miniaturas que o mestre escondeu, as de tokens ocultos
+ * ou exclusivos do mestre, e as de alucinacoes que este jogador nao percebe —
+ * todas trariam o id e o nome do token, e a ordem de turno entregaria o
+ * monstro que a mesa ainda nao encontrou. O historico e a vez atual acompanham
+ * o mesmo corte: um registro do monstro escondido entregaria que ele existe e
+ * em que rodada agiu.
+ *
+ * A ocultacao do token e lida aqui, na hora do envio, e nao copiada para a
+ * vez quando ela entra na ordem. Copiada, dependia de o cliente mandar a flag:
+ * a ficha arrastada para a faixa nao mandava, e o NPC oculto aparecia para
+ * todos. Lida daqui, revelar o token tambem revela a vez dele.
  */
 export function turnsForViewer(room: Room, viewer: Viewer): TurnState {
   const turns = room.state.turns;
@@ -323,7 +330,7 @@ export function turnsForViewer(room: Room, viewer: Viewer): TurnState {
   const unseenTokens = new Set<string>();
   for (const scene of room.state.scenes) {
     for (const token of scene.tokens) {
-      if (!perceives(token, viewer.playerId)) unseenTokens.add(token.id);
+      if (!perceives(token, viewer.playerId) || concealedFromPlayers(token)) unseenTokens.add(token.id);
     }
   }
 

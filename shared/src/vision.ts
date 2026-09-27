@@ -7,7 +7,7 @@ import {
   tokenCell,
   tokenCenter,
 } from './grid.js';
-import { isHallucination, perceives } from './perception.js';
+import { concealedFromPlayers, isHallucination, perceives } from './perception.js';
 import type { Cell, GridConfig, Point, Scene, Token, Role, Wall } from './types.js';
 
 /**
@@ -322,7 +322,7 @@ export function canPlayerSeeToken(
   // Percepcao antes de tudo: quem nao esta na lista da alucinacao nao a ve,
   // nem sendo dono, nem com a neblina desligada.
   if (!perceives(token, playerId)) return false;
-  if (token.gmOnly || token.visibility === 'hidden') return false;
+  if (concealedFromPlayers(token)) return false;
   if (token.ownerPlayerId !== null && token.ownerPlayerId === playerId) return true;
   if (vision.unrestricted || scene.fog.mode === 'off') return true;
 

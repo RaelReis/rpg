@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { TurnEntry, TurnRecord } from '@rpg/shared';
+import { concealedFromPlayers, type TurnEntry, type TurnRecord } from '@rpg/shared';
 
 import { act } from '../net/socket';
 import { activeScene, findAsset, findSheet, isGm, useStore } from '../state/store';
@@ -39,6 +39,12 @@ export function TurnBar(): JSX.Element | null {
   const entries = turns.entries;
   if (entries.length === 0) return null;
 
+  // Tokens escondidos do grupo: a vez deles ja nao chega aos jogadores (o
+  // servidor le a ocultacao do token), e a miniatura do mestre mostra isso.
+  const concealedTokens = new Set(
+    table.scenes.flatMap((s) => s.tokens).filter(concealedFromPlayers).map((t) => t.id),
+  );
+
   function reorder(dragged: string, target: string, after: boolean): void {
     const ids = entries.map((e) => e.id).filter((id) => id !== dragged);
     const index = ids.indexOf(target);
@@ -71,8 +77,10 @@ export function TurnBar(): JSX.Element | null {
         sheetId: token.sheetId,
         playerId: token.ownerPlayerId,
         name: findSheet(token.sheetId)?.name ?? token.name,
-        // Quem o mestre esconde do mapa tambem fica fora da ordem visivel.
-        hiddenFromPlayers: token.gmOnly || token.visibility === 'hidden',
+        // Sem `hiddenFromPlayers`: quem o mestre esconde do mapa ja fica fora
+        // da ordem visivel pelo servidor, que le a ocultacao do token na hora
+        // do envio. Gravar a flag aqui prendia a vez escondida mesmo depois de
+        // o mestre revelar o token.
       })),
     });
   }
@@ -123,6 +131,7 @@ export function TurnBar(): JSX.Element | null {
               entry={entry}
               active={entry.id === turns.activeEntryId}
               mine={entry.playerId !== null && entry.playerId === myId}
+              tokenConcealed={entry.tokenId !== null && concealedTokens.has(entry.tokenId)}
               gm={gm}
               dragging={dragId === entry.id}
               drop={dropAt?.id === entry.id ? (dropAt.after ? 'after' : 'before') : null}
@@ -206,6 +215,7 @@ function Mini({
   entry,
   active,
   mine,
+  tokenConcealed,
   gm,
   dragging,
   drop,
@@ -218,6 +228,8 @@ function Mini({
   entry: TurnEntry;
   active: boolean;
   mine: boolean;
+  /** O token da vez esta oculto: ela some para os jogadores, com ou sem a flag. */
+  tokenConcealed: boolean;
   gm: boolean;
   dragging: boolean;
   drop: 'before' | 'after' | null;
@@ -234,7 +246,7 @@ function Mini({
     active ? 'active' : '',
     mine ? 'mine' : '',
     entry.skipped ? 'skipped' : '',
-    entry.hiddenFromPlayers ? 'hidden-entry' : '',
+    entry.hiddenFromPlayers || tokenConcealed ? 'hidden-entry' : '',
     dragging ? 'dragging' : '',
     drop ? `drop-${drop}` : '',
   ]
@@ -295,19 +307,32 @@ function Mini({
           >
             <Icon name={entry.skipped ? 'resumeTurn' : 'skipTurn'} size="sm" />
           </button>
-          <button
-            className="btn ghost sm icon-only"
-            onClick={() =>
-              void act('turns:update', {
-                entryId: entry.id,
-                patch: { hiddenFromPlayers: !entry.hiddenFromPlayers },
-              })
-            }
-            title={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
-            aria-label={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
-          >
-            <Icon name={entry.hiddenFromPlayers ? 'blinded' : 'vision'} size="sm" />
-          </button>
+          {tokenConcealed ? (
+            // Com o token oculto, a flag da vez nao muda nada para os
+            // jogadores: o botao explica em vez de parecer que falhou.
+            <button
+              className="btn ghost sm icon-only"
+              disabled
+              title="Escondida porque o token esta oculto — revele o token para mostrar"
+              aria-label="Escondida porque o token esta oculto"
+            >
+              <Icon name="blinded" size="sm" />
+            </button>
+          ) : (
+            <button
+              className="btn ghost sm icon-only"
+              onClick={() =>
+                void act('turns:update', {
+                  entryId: entry.id,
+                  patch: { hiddenFromPlayers: !entry.hiddenFromPlayers },
+                })
+              }
+              title={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
+              aria-label={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
+            >
+              <Icon name={entry.hiddenFromPlayers ? 'blinded' : 'vision'} size="sm" />
+            </button>
+          )}
           <button
             className="btn ghost sm icon-only"
             onClick={() => void act('turns:remove', { entryId: entry.id })}

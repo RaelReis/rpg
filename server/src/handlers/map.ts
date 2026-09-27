@@ -213,7 +213,11 @@ export function updateToken(
     applyExploration(ctx, scene);
     refreshVision(ctx.room, scene);
   }
-  if (p.visibleTo !== undefined && gm) emitTurns(ctx.room);
+  // A vez do token na ordem segue a visibilidade dele (ver `turnsForViewer`):
+  // esconder ou revelar o token esconde ou revela a miniatura para a mesa.
+  if (gm && (p.visibleTo !== undefined || p.visibility !== undefined || p.gmOnly !== undefined)) {
+    emitTurns(ctx.room);
+  }
   ok(ack, null);
 }
 

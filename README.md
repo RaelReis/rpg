@@ -710,6 +710,9 @@ Quem entra na mesa já nasce na ordem, e quem sai dela sai da ordem junto.
 
 O que o mestre esconde, fica escondido: uma miniatura marcada como oculta não
 chega ao jogador — nem na ordem, nem no histórico, nem como "a vez de alguém".
+O mesmo vale para a vez de um token **oculto ou exclusivo do mestre**, venha ela
+pelo `+` ou pela ficha arrastada até a faixa. A ocultação é lida do token na hora
+do envio, então revelar o NPC no meio da cena revela também a vez dele.
 
 ### Imagens do personagem
 

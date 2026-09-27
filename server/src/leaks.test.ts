@@ -30,7 +30,7 @@ import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
 import { stateForViewer } from './filter.js';
 import type { Ctx } from './handlers/context.js';
 import { updateHandout } from './handlers/handouts.js';
-import { deleteToken } from './handlers/map.js';
+import { deleteToken, updateToken } from './handlers/map.js';
 import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
 import { handleJoin } from './handlers/session.js';
 import { Room, rooms } from './room.js';
@@ -238,11 +238,12 @@ describe('vazamentos: o que ja esta protegido', () => {
   });
 });
 
-describe('vazamentos: achados abertos do relatorio de QA', () => {
+describe('vazamentos: achados do relatorio de QA', () => {
   // Q-002. Arrastar a ficha para a faixa de turnos manda o mesmo payload que
-  // `addSheet` do TurnBar, sem `hiddenFromPlayers`. A vez do NPC oculto vai
-  // aos jogadores com nome e id do token.
-  it.fails('Q-002: NPC oculto posto na ordem pela ficha nao chega aos jogadores', () => {
+  // `addSheet` do TurnBar, sem `hiddenFromPlayers`. A vez do NPC oculto ia
+  // aos jogadores com nome e id do token; agora o servidor le a ocultacao do
+  // token na hora do envio.
+  it('Q-002: NPC oculto posto na ordem pela ficha nao chega aos jogadores', () => {
     const room = table();
     const scene = room.activeScene()!;
     room.state.sheets.push(sheetOf('sht-SEGREDO-guarda', null));
@@ -261,6 +262,25 @@ describe('vazamentos: achados abertos do relatorio de QA', () => {
     expect(secretsIn(traffic(room, alice))).toEqual([]);
   });
 
+  it('Q-002: revelar o token revela a vez; esconder um token ja na ordem esconde a vez', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.tokens.push(createToken({ id: 'tok-cultista', name: 'Cultista', visibility: 'hidden', x: 700, y: 700 }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    addTurnEntries(ctxOf(room, gm), { entries: [{ tokenId: 'tok-cultista', sheetId: null, playerId: null, name: 'Cultista' }] }, vi.fn());
+
+    const lastTurns = () =>
+      alice.received.filter(([ev]) => ev === 'turns:patch').at(-1)?.[1] as { entries: { name: string }[] } | undefined;
+    expect(lastTurns()?.entries.map((e) => e.name)).not.toContain('Cultista');
+
+    updateToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-cultista', patch: { visibility: 'visible' } }, vi.fn());
+    expect(lastTurns()?.entries.map((e) => e.name)).toContain('Cultista');
+
+    updateToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-cultista', patch: { gmOnly: true } }, vi.fn());
+    expect(lastTurns()?.entries.map((e) => e.name)).not.toContain('Cultista');
+  });
+
   // Q-003. O filtro de cena so tira tiles `gmOnly`: um bau numa sala que
   // ninguem viu e um tile que bloqueia a visao (a mesma planta que as paredes
   // escondem) chegam inteiros ao jogador.
@@ -274,9 +294,9 @@ describe('vazamentos: achados abertos do relatorio de QA', () => {
     expect(secretsIn(traffic(room, alice))).toEqual([]);
   });
 
-  // Q-004. Mudar o compartilhamento de um material manda `remove` com o id a
-  // todos os que nao veem — inclusive a quem nunca teve acesso.
-  it.fails('Q-004: compartilhar um material com o Bruno nao manda o id dele a Alice', () => {
+  // Q-004. Mudar o compartilhamento de um material mandava `remove` com o id
+  // a todos os que nao veem — inclusive a quem nunca teve acesso.
+  it('Q-004: compartilhar um material com o Bruno nao manda o id dele a Alice', () => {
     const room = table();
     room.state.handouts.push({
       id: 'SEGREDO-carta',
