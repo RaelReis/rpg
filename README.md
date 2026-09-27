@@ -817,6 +817,18 @@ a pessoa volta para o **mesmo** personagem, com a mesma ficha e os mesmos tokens
 sob controle. Fechar a aba e reabrir também retoma a sessão direto, sem digitar
 o código de novo.
 
+Quando a sessão se perde de vez (outro aparelho, histórico limpo), a pessoa entra
+de novo pelo código com o **mesmo nome**. Se esse jogador está desconectado, a
+tela pergunta *"Já existe um personagem de Alice nesta mesa, desconectado. É
+você?"*; confirmando, ela volta ao mesmo personagem, e o acesso antigo deixa de
+valer. Nome igual ao de alguém conectado é recusado. O mestre é avisado de toda
+retomada: a pergunta evita o personagem duplicado por engano, mas não prova quem
+está do outro lado — numa mesa entre amigos, quem conduz percebe se algo saiu
+errado.
+
+A janela de imagens da entrada não fecha no `Esc` nem no X; sair da mesa por ela
+pede confirmação.
+
 O estado autoritativo da mesa vive em memória no servidor e é gravado no banco
 de forma agrupada: arrastar um token não custa uma escrita em disco por quadro.
 Ao encerrar o processo (`Ctrl+C`), o que estiver pendente é gravado antes da

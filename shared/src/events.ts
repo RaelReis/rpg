@@ -65,6 +65,11 @@ export interface JoinRequest {
   gmPassword?: string;
   /** Cor preferida do jogador no chat e nos pings. */
   color?: string;
+  /**
+   * Retomar o jogador desconectado com este mesmo nome. Sem isto, o servidor
+   * responde `NAME_TAKEN_OFFLINE` e o cliente pergunta "E voce?" antes.
+   */
+  reclaim?: boolean;
 }
 
 export interface ResumeRequest {

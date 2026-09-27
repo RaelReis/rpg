@@ -16,7 +16,11 @@ export function Modal({
   wide,
 }: {
   title: string;
-  onClose: () => void;
+  /**
+   * Sem `onClose`, a janela nao tem X e ignora Esc e clique fora: so sai
+   * pelos botoes do rodape. E para janela que nao pode sumir por engano.
+   */
+  onClose?: () => void;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
@@ -31,14 +35,16 @@ export function Modal({
   }, []);
   return (
     <dialog ref={ref} className="modal-shell" aria-labelledby={titleId}
-      onCancel={e => { e.preventDefault(); onClose(); }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      onCancel={e => { e.preventDefault(); onClose?.(); }}
+      onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}>
       <div className="modal" style={wide ? { width: 'min(980px, 100%)' } : undefined}>
         <header>
           <h2 id={titleId}>{title}</h2>
-          <button type="button" className="btn ghost sm icon-only" onClick={onClose} aria-label="Fechar">
-            <Icon name="close" />
-          </button>
+          {onClose && (
+            <button type="button" className="btn ghost sm icon-only" onClick={onClose} aria-label="Fechar">
+              <Icon name="close" />
+            </button>
+          )}
         </header>
         <div className="body">{children}</div>
         {footer && <footer>{footer}</footer>}

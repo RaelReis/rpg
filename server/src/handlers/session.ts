@@ -13,7 +13,9 @@ import {
 import { generateSessionToken, hashToken, verifyPassword } from '../auth.js';
 import {
   emitPlayers,
+  notify,
   roomChannel,
+  socketsOf,
   sendFullState,
   stateWithVisibilityCache,
   type TypedSocket,
@@ -36,6 +38,48 @@ import { fail, ok, safeString } from './context.js';
  */
 
 type JoinResult = { session: Session; state: TableState };
+
+/** Mesmo nome para quem digita: sem caixa, sem acento, sem espaco sobrando. */
+function sameName(a: string, b: string): boolean {
+  const norm = (s: string) =>
+    s.normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Devolve a sessao de um jogador desconectado a quem entrou com o nome dele.
+ *
+ * O token antigo deixa de valer: gera-se outro, e o cache de sessoes esquece
+ * o anterior. O mestre e avisado, porque a pergunta "e voce?" evita o
+ * personagem duplicado por engano, mas nao prova identidade — numa mesa entre
+ * amigos, quem conduz e quem percebe se alguem assumiu o personagem errado.
+ */
+async function reclaimPlayer(socket: TypedSocket, room: Room, playerId: string, ack: Ack<JoinResult>): Promise<void> {
+  const player = room.player(playerId);
+  if (!player) return fail(ack, 'Jogador nao encontrado.');
+
+  const token = generateSessionToken();
+  await prisma.player.update({ where: { id: player.id }, data: { tokenHash: hashToken(token) } });
+  rooms.forgetPlayerSessions(player.id);
+
+  attach(socket, room, player.id);
+
+  const session: Session = {
+    tableId: room.state.id,
+    tableCode: room.state.code,
+    playerId: player.id,
+    role: player.role,
+    token,
+    name: player.name,
+  };
+
+  ensurePartyInTurns(room);
+  ok(ack, { session, state: stateWithVisibilityCache(room, socket) });
+  emitPlayers(room);
+  for (const other of socketsOf(room)) {
+    if (other.data.viewer.role === 'GM') notify(other, 'info', `${player.name} voltou por um novo acesso e retomou o personagem.`);
+  }
+}
 
 function pickColor(room: Room, requested?: string): string {
   if (requested && /^#[0-9a-f]{6}$/i.test(requested)) return requested;
@@ -134,6 +178,32 @@ export async function handleJoin(
 
   const room = await rooms.loadByCode(req.code);
   if (!room) return fail(ack, 'Mesa nao encontrada. Confira o codigo.');
+
+  /*
+   * Nome de quem ja esta na mesa. Entrar de novo com o mesmo nome criava outro
+   * jogador, outra ficha, outro token e outra vez na ordem — o que acontecia
+   * sempre que alguem perdia a sessao do navegador (fechou a janela, limpou o
+   * historico, trocou de aparelho). Agora, com o jogador desconectado, a
+   * pessoa confirma que e ela e retoma o personagem; com ele conectado, e
+   * outra pessoa, e o nome precisa mudar. So vale para quem entra como
+   * jogador: o mestre continua voltando pela senha.
+   */
+  if (!req.gmPassword) {
+    const same = room.state.players.find((p) => p.role === 'PLAYER' && sameName(p.name, name));
+    if (same?.connected) {
+      return fail(ack, `Ja tem alguem chamado ${same.name} na mesa agora. Entre com outro nome.`, 'NAME_TAKEN');
+    }
+    if (same) {
+      if (req.reclaim !== true) {
+        return fail(
+          ack,
+          `Ja existe um personagem de ${same.name} nesta mesa, desconectado. E voce?`,
+          'NAME_TAKEN_OFFLINE',
+        );
+      }
+      return reclaimPlayer(socket, room, same.id, ack);
+    }
+  }
 
   // Cada entrada cria um jogador e uma ficha permanentes: sem teto, quem tiver
   // o codigo enche a mesa e o banco a forca de reentrar.

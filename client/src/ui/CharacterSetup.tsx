@@ -19,6 +19,11 @@ import { Icon, type IconName } from './icons';
  *
  * Por isso a janela nao fecha: sem as duas, nao ha personagem para mostrar. O
  * mestre nao a ve, porque nao tem personagem.
+ *
+ * Nem X, nem Esc, nem clique fora. Eles chamavam `leaveTable`, e o gesto de
+ * "fechar a janela" do novato o tirava da mesa sem aviso, apagando a sessao —
+ * ao voltar, ele ganhava um segundo personagem. Sair continua possivel pelo
+ * botao do rodape, com confirmacao, como o "Sair" do cabecalho.
  */
 export function CharacterSetup(): JSX.Element | null {
   const rev = useStore((s) => s.rev);
@@ -42,6 +47,14 @@ export function CharacterSetup(): JSX.Element | null {
 
   const chosenPortrait = portrait ?? table.assets.find(a => a.id === sheet.portraitAssetId) ?? null;
   const chosenBody = body ?? table.assets.find(a => a.id === sheet.bodyAssetId) ?? null;
+  // Na primeira entrada nao ha imagem nenhuma a preservar; o aviso so vale para
+  // quem volta com uma das duas ja escolhida.
+  const hasSome = Boolean(sheet.portraitAssetId || sheet.bodyAssetId);
+
+  function leave(): void {
+    if (window.confirm('Sair da mesa? Voce pode voltar depois pelo mesmo link, com o mesmo nome.')) leaveTable();
+  }
+
   async function confirm(): Promise<void> {
     if (!chosenPortrait || !chosenBody) return;
     setSaving(true);
@@ -53,14 +66,18 @@ export function CharacterSetup(): JSX.Element | null {
   }
 
   return (
-    <Modal title="Seu personagem" onClose={leaveTable} footer={<>
-      <button className="btn ghost" onClick={leaveTable}>Sair da mesa</button>
+    <Modal title="Seu personagem" footer={<>
+      <button className="btn ghost" onClick={leave}>Sair da mesa</button>
       <div className="spacer" />
       <button className="btn primary" disabled={!chosenPortrait || !chosenBody || saving} onClick={() => void confirm()}>
         {saving ? 'Salvando...' : 'Entrar na mesa'}
       </button>
     </>}>
-      <p className="hint">Escolha as imagens de <strong>{sheet.name}</strong>. As imagens existentes foram preservadas; voce pode trocar as duas depois pela ficha.</p>
+      <p className="hint">
+        Escolha as imagens de <strong>{sheet.name}</strong>.
+        {hasSome && ' As imagens que voce ja tinha escolhido foram mantidas.'} Voce pode trocar as duas
+        depois pela ficha.
+      </p>
       <div className="pair">
         <Slot kind="portrait" icon="portrait" title="Retrato" hint="O rosto do personagem, para a ficha e o grupo." asset={chosenPortrait} onPick={setPortrait} />
         <Slot kind="token" icon="tile" title="Corpo inteiro" hint="A arte do personagem no mapa. Fundo transparente fica melhor." asset={chosenBody} onPick={setBody} />

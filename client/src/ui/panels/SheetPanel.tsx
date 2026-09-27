@@ -24,7 +24,15 @@ export function SheetPanel(): JSX.Element {
   void rev;
   if (!table) return <Empty>Sem mesa carregada.</Empty>;
 
-  const sheets = table.sheets;
+  /*
+   * O jogador so escolhe entre fichas inteiras: a dele e as compartilhadas com
+   * o grupo. As demais chegam reduzidas as barras (para os retratos do grupo),
+   * e abertas aqui apareciam como ficha completa com zeros onde faltava campo —
+   * foi assim que uma jogadora abriu, sem perceber, a ficha de outra pessoa.
+   */
+  const sheets = gm
+    ? table.sheets
+    : table.sheets.filter((s) => s.ownerPlayerId === playerId || s.sharedWithParty);
   const own = sheets.find((s) => s.ownerPlayerId === playerId) ?? null;
   const selected: Sheet | null =
     sheets.find((s) => s.id === selectedId) ?? own ?? (gm ? (sheets[0] ?? null) : null);

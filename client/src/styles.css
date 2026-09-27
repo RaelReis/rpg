@@ -456,6 +456,25 @@ textarea {
   font-size: 12px;
 }
 
+/* Pergunta "e voce?" na entrada: nao e erro, e uma escolha — latao, nao vermelho. */
+.reclaim-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--brass);
+  border-radius: var(--radius);
+  background: rgba(217, 164, 65, 0.08);
+  font-size: 13px;
+}
+.reclaim-box p {
+  margin: 0;
+}
+.reclaim-box .row {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .code-display {
   font-family: var(--font-mono);
   font-size: 26px;

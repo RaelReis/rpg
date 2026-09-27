@@ -17,7 +17,7 @@ import {
 vi.mock('./db.js', () => ({
   prisma: {
     table: { update: vi.fn(), findUnique: vi.fn() },
-    player: { findUnique: vi.fn(), create: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
+    player: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
     sheet: { create: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
     asset: { findMany: vi.fn() },
   },
@@ -320,30 +320,55 @@ describe('vazamentos: achados do relatorio de QA', () => {
 });
 
 describe('reproducoes do relatorio de QA', () => {
-  // Q-005. O novato que fecha a janela de imagens perde a sessao; ao entrar de
-  // novo com o mesmo nome, ganha outro jogador, outra ficha, outro token e
-  // outra vez. A correcao pode retomar o personagem ou perguntar antes — nos
-  // dois casos nao pode haver duas "Alice" na mesa.
-  it.fails('Q-005: reentrar com o mesmo nome nao duplica o personagem', async () => {
+  // Q-005. O novato que fechava a janela de imagens perdia a sessao; ao entrar
+  // de novo com o mesmo nome, ganhava outro jogador, outra ficha, outro token
+  // e outra vez. Agora o servidor pergunta se e a mesma pessoa e, confirmado,
+  // devolve o personagem com um token novo.
+  it('Q-005: reentrar com o mesmo nome pergunta e retoma, sem duplicar', async () => {
     const room = table();
     room.state.players = room.state.players.filter((p) => p.id === 'mestre');
     room.state.sheets = [];
     room.activeScene()!.tokens = [];
     vi.spyOn(rooms, 'loadByCode').mockResolvedValue(room);
+    const gm = connect(room, 'mestre');
 
     const first = connect(room, 'ninguem');
-    await handleJoin(first.socket, { code: 'mesa', name: 'Alice' }, vi.fn());
+    const firstAck = vi.fn();
+    await handleJoin(first.socket, { code: 'mesa', name: 'Alice' }, firstAck);
+    const original = firstAck.mock.calls[0][0].data.session;
 
     // A aba fecha: o jogador fica desconectado, a sessao se perde no navegador.
     room.sockets.delete(first.socket.id);
     for (const p of room.state.players) if (p.name === 'Alice') p.connected = false;
 
+    // Sem confirmar, nada e criado: o cliente recebe a pergunta.
     const second = connect(room, 'ninguem-2');
-    await handleJoin(second.socket, { code: 'mesa', name: 'Alice' }, vi.fn());
+    const askAck = vi.fn();
+    await handleJoin(second.socket, { code: 'mesa', name: '  alíce ' }, askAck);
+    expect(askAck.mock.calls[0][0]).toMatchObject({ ok: false, code: 'NAME_TAKEN_OFFLINE' });
+
+    // Confirmado, volta o mesmo jogador, com outro token de sessao.
+    const reclaimAck = vi.fn();
+    await handleJoin(second.socket, { code: 'mesa', name: 'Alice', reclaim: true }, reclaimAck);
+    const reclaimed = reclaimAck.mock.calls[0][0].data.session;
+    expect(reclaimed.playerId).toBe(original.playerId);
+    expect(reclaimed.token).not.toBe(original.token);
 
     expect(room.state.players.filter((p) => p.name === 'Alice')).toHaveLength(1);
     expect(room.state.sheets.filter((s) => s.name === 'Alice')).toHaveLength(1);
     expect(room.activeScene()!.tokens.filter((t) => t.name === 'Alice')).toHaveLength(1);
+    // O mestre fica sabendo que o personagem foi retomado por outro acesso.
+    expect(JSON.stringify(gm.received)).toContain('retomou o personagem');
+  });
+
+  it('Q-005: nome de alguem conectado agora e recusado, sem criar nada', async () => {
+    const room = table();
+    vi.spyOn(rooms, 'loadByCode').mockResolvedValue(room);
+    const other = connect(room, 'visitante');
+    const ack = vi.fn();
+    await handleJoin(other.socket, { code: 'mesa', name: 'ALICE' }, ack);
+    expect(ack.mock.calls[0][0]).toMatchObject({ ok: false, code: 'NAME_TAKEN' });
+    expect(room.state.players).toHaveLength(3);
   });
 
   // Q-007. `kickPlayer` tira as vezes do jogador, mas o token dele continua

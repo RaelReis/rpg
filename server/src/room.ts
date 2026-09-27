@@ -651,6 +651,16 @@ class RoomManager {
     return match ? this.load(match.id) : null;
   }
 
+  /**
+   * Esquece as sessoes em cache de um jogador. Usado quando o token dele e
+   * trocado: sem isto, o token antigo seguia valendo pelo tempo do cache.
+   */
+  forgetPlayerSessions(playerId: string): void {
+    for (const [hash, entry] of this.sessionCache) {
+      if (entry.playerId === playerId) this.sessionCache.delete(hash);
+    }
+  }
+
   /** Resolve um token de sessao para a mesa e o jogador correspondentes. */
   async resolveSession(token: string): Promise<{ room: Room; playerId: string } | null> {
     if (typeof token !== 'string' || !token || token.length > 256) return null;

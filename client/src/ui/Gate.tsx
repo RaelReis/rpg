@@ -25,6 +25,9 @@ export function Gate(): JSX.Element {
   const [asGm, setAsGm] = useState(false);
   const [gmPassword, setGmPassword] = useState('');
   const [summary, setSummary] = useState<TableSummary | null>(null);
+  // Pergunta "e voce?" quando o nome e de um jogador desconectado da mesa.
+  const [reclaimAsk, setReclaimAsk] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   // criar
   const [tableName, setTableName] = useState('');
@@ -73,21 +76,30 @@ export function Gate(): JSX.Element {
     };
   }, [code]);
 
-  async function handleJoin(e: React.FormEvent): Promise<void> {
-    e.preventDefault();
+  async function join(reclaim: boolean): Promise<void> {
     setError(null);
+    setReclaimAsk(null);
     setBusy(true);
     try {
       await joinTable({
         code,
         name: name.trim(),
         gmPassword: asGm ? gmPassword : undefined,
+        reclaim: reclaim || undefined,
       });
     } catch (err) {
-      setError((err as Error).message);
+      // O nome e de alguem que ja esta na mesa, desconectado: em vez de criar
+      // um segundo personagem, pergunta se e a mesma pessoa voltando.
+      if ((err as { code?: string }).code === 'NAME_TAKEN_OFFLINE') setReclaimAsk((err as Error).message);
+      else setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleJoin(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    await join(false);
   }
 
   async function handleCreate(e: React.FormEvent): Promise<void> {
@@ -204,9 +216,13 @@ export function Gate(): JSX.Element {
                 </label>
                 <input
                   id="name"
+                  ref={nameRef}
                   className="input"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    setReclaimAsk(null);
+                  }}
                   placeholder="Como aparecer na mesa"
                   maxLength={40}
                   required
@@ -240,9 +256,30 @@ export function Gate(): JSX.Element {
                 </div>
               )}
 
-              <button className="btn primary block" disabled={busy}>
-                {busy ? 'Entrando...' : 'Entrar na mesa'}
-              </button>
+              {reclaimAsk ? (
+                <div className="reclaim-box" role="alert">
+                  <p>{reclaimAsk}</p>
+                  <div className="row">
+                    <button type="button" className="btn primary" disabled={busy} onClick={() => void join(true)}>
+                      Sim, sou eu
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => {
+                        setReclaimAsk(null);
+                        nameRef.current?.select();
+                      }}
+                    >
+                      Nao, vou usar outro nome
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn primary block" disabled={busy}>
+                  {busy ? 'Entrando...' : 'Entrar na mesa'}
+                </button>
+              )}
             </form>
           )}
 
