@@ -102,6 +102,8 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - cenas ainda não ativadas (material de preparação);
 - **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem;
 - **gatilhos** do mapa — nem as áreas, nem os nomes, nem o registro de disparos;
+- no quadro de pistas, o **cartão de um material** que o jogador não recebeu:
+  chega como "Material indisponível", sem título, imagem ou id;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
 
@@ -536,10 +538,43 @@ aconteceu na mesa, e o susto de ninguém volta atrás.
 
 ---
 
+## Quadro de pistas
+
+Um quadro de cortiça para o grupo montar a investigação. O botão **📌 Quadro**
+no cabeçalho o abre em tela cheia; `Esc` fecha. É um por mesa, persiste entre
+sessões e vai no backup.
+
+- **Itens**: nota de texto (com cor de papel), imagem enviada e **cartão de
+  material** — uma referência a algo da aba *Materiais*. Clique duas vezes num
+  item para escrever ou mudar a legenda.
+- **Fios**: 🧵 *Fio*, clique no primeiro item e depois no segundo. O fio sai
+  do pino de cada um e pode ter cor; clique nele para trocar a cor ou cortar.
+- **Todos criam, movem e editam.** Apagar um item ou cortar um fio é de quem o
+  criou e do mestre.
+- O mestre pode **travar** o quadro: para os jogadores ele fica somente
+  leitura, e a trava é conferida **no servidor** — não só escondendo botões.
+- Cada participante tem a **própria câmera** no quadro (arraste a cortiça para
+  mover, roda do mouse para o zoom), como no mapa.
+
+**Materiais não compartilhados.** Um cartão pode apontar para uma carta que só
+a Alice recebeu. Para quem não tem acesso, ele chega como **"Material
+indisponível"** — sem título, sem imagem e sem o id do material. Quando o
+mestre compartilha o material, o cartão se completa sozinho na tela de quem
+ganhou acesso. Um jogador não consegue pregar um material que não recebeu.
+
+**Sincronização.** Em tempo real, com a última escrita vencendo por item.
+Durante o arraste, a posição vai aos outros na hora (quem arrasta não recebe o
+próprio eco, para o cartão não tremer), e o banco recebe uma escrita agrupada
+quando o movimento para. O quadro tem coluna própria no banco: arrastar um
+cartão não regrava a mesa inteira.
+
+---
+
 ## Backup
 
 Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
-fichas, materiais, cartelas, gatilhos, tokens, paredes e neblina. Há duas versões — **com imagens**,
+fichas, materiais, cartelas, gatilhos, quadro de pistas, tokens, paredes e
+neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
 
@@ -551,7 +586,9 @@ Para restaurar, use **Importar mesa** na tela de entrada. A importação **sempr
 cria uma mesa nova**, com código novo: sobrescrever uma existente destruiria
 material sem volta, e comparar as duas antes de descartar é decisão de quem
 importou. As fichas voltam sem dono e os materiais sem compartilhamento — os
-jogadores entram de novo pelo código, e o mestre reatribui.
+jogadores entram de novo pelo código, e o mestre reatribui. No quadro de
+pistas, os itens voltam sem autor (o mestre continua podendo apagá-los), e as
+alucinações voltam com a lista vazia.
 
 O arquivo tem um campo `format` com a versão. Cada mudança no que ele carrega
 incrementa o número, e a importação continua aceitando as versões anteriores:
@@ -561,6 +598,7 @@ incrementa o número, e a importação continua aceitando as versões anteriores
 | 1 | Cenas, fichas, materiais, imagens |
 | 2 | Cartelas de cena e a cartela de abertura de cada cena |
 | 3 | Gatilhos de cada cena e o registro de disparos |
+| 4 | Quadro de pistas |
 
 O banco (`server/prisma/dev.db`) e a pasta `server/uploads/` continuam sendo o
 backup completo para quem tem acesso ao servidor.
@@ -589,6 +627,7 @@ regras é do mestre.
 | Retrato | 5 MB | todos |
 | Efeito | 5 MB | mestre |
 | Cartela | 10 MB | mestre |
+| Pista (quadro) | 5 MB | todos |
 | Item | 2 MB | todos |
 
 Formatos: PNG, JPEG, WebP, GIF, AVIF; até 8192 px por lado.

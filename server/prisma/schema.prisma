@@ -37,6 +37,9 @@ model Table {
   sceneCards     String   @default("[]")
   /// Registro de disparos de gatilho (TriggerLogEntry[]), so do mestre.
   triggerLog     String   @default("[]")
+  /// Quadro de pistas (ClueBoard). Coluna propria: o arraste de um cartao
+  /// regrava so ela, e nao a mesa inteira.
+  board          String   @default("{}")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

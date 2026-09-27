@@ -1097,6 +1097,7 @@ async function main() {
   await immersionPerception();
   await immersionScreen();
   await immersionTriggers();
+  await immersionBoard();
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`${checks - failures}/${checks} verificacoes passaram`);
@@ -1425,20 +1426,9 @@ async function immersionScreen() {
   check('backup tem versao atual', exported.format >= 2);
   check('backup leva as cartelas', exported.sceneCards?.length === 1 && exported.scenes[0].introCardId === card.id);
 
-  const reimport = await fetch(`${BASE}/api/tables/import`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ backup: exported, gmName: 'Mestre 2' }),
-  });
-  const reimported = await reimport.json();
-  const restoredSocket = await connect();
-  const restored = (await rpc(restoredSocket, 'session:resume', { token: reimported.session.token })).state;
-  check(
-    'cartelas voltam na importacao, com a cena apontando para elas',
-    restored.sceneCards.length === 1 && restored.scenes[0].introCardId === restored.sceneCards[0].id,
-  );
-  restoredSocket.disconnect();
-
+  // A reimportacao completa (cartelas, gatilhos e quadro juntos) fica no fim,
+  // em I14: o servidor aceita 10 importacoes por hora por endereco, e uma por
+  // fase faria a suite estourar o limite ja na segunda rodada.
   const legacy = { ...exported, format: 1 };
   delete legacy.sceneCards;
   for (const scene of legacy.scenes) delete scene.introCardId;
@@ -1573,7 +1563,158 @@ async function immersionTriggers() {
   const exported = await (
     await fetch(`${BASE}/api/tables/${gmState.id}/export?assets=0`, { headers: { 'x-session-token': gmToken } })
   ).json();
-  check('backup tem versao 3 e leva gatilhos e registro', exported.format === 3 && exported.scenes[0].triggers.length === 2 && exported.triggerLog.length === 2);
+  check('backup (versao 3+) leva gatilhos e registro', exported.format >= 3 && exported.scenes[0].triggers.length === 2 && exported.triggerLog.length === 2);
+
+  gm.disconnect();
+  ana.socket.disconnect();
+  beto.socket.disconnect();
+}
+
+async function immersionBoard() {
+  console.log('\n== I11. Quadro de pistas ==');
+  const { gm, gmToken, players } = await freshTable(['Ana', 'Beto']);
+  const [ana, beto] = players;
+  const anaSees = recordTraffic(ana.socket);
+  const betoSees = recordTraffic(beto.socket);
+
+  const diary = await rpc(gm, 'handout:create', { title: 'Diario do Faroleiro', text: 'Dia 12: a luz apagou sozinha.' });
+  await sleep(100);
+
+  // O mestre prega o material no quadro sem ter compartilhado com ninguem.
+  const anaGetsCard = waitFor(ana.socket, 'board:patch', (p) => p.upsert?.some((i) => i.kind === 'handout'));
+  const card = await rpc(gm, 'board:create', { item: { kind: 'handout', handoutId: diary.id, x: 100, y: 100 } });
+  const anaCard = (await anaGetsCard)?.upsert.find((i) => i.id === card.id);
+  check('cartao de material nao compartilhado chega indisponivel', anaCard?.unavailable === true && anaCard?.handoutId === null);
+  // Confere o que chega PELO QUADRO. (A aba Materiais tem um vazamento
+  // proprio, anterior ao quadro: `handouts:patch` avisa a remocao do id a
+  // quem nunca teve o material. Esta anotado no resumo, fora deste escopo.)
+  const anaBoard = anaSees.events('board:patch').join(' ');
+  check(
+    'sem titulo, imagem ou id do material',
+    !anaBoard.includes(diary.id) && !anaBoard.includes('Diario do Faroleiro'),
+  );
+  const anaState = JSON.stringify((await rpc(ana.socket, 'session:resume', { token: ana.token })).state);
+  check('estado completo tambem nao traz o material', !anaState.includes(diary.id) && !anaState.includes('Faroleiro'));
+
+  // Compartilhar depois completa o cartao — so para quem ganhou acesso.
+  const anaCompletes = waitFor(ana.socket, 'board:patch', (p) =>
+    p.upsert?.some((i) => i.id === card.id && i.handoutId === diary.id),
+  );
+  await rpc(gm, 'handout:update', { handoutId: diary.id, patch: { sharedWith: [ana.id] } });
+  check('compartilhado o material, o cartao se completa', !!(await anaCompletes));
+  await sleep(150);
+  check(
+    'quem nao recebeu o material continua sem o id no quadro',
+    !betoSees.events('board:patch').join(' ').includes(diary.id) &&
+      !JSON.stringify((await rpc(beto.socket, 'session:resume', { token: beto.token })).state.board).includes(diary.id),
+  );
+
+  // Jogador nao prega material que nao tem.
+  let refusedPin = false;
+  try {
+    await rpc(beto.socket, 'board:create', { item: { kind: 'handout', handoutId: diary.id, x: 0, y: 0 } });
+  } catch {
+    refusedPin = true;
+  }
+  check('jogador nao prega material que nao recebeu', refusedPin);
+
+  console.log('\n== I12. Edicao colaborativa ==');
+  const betoGetsNote = waitFor(beto.socket, 'board:patch', (p) => p.upsert?.some((i) => i.text === 'O farol apaga as 3h'));
+  const note = await rpc(ana.socket, 'board:create', { item: { kind: 'note', text: 'O farol apaga as 3h', x: 400, y: 120 } });
+  check('nota de um jogador chega aos outros', !!(await betoGetsNote));
+  check('a nota guarda a autora', note.authorId === ana.id);
+
+  const anaSeesMove = waitFor(ana.socket, 'board:patch', (p) => p.upsert?.some((i) => i.id === note.id && i.x === 480));
+  await rpc(beto.socket, 'board:update', { itemId: note.id, patch: { x: 480, y: 140 } });
+  check('outro jogador move e edita o item', !!(await anaSeesMove));
+
+  // Arraste: vai aos outros na hora; quem arrasta nao recebe o proprio eco.
+  const betoSeesDrag = waitFor(beto.socket, 'board:patch', (p) => p.upsert?.some((i) => i.id === note.id && i.x === 500));
+  const anaEcho = collect(ana.socket, 'board:patch', 300);
+  ana.socket.emit('board:update', { itemId: note.id, patch: { x: 500, y: 140 }, dragging: true });
+  check('arraste chega aos outros durante o movimento', !!(await betoSeesDrag));
+  check('quem arrasta nao recebe o proprio eco', (await anaEcho).length === 0);
+
+  let refusedDelete = false;
+  try {
+    await rpc(beto.socket, 'board:delete', { itemId: note.id });
+  } catch {
+    refusedDelete = true;
+  }
+  check('so a autora (ou o mestre) apaga', refusedDelete);
+
+  const betoGetsThread = waitFor(beto.socket, 'board:patch', (p) => p.threads?.upsert?.length > 0);
+  const thread = await rpc(ana.socket, 'thread:create', { from: note.id, to: card.id, color: '#c0392b' });
+  check('fio ligando dois itens chega a todos', (await betoGetsThread)?.threads.upsert[0].id === thread.id);
+
+  const up = await uploadPng(beto.token, 'clue', 'mapa-rasgado.png');
+  const clueImage = (await up.json()).asset;
+  check('jogador envia imagem para o quadro', up.status === 200 && clueImage?.kind === 'clue');
+  const anaGetsAsset = waitFor(ana.socket, 'assets:patch', (p) => p.upsert?.some((a) => a.id === clueImage.id));
+  const photo = await rpc(beto.socket, 'board:create', { item: { kind: 'image', assetId: clueImage.id, x: 700, y: 100 } });
+  check('a imagem do quadro chega aos outros', !!(await anaGetsAsset) && !!photo?.id);
+
+  console.log('\n== I13. Quadro travado ==');
+  const anaLocked = waitFor(ana.socket, 'board:patch', (p) => p.locked === true);
+  await rpc(gm, 'board:lock', { locked: true });
+  check('travar chega a todos', !!(await anaLocked));
+
+  const refusals = [];
+  for (const [label, call] of [
+    ['criar', () => rpc(ana.socket, 'board:create', { item: { kind: 'note', text: 'x', x: 0, y: 0 } })],
+    ['mover', () => rpc(ana.socket, 'board:update', { itemId: note.id, patch: { x: 0 } })],
+    ['apagar', () => rpc(ana.socket, 'board:delete', { itemId: note.id })],
+    ['ligar', () => rpc(ana.socket, 'thread:create', { from: photo.id, to: card.id })],
+    ['cortar', () => rpc(ana.socket, 'thread:delete', { threadId: thread.id })],
+  ]) {
+    try {
+      await call();
+    } catch {
+      refusals.push(label);
+    }
+  }
+  check('quadro travado recusa edicao de jogador no servidor', refusals.length === 5, refusals.join(', '));
+
+  let playerLock = false;
+  try {
+    await rpc(ana.socket, 'board:lock', { locked: false });
+  } catch {
+    playerLock = true;
+  }
+  check('jogador nao destrava o quadro', playerLock);
+
+  await rpc(gm, 'board:update', { itemId: note.id, patch: { text: 'Anotado pelo mestre' } });
+  check('o mestre continua editando o quadro travado', true);
+
+  console.log('\n== I14. Quadro persiste; backup leva tudo e volta ==');
+  // Cartela e gatilho nesta mesma mesa, para uma importacao so cobrir os ids
+  // remapeados de todos os recursos novos (ver a nota em I7).
+  const sceneId = (await rpc(gm, 'session:resume', { token: gmToken })).state.activeSceneId;
+  const intro = await rpc(gm, 'card:create', { title: 'Capitulo 1', subtitle: 'O Farol' });
+  await rpc(gm, 'scene:update', { sceneId, patch: { introCardId: intro.id } });
+  const keeper = await rpc(gm, 'token:create', { sceneId, token: { name: 'Faroleiro', x: 700, y: 700, visibility: 'hidden' } });
+  await rpc(gm, 'trigger:create', {
+    sceneId,
+    trigger: {
+      name: 'Escada do farol',
+      area: { kind: 'circle', x: 350, y: 350, radius: 70 },
+      actions: [
+        { type: 'card', target: 'all', cardId: intro.id, durationMs: 6000 },
+        { type: 'handout', handoutId: diary.id, share: 'trigger', present: true },
+        { type: 'reveal', tokenId: keeper.id },
+      ],
+    },
+  });
+
+  await sleep(1800);
+  const gmState = (await rpc(gm, 'session:resume', { token: gmToken })).state;
+  check('o quadro persiste', gmState.board.items.length === 3 && gmState.board.threads.length === 1 && gmState.board.locked);
+
+  const exported = await (
+    await fetch(`${BASE}/api/tables/${gmState.id}/export?assets=1`, { headers: { 'x-session-token': gmToken } })
+  ).json();
+  check('backup tem versao 4 e leva o quadro', exported.format === 4 && exported.board?.items.length === 3);
+  check('backup nao leva credenciais', !JSON.stringify(exported).includes(gmToken) && !JSON.stringify(exported).includes('tokenHash'));
   const reimport = await (
     await fetch(`${BASE}/api/tables/import`, {
       method: 'POST',
@@ -1583,8 +1724,25 @@ async function immersionTriggers() {
   ).json();
   const restoredSocket = await connect();
   const restored = (await rpc(restoredSocket, 'session:resume', { token: reimport.session.token })).state;
-  const revealAction = restored.scenes[0].triggers.find((t) => t.name === 'Armadilha do corredor')?.actions.find((a) => a.type === 'reveal');
-  check('gatilhos voltam na importacao, apontando para os mesmos tokens', restored.scenes[0].tokens.some((t) => t.id === revealAction?.tokenId));
+  const restoredCard = restored.board.items.find((i) => i.kind === 'handout');
+  const restoredImage = restored.board.items.find((i) => i.kind === 'image');
+  check(
+    'quadro volta na importacao, com material e imagem remapeados',
+    restored.handouts.some((h) => h.id === restoredCard?.handoutId) &&
+      restored.assets.some((a) => a.id === restoredImage?.assetId),
+  );
+  check(
+    'cartelas voltam, com a cena apontando para elas',
+    restored.sceneCards.length === 1 && restored.scenes[0].introCardId === restored.sceneCards[0].id,
+  );
+  const restoredTrigger = restored.scenes[0].triggers.find((t) => t.name === 'Escada do farol');
+  const actionOf = (type) => restoredTrigger?.actions.find((a) => a.type === type);
+  check(
+    'gatilhos voltam apontando para a cartela, o material e o token certos',
+    actionOf('card')?.cardId === restored.sceneCards[0]?.id &&
+      restored.handouts.some((h) => h.id === actionOf('handout')?.handoutId) &&
+      restored.scenes[0].tokens.some((t) => t.id === actionOf('reveal')?.tokenId),
+  );
   restoredSocket.disconnect();
 
   gm.disconnect();

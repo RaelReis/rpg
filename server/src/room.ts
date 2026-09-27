@@ -8,9 +8,11 @@ import {
   DEFAULT_SETTINGS,
   generateId,
   generateTableCode,
+  normalizeBoard,
   normalizeTemplate,
   type Asset,
   type ChatMessage,
+  type ClueBoard,
   type Handout,
   type Player,
   type Scene,
@@ -36,7 +38,12 @@ import { assetUrl } from './uploads.js';
  * escrita quando ele parar.
  */
 
-type DirtyKind = 'table' | 'players' | 'sheets';
+/**
+ * `board` e separado de `table` de proposito: arrastar um cartao no quadro de
+ * pistas marca so ele, e a gravacao agrupada escreve uma coluna em vez de
+ * reserializar chat, materiais e configuracoes a cada movimento.
+ */
+type DirtyKind = 'table' | 'players' | 'sheets' | 'board';
 
 export class Room {
   readonly state: TableState;
@@ -260,8 +267,11 @@ export class Room {
             handouts: toJson(s.handouts),
             sceneCards: toJson(s.sceneCards),
             triggerLog: toJson(s.triggerLog),
+            board: toJson(s.board),
           },
         });
+      } else if (kinds.has('board')) {
+        await prisma.table.update({ where: { id: s.id }, data: { board: toJson(s.board) } });
       }
 
       for (const id of rmScenes) {
@@ -535,6 +545,7 @@ class RoomManager {
       chat: fromJson<ChatMessage[]>(row.chat, []),
       sceneCards: fromJson<SceneCard[]>(row.sceneCards, []),
       triggerLog: fromJson<TriggerLogEntry[]>(row.triggerLog, []),
+      board: normalizeBoard(fromJson<Partial<ClueBoard>>(row.board, {})),
       // Efeitos fixos e cartela na tela vivem so em memoria: um reinicio do
       // servidor encerra a apresentacao, como encerraria a sessao.
       screenEffects: [],

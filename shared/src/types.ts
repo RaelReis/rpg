@@ -523,7 +523,7 @@ export interface TableSettings {
   diceEnabled: boolean;
 }
 
-export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card';
+export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card' | 'clue';
 
 export interface Asset {
   id: string;
@@ -654,6 +654,56 @@ export interface PresentedCard {
   recipients: string[] | null;
 }
 
+// ---------------------------------------------------------------------------
+// Quadro de pistas
+// ---------------------------------------------------------------------------
+
+export type BoardItemKind = 'note' | 'image' | 'handout';
+
+/**
+ * Item do quadro de pistas: nota de texto, imagem enviada, ou cartao que
+ * aponta para um material.
+ */
+export interface BoardItem {
+  id: string;
+  kind: BoardItemKind;
+  /** Canto superior esquerdo, em coordenadas do quadro. */
+  x: number;
+  y: number;
+  /** Texto da nota, ou legenda da imagem e do cartao. */
+  text: string;
+  /** Cor do papel da nota. */
+  color: string;
+  /** Imagem enviada (kind = 'image'). */
+  assetId: string | null;
+  /**
+   * Material referenciado (kind = 'handout'). Para quem nao tem acesso ao
+   * material, chega `null` com `unavailable: true` — sem titulo, imagem nem id.
+   */
+  handoutId: string | null;
+  /** So no payload do jogador: o cartao aponta para algo que ele nao ve. */
+  unavailable?: boolean;
+  /** Quem criou; pode apagar junto com o mestre. `null` em backup importado. */
+  authorId: string | null;
+  updatedAt: number;
+}
+
+/** Fio ligando dois itens do quadro, pino a pino. */
+export interface BoardThread {
+  id: string;
+  from: string;
+  to: string;
+  color: string;
+  authorId: string | null;
+}
+
+export interface ClueBoard {
+  /** Travado: somente leitura para os jogadores (o mestre continua editando). */
+  locked: boolean;
+  items: BoardItem[];
+  threads: BoardThread[];
+}
+
 /** Estado completo da mesa. O jogador recebe uma versao filtrada disto. */
 export interface TableState {
   id: string;
@@ -677,6 +727,8 @@ export interface TableState {
   presentedCard: PresentedCard | null;
   /** Disparos de gatilho, mais recentes por ultimo. So o mestre recebe. */
   triggerLog: TriggerLogEntry[];
+  /** Quadro de pistas do grupo (cartoes de material filtrados por jogador). */
+  board: ClueBoard;
   createdAt: number;
   updatedAt: number;
 }

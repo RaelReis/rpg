@@ -86,9 +86,14 @@ function EffectOverlay({ effect }: { effect: ShownEffect }): JSX.Element | null 
       return <div className="fx fx-flash" style={style} />;
     }
     case 'vignette': {
-      const spread = 60 + effect.intensity * 160;
-      const blur = 120 + effect.intensity * 220;
-      const style = { boxShadow: `inset 0 0 ${blur}px ${spread}px ${effect.color}` } as CSSProperties;
+      // Gradiente relativo ao tamanho da tela: uma sombra interna em pixels
+      // fixos engolia o mapa inteiro numa janela pequena. O centro fica
+      // sempre limpo; a intensidade aproxima a borda e engrossa a cor.
+      const clear = 62 - effect.intensity * 30;
+      const style = {
+        background: `radial-gradient(ellipse at center, transparent ${clear}%, ${effect.color} 115%)`,
+        '--fx-strength': String(0.55 + effect.intensity * 0.45),
+      } as CSSProperties;
       return <div className={`fx fx-vignette${leaving}`} style={style} />;
     }
     case 'blackout':

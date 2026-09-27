@@ -14,6 +14,7 @@ export function Topbar(): JSX.Element {
   const notify = useStore((s) => s.notify);
   const gm = useStore(isGm);
   const setPrefsOpen = useStore((s) => s.setPrefsOpen);
+  const setBoardOpen = useStore((s) => s.setBoardOpen);
 
   if (!table) return <div className="topbar" />;
 
@@ -73,6 +74,10 @@ export function Topbar(): JSX.Element {
       </div>
 
       {gm && <span className="tag gm">Mestre</span>}
+
+      <button className="btn sm" onClick={() => setBoardOpen(true)} title="Quadro de pistas do grupo">
+        📌 Quadro
+      </button>
 
       <button className="btn ghost sm" onClick={() => setPrefsOpen(true)} title="Preferencias" aria-label="Preferencias">
         ⚙

@@ -6,6 +6,7 @@ import {
   flashAllowed,
   type ActiveScreenEffect,
   type Asset,
+  type BoardPatch,
   type ChatMessage,
   type FogPatch,
   type Handout,
@@ -220,6 +221,14 @@ interface AppState {
   selectedTriggerId: string | null;
   /** Mostra as areas de gatilho no mapa do mestre (como as camadas). */
   showTriggers: boolean;
+  /** Quadro de pistas aberto em tela cheia. */
+  boardOpen: boolean;
+  /**
+   * Camera do quadro de pistas, de cada um: o pan e o zoom de uma pessoa nao
+   * mexem na tela das outras, como no mapa. Fica aqui para sobreviver a
+   * fechar e reabrir o quadro.
+   */
+  boardCamera: { x: number; y: number; zoom: number } | null;
   prefsOpen: boolean;
 
   // --- acoes de sessao
@@ -300,6 +309,9 @@ interface AppState {
   toggleTriggers(): void;
   upsertTriggers(sceneId: string, upsert: Trigger[], remove: string[]): void;
   addTriggerLog(entry: TriggerLogEntry): void;
+  applyBoardPatch(patch: BoardPatch): void;
+  setBoardOpen(open: boolean): void;
+  setBoardCamera(camera: { x: number; y: number; zoom: number }): void;
 }
 
 let noticeSeq = 0;
@@ -364,6 +376,8 @@ export const useStore = create<AppState>((set, get) => ({
   triggerDraft: [],
   selectedTriggerId: null,
   showTriggers: true,
+  boardOpen: false,
+  boardCamera: null,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -409,6 +423,8 @@ export const useStore = create<AppState>((set, get) => ({
       immersionPanel: null,
       triggerDraft: [],
       selectedTriggerId: null,
+      boardOpen: false,
+      boardCamera: null,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -758,6 +774,24 @@ export const useStore = create<AppState>((set, get) => ({
           }
         : {};
     }),
+  applyBoardPatch: (patch) =>
+    set((s) => {
+      if (!s.table) return {};
+      const board = s.table.board;
+      return {
+        table: {
+          ...s.table,
+          board: {
+            locked: patch.locked ?? board.locked,
+            items: mergeById(board.items, patch.upsert ?? [], patch.remove ?? []),
+            threads: mergeById(board.threads, patch.threads?.upsert ?? [], patch.threads?.remove ?? []),
+          },
+        },
+        rev: s.rev + 1,
+      };
+    }),
+  setBoardOpen: (boardOpen) => set({ boardOpen }),
+  setBoardCamera: (boardCamera) => set({ boardCamera }),
   addTriggerLog: (entry) =>
     set((s) =>
       s.table

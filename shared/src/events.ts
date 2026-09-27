@@ -1,6 +1,8 @@
 import type {
   ActiveScreenEffect,
   Asset,
+  BoardItem,
+  BoardThread,
   Cell,
   ChatMessage,
   FieldValue,
@@ -172,6 +174,13 @@ export interface CardPresentRequest {
   durationMs: number | null;
 }
 
+export interface BoardPatch {
+  upsert?: BoardItem[];
+  remove?: string[];
+  threads?: { upsert?: BoardThread[]; remove?: string[] };
+  locked?: boolean;
+}
+
 export interface ChatSendPayload {
   text: string;
   whisper: boolean;
@@ -269,6 +278,16 @@ export interface ClientToServerEvents {
   'trigger:create': (payload: { sceneId: string; trigger: Partial<Trigger> }, ack: Ack<Trigger>) => void;
   'trigger:update': (payload: { sceneId: string; triggerId: string; patch: Partial<Trigger> }, ack: Ack<null>) => void;
   'trigger:delete': (payload: { sceneId: string; triggerId: string }, ack: Ack<null>) => void;
+
+  /** Quadro de pistas: todos editam; apagar e do autor e do mestre. */
+  'board:create': (payload: { item: Partial<BoardItem> }, ack: Ack<BoardItem>) => void;
+  /** `dragging` marca movimento em curso: vai aos outros, grava agrupado. */
+  'board:update': (payload: { itemId: string; patch: Partial<BoardItem>; dragging?: boolean }, ack: Ack<null>) => void;
+  'board:delete': (payload: { itemId: string }, ack: Ack<null>) => void;
+  'board:lock': (payload: { locked: boolean }, ack: Ack<null>) => void;
+  'thread:create': (payload: { from: string; to: string; color?: string }, ack: Ack<BoardThread>) => void;
+  'thread:update': (payload: { threadId: string; color: string }, ack: Ack<null>) => void;
+  'thread:delete': (payload: { threadId: string }, ack: Ack<null>) => void;
   'map:ping': (payload: Omit<MapPing, 'playerName' | 'color'>) => void;
   // Nao ha evento de cursor: ninguem, nem o mestre, ve o ponteiro dos outros.
   // O ping continua sendo o jeito deliberado de apontar algo no mapa.
@@ -318,6 +337,9 @@ export interface ServerToClientEvents {
   'triggers:patch': (payload: { sceneId: string; upsert?: Trigger[]; remove?: string[] }) => void;
   /** Um gatilho disparou (so o mestre recebe). */
   'trigger:fired': (entry: TriggerLogEntry) => void;
+
+  /** Mudancas no quadro de pistas, ja filtradas para quem recebe. */
+  'board:patch': (payload: BoardPatch) => void;
   'map:ping': (ping: MapPing) => void;
 
   'notice': (payload: { level: 'info' | 'warn' | 'error'; message: string }) => void;
@@ -338,6 +360,8 @@ export const UPLOAD_LIMITS = {
   effect: 5 * 1024 * 1024,
   /** Fundo de cartela de cena: tela cheia, entao imagem grande. */
   card: 10 * 1024 * 1024,
+  /** Imagem pregada no quadro de pistas; qualquer participante envia. */
+  clue: 5 * 1024 * 1024,
 } as const;
 
 export const ALLOWED_IMAGE_MIMES = [

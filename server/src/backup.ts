@@ -7,7 +7,9 @@ import {
   DEFAULT_SETTINGS,
   createScene,
   generateId,
+  normalizeBoard,
   normalizeTemplate,
+  type ClueBoard,
   type Handout,
   type Scene,
   type SceneCard,
@@ -42,9 +44,10 @@ import { saveImage } from './uploads.js';
  * 1 — cenas, fichas, materiais, imagens.
  * 2 — cartelas de cena (`sceneCards`) e a cartela de abertura de cada cena.
  * 3 — gatilhos de cada cena e o registro de disparos (`triggerLog`).
+ * 4 — quadro de pistas (`board`).
  */
-export const BACKUP_FORMAT = 3;
-const SUPPORTED_FORMATS = [1, 2, 3];
+export const BACKUP_FORMAT = 4;
+const SUPPORTED_FORMATS = [1, 2, 3, 4];
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
 const MAX_EMBEDDED_BYTES = 120 * 1024 * 1024;
@@ -72,6 +75,8 @@ export interface TableBackup {
   sceneCards?: SceneCard[];
   /** Desde o formato 3. */
   triggerLog?: TriggerLogEntry[];
+  /** Desde o formato 4. */
+  board?: ClueBoard;
   scenes: Scene[];
   sheets: Sheet[];
   /** Apenas para reconstruir a autoria; sem credenciais. */
@@ -120,6 +125,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
     handouts: s.handouts,
     sceneCards: s.sceneCards,
     triggerLog: s.triggerLog,
+    board: s.board,
     scenes: s.scenes,
     sheets: s.sheets,
     players: s.players.map((p) => ({ id: p.id, name: p.name, color: p.color, role: p.role })),
@@ -280,6 +286,20 @@ async function buildImportedTable(
     }));
   }
   room.state.triggerLog = Array.isArray(backup.triggerLog) ? backup.triggerLog.slice(-200) : [];
+
+  // Quadro de pistas: imagens e materiais com ids novos; a autoria se perde
+  // com os jogadores (sobra o mestre para apagar).
+  const board = normalizeBoard(backup.board);
+  room.state.board = {
+    locked: board.locked,
+    items: board.items.map((item) => ({
+      ...item,
+      assetId: remap(item.assetId),
+      handoutId: item.handoutId ? (handoutIds.get(item.handoutId) ?? null) : null,
+      authorId: null,
+    })),
+    threads: board.threads.map((t) => ({ ...t, authorId: null })),
+  };
 
   // As fichas chegam sem dono: os jogadores entrarao com identidades novas, e
   // o mestre reatribui pela aba Fichas.

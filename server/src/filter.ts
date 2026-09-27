@@ -2,6 +2,7 @@ import {
   canPlayerSeeToken,
   computeVision,
   filterSheetForRole,
+  boardForViewer,
   filterTemplateForRole,
   perceives,
   reduceScreenEffect,
@@ -282,6 +283,8 @@ function assetsForViewer(
     if (handoutForViewer(handout, viewer)) ids.add(handout.assetId);
   }
   ids.add(presentedCardForViewer(room, viewer)?.assetId);
+  // Imagens pregadas no quadro de pistas sao do grupo: todos as recebem.
+  for (const item of room.state.board.items) ids.add(item.assetId);
 
   return room.state.assets.filter((a) => ids.has(a.id));
 }
@@ -363,6 +366,10 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
     // Cartelas em preparacao nunca saem: nem titulo, nem imagem, nem id.
     sceneCards: [],
     triggerLog: [],
+    board: boardForViewer(s.board, (handoutId) => {
+      const handout = s.handouts.find((h) => h.id === handoutId);
+      return !!handout && handoutForViewer(handout, viewer) !== null;
+    }),
     screenEffects: screenEffectsForViewer(room, viewer),
     presentedCard: presentedCardForViewer(room, viewer),
   };

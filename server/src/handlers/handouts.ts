@@ -3,6 +3,7 @@ import { generateId, type Ack, type Handout } from '@rpg/shared';
 import { socketsOf, syncAssets } from '../broadcast.js';
 import { handoutForViewer } from '../filter.js';
 import type { Room } from '../room.js';
+import { refreshBoardForHandout } from './board.js';
 import { clampNumber, fail, ok, ownedAsset, safeString, type Ctx } from './context.js';
 
 /**
@@ -31,6 +32,8 @@ export function emitHandout(room: Room, handout: Handout): void {
       socket.emit('handouts:patch', { remove: [handout.id] });
     }
   }
+  // Cartoes do quadro que citam o material se completam (ou se esvaziam) junto.
+  refreshBoardForHandout(room, handout.id);
 }
 
 export function createHandout(
@@ -97,6 +100,7 @@ export function deleteHandout(ctx: Ctx, payload: { handoutId: string }, ack: Ack
   for (const socket of socketsOf(ctx.room)) {
     socket.emit('handouts:patch', { remove: [removed.id] });
   }
+  refreshBoardForHandout(ctx.room, removed.id);
   ok(ack, null);
 }
 

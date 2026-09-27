@@ -58,6 +58,15 @@ import {
   updateCard,
   updatePrefs,
 } from './handlers/immersion.js';
+import {
+  createBoardItem,
+  createThread,
+  deleteBoardItem,
+  deleteThread,
+  lockBoard,
+  updateBoardItem,
+  updateThread,
+} from './handlers/board.js';
 import { createTriggerHandler, deleteTriggerHandler, updateTriggerHandler } from './handlers/triggers.js';
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
@@ -297,5 +306,14 @@ export function registerSocketHandlers(io: TypedServer): void {
     socket.on('trigger:create', gm(createTriggerHandler));
     socket.on('trigger:update', gm(updateTriggerHandler));
     socket.on('trigger:delete', gm(deleteTriggerHandler));
+
+    // Quadro de pistas: todos editam; a trava e o apagar sao conferidos no handler.
+    socket.on('board:create', member(createBoardItem));
+    socket.on('board:update', member(updateBoardItem));
+    socket.on('board:delete', member(deleteBoardItem));
+    socket.on('board:lock', gm(lockBoard));
+    socket.on('thread:create', member(createThread));
+    socket.on('thread:update', member(updateThread));
+    socket.on('thread:delete', member(deleteThread));
   });
 }

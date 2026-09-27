@@ -321,6 +321,7 @@ function registerListeners(s: ClientSocket): void {
     store().upsertTriggers(sceneId, upsert ?? [], remove ?? []),
   );
   s.on('trigger:fired', (entry) => store().addTriggerLog(entry));
+  s.on('board:patch', (patch) => store().applyBoardPatch(patch));
 
   s.on('notice', ({ level, message }) => store().notify(level, message));
 

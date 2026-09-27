@@ -4,6 +4,7 @@ import { Stage } from './canvas/Stage';
 import { connectAndResume } from './net/socket';
 import { useStore } from './state/store';
 import { Gate } from './ui/Gate';
+import { ClueBoardView } from './ui/ClueBoard';
 import { HandoutModal } from './ui/HandoutModal';
 import { CardsModal, PrefsModal, ScreenEffectsPanel } from './ui/ImmersionPanels';
 import { MessageComposer } from './ui/MessageComposer';
@@ -25,6 +26,7 @@ export function App(): JSX.Element {
   const messageComposer = useStore((s) => s.messageComposer);
   const immersionPanel = useStore((s) => s.immersionPanel);
   const prefsOpen = useStore((s) => s.prefsOpen);
+  const boardOpen = useStore((s) => s.boardOpen);
   const [restoring, setRestoring] = useState(true);
 
   /**
@@ -84,6 +86,7 @@ export function App(): JSX.Element {
       {/* A chave recomeca o formulario a cada abertura, com os destinatarios pedidos. */}
       {messageComposer && <MessageComposer key={messageComposer.recipients.join(',') || 'novo'} />}
       {immersionPanel === 'cards' && <CardsModal />}
+      {boardOpen && <ClueBoardView />}
       {prefsOpen && <PrefsModal />}
       <SceneCardOverlay />
       <Notices />

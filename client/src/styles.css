@@ -1739,6 +1739,7 @@ textarea {
   }
 }
 .fx-vignette {
+  opacity: var(--fx-strength, 0.8);
   animation: fx-in 700ms ease both;
   transition: opacity 700ms ease;
 }
@@ -1824,7 +1825,8 @@ textarea {
   position: relative;
   inset: auto;
   z-index: auto;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: auto;
+  height: 190px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   animation: none;
@@ -1946,4 +1948,252 @@ textarea {
   background: rgba(232, 197, 71, 0.12);
   color: #e8c547;
   font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   Quadro de pistas: cortica em tela cheia, acima do mapa e abaixo das janelas.
+   --------------------------------------------------------------------------- */
+.board-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  /* Coluna flexivel: as faixas de aviso vem e vao, e a cortica ocupa o resto.
+     Com linhas fixas de grid, sem faixa a cortica caia na linha "auto" e
+     ficava com altura zero. */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  animation: fade 160ms ease both;
+}
+.board-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.board-toolbar h2 {
+  margin: 0 8px 0 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+.board-toolbar .input.sm {
+  height: 28px;
+  padding: 2px 8px;
+  width: auto;
+  max-width: 200px;
+}
+.board-colors {
+  display: flex;
+  gap: 4px;
+}
+.board-color {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  padding: 0;
+}
+.board-color.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--brass-glow);
+}
+.board-banner {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--brass);
+  background: rgba(217, 164, 65, 0.08);
+  border-bottom: 1px solid var(--line);
+}
+
+.board-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  /* Cortica: textura em gradientes, sem imagem extra para baixar. */
+  background-color: #8a6a44;
+  background-image:
+    radial-gradient(rgba(60, 38, 18, 0.35) 1px, transparent 1.4px),
+    radial-gradient(rgba(255, 230, 190, 0.12) 1px, transparent 1.6px);
+  background-size: 7px 7px, 11px 11px;
+  background-position: 0 0, 3px 5px;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.55);
+}
+.board-viewport:active {
+  cursor: grabbing;
+}
+.board-viewport.threading,
+.board-viewport.threading .board-item {
+  cursor: crosshair;
+}
+.board-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.board-threads {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
+}
+.board-thread,
+.board-thread-hit {
+  fill: none;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.board-thread {
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.45));
+}
+.board-thread.selected {
+  stroke-width: 4;
+}
+.board-thread-hit {
+  stroke: transparent;
+  stroke-width: 14;
+}
+
+.board-item {
+  position: absolute;
+  z-index: 1;
+  padding: 18px 10px 10px;
+  border-radius: 3px;
+  background: #f7f3ea;
+  color: #2b2418;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+  cursor: grab;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.board-item.note {
+  min-height: 120px;
+  transform: rotate(-0.6deg);
+}
+.board-item.linking {
+  outline: 3px solid #c0392b;
+}
+.board-item img {
+  display: block;
+  width: 100%;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.board-item p {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.board-item p.placeholder {
+  opacity: 0.45;
+  font-style: italic;
+  font-size: 13px;
+}
+.board-pin {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ff8a80, #b71c1c 70%);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.5);
+}
+.board-handout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.board-handout strong {
+  flex: 1;
+}
+.board-handout .btn {
+  color: #2b2418;
+}
+.board-handout-missing {
+  padding: 18px 6px;
+  text-align: center;
+  font-size: 12px;
+  font-style: italic;
+  color: #7a7060;
+  border: 1px dashed #b9ae98;
+  border-radius: 2px;
+}
+.board-item.unavailable {
+  background: #e6e1d6;
+}
+.board-remove {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(43, 36, 24, 0.55);
+  font-size: 11px;
+  cursor: pointer;
+}
+.board-remove:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #8a1f1f;
+}
+.board-note-input {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  border: none;
+  background: rgba(255, 255, 255, 0.45);
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: #2b2418;
+  padding: 4px;
+}
+.board-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 380px;
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: rgba(18, 20, 26, 0.85);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+.board-thread-menu {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 131;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow-lg);
 }

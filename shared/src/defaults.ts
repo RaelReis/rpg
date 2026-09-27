@@ -118,6 +118,8 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
   };
 }
 
+export const EMPTY_BOARD = { locked: false, items: [], threads: [] } as const;
+
 export function createTrigger(area: TriggerArea, partial: Partial<Trigger> = {}): Trigger {
   return {
     id: partial.id ?? generateId('trg'),
