@@ -312,6 +312,12 @@ function registerListeners(s: ClientSocket): void {
     if (typeof ack === 'function') ack(true);
   });
 
+  s.on('screen:effect', (effect) => store().startScreenEffect(effect));
+  s.on('screen:stopped', (payload) => store().stopScreenEffects(payload));
+  s.on('screen:active', (effects) => store().setActiveScreenEffects(effects));
+  s.on('cards:patch', ({ upsert, remove }) => store().upsertCards(upsert ?? [], remove ?? []));
+  s.on('card:presented', (card) => store().setPresentedCard(card));
+
   s.on('notice', ({ level, message }) => store().notify(level, message));
 
   s.on('session:ended', ({ reason }) => {

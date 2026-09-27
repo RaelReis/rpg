@@ -14,6 +14,7 @@ import {
   type Handout,
   type Player,
   type Scene,
+  type SceneCard,
   type Sheet,
   type SheetTemplate,
   type TableState,
@@ -61,6 +62,16 @@ export class Room {
 
   /** Sockets conectados, para saber quando a sala pode sair da memoria. */
   readonly sockets = new Set<string>();
+
+  /**
+   * Ultimo flash entregue a cada jogador. E o teto de 3 clarões por segundo:
+   * vale para o mestre clicando rapido e para gatilhos disparando em serie.
+   */
+  readonly lastFlashAt = new Map<string, number>();
+
+  /** Quando a cartela atual entrou na tela, para quem reconecta ver o restante. */
+  presentationStartedAt = 0;
+  presentationTimer: NodeJS.Timeout | null = null;
   lastActivity = Date.now();
 
   constructor(state: TableState) {
@@ -243,6 +254,7 @@ export class Room {
             initiative: toJson(s.initiative),
             chat: toJson(s.chat.slice(-CHAT_HISTORY_SIZE)),
             handouts: toJson(s.handouts),
+            sceneCards: toJson(s.sceneCards),
           },
         });
       }
@@ -276,7 +288,14 @@ export class Room {
         players.map((p) =>
           prisma.player.updateMany({
             where: { id: p.id },
-            data: { name: p.name, color: p.color, role: p.role, sheetId: p.sheetId, lastSeen: new Date(p.lastSeen) },
+            data: {
+              name: p.name,
+              color: p.color,
+              role: p.role,
+              sheetId: p.sheetId,
+              reduceEffects: p.reduceEffects ?? false,
+              lastSeen: new Date(p.lastSeen),
+            },
           }),
         ),
       );
@@ -477,6 +496,7 @@ class RoomManager {
           connected: false,
           lastSeen: p.lastSeen.getTime(),
           sheetId: p.sheetId,
+          reduceEffects: p.reduceEffects,
         }),
       ),
       sheets: row.sheets.map(
@@ -508,6 +528,11 @@ class RoomManager {
       ),
       handouts: fromJson<Handout[]>(row.handouts, []),
       chat: fromJson<ChatMessage[]>(row.chat, []),
+      sceneCards: fromJson<SceneCard[]>(row.sceneCards, []),
+      // Efeitos fixos e cartela na tela vivem so em memoria: um reinicio do
+      // servidor encerra a apresentacao, como encerraria a sessao.
+      screenEffects: [],
+      presentedCard: null,
       createdAt: row.createdAt.getTime(),
       updatedAt: row.updatedAt.getTime(),
     };

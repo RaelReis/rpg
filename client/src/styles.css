@@ -1687,3 +1687,234 @@ textarea {
     animation-duration: 1ms;
   }
 }
+
+/* Invólucro do mapa para tremor e desfoque: age sobre o elemento, sem
+   redesenhar o canvas. */
+.screen-fx {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  transition: filter 600ms ease;
+}
+.screen-fx.shaking {
+  animation: screen-shake 110ms linear infinite;
+}
+@keyframes screen-shake {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(var(--shake-amp), calc(var(--shake-amp) * -0.6));
+  }
+  50% {
+    transform: translate(calc(var(--shake-amp) * -0.8), calc(var(--shake-amp) * 0.4));
+  }
+  75% {
+    transform: translate(calc(var(--shake-amp) * 0.5), var(--shake-amp));
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+/* Efeitos de tela desenhados sobre o mapa. */
+.fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.fx-flash {
+  opacity: 0;
+  animation-name: fx-flash;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+/* Um unico clarao por efeito, que so apaga: nada de piscar. */
+@keyframes fx-flash {
+  0% {
+    opacity: var(--fx-peak, 0.8);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.fx-vignette {
+  animation: fx-in 700ms ease both;
+  transition: opacity 700ms ease;
+}
+.fx-vignette.leaving {
+  opacity: 0;
+}
+.fx-blackout {
+  background: #000;
+  animation: fx-in 800ms ease both;
+  transition: opacity 800ms ease;
+}
+.fx-blackout.leaving {
+  opacity: 0;
+}
+@keyframes fx-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Cartela de cena: tela cheia, acima de tudo menos das janelas. */
+.scene-card {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  background: #050608;
+  overflow: hidden;
+  animation: fx-in 1000ms ease both;
+  transition: opacity 1000ms ease;
+}
+.scene-card.leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+.scene-card-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.55;
+  animation: scene-card-drift 14s ease-out both;
+}
+.scene-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.75) 100%);
+  pointer-events: none;
+}
+@keyframes scene-card-drift {
+  from {
+    transform: scale(1.06);
+  }
+}
+.scene-card-text {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: 24px;
+  max-width: 90%;
+}
+.scene-card-text h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(32px, 6vw, 72px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  text-shadow: 0 4px 30px rgba(0, 0, 0, 0.9);
+}
+.scene-card-text p {
+  margin: 14px 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(16px, 2.4vw, 28px);
+  font-style: italic;
+  color: var(--brass);
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.9);
+}
+/* Previa no editor: a mesma cartela, dentro da janela. */
+.scene-card.preview {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  animation: none;
+}
+.scene-card.preview .scene-card-bg {
+  animation: none;
+}
+.scene-card.preview h1 {
+  font-size: 30px;
+}
+.scene-card.preview p {
+  font-size: 16px;
+}
+
+.card-status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+  background: rgba(23, 26, 34, 0.94);
+  border: 1px solid var(--brass-dim);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ink-2);
+  pointer-events: auto;
+  animation: rise 200ms ease both;
+}
+.card-status strong {
+  color: var(--brass);
+}
+
+.cards-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: 18px;
+  min-height: 0;
+}
+.cards-list,
+.card-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Painel compacto que abre ao lado do trilho. */
+.rail-panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 35;
+  width: 290px;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: rise 160ms ease both;
+}
+.rail-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.rail-panel h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.fx-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* O trilho cresceu: numa tela baixa, rola em vez de cortar ferramentas. */
+.rail {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-card-bg {
+    animation: none;
+  }
+}

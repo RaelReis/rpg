@@ -13,6 +13,7 @@ export function Topbar(): JSX.Element {
   const session = useStore((s) => s.session);
   const notify = useStore((s) => s.notify);
   const gm = useStore(isGm);
+  const setPrefsOpen = useStore((s) => s.setPrefsOpen);
 
   if (!table) return <div className="topbar" />;
 
@@ -72,6 +73,10 @@ export function Topbar(): JSX.Element {
       </div>
 
       {gm && <span className="tag gm">Mestre</span>}
+
+      <button className="btn ghost sm" onClick={() => setPrefsOpen(true)} title="Preferencias" aria-label="Preferencias">
+        ⚙
+      </button>
 
       <span className="topbar-sep" aria-hidden="true" />
 

@@ -47,7 +47,17 @@ import {
   updateScene,
   updateSettings,
 } from './handlers/scene.js';
-import { sendScreenMessage } from './handlers/immersion.js';
+import {
+  applyScreenEffect,
+  closeCard,
+  createCard,
+  deleteCard,
+  presentCard,
+  sendScreenMessage,
+  stopScreenEffect,
+  updateCard,
+  updatePrefs,
+} from './handlers/immersion.js';
 import { handleDisconnect, handleJoin, handleResume } from './handlers/session.js';
 import {
   assignSheet,
@@ -275,5 +285,13 @@ export function registerSocketHandlers(io: TypedServer): void {
 
     // -- imersao -----------------------------------------------------------
     socket.on('message:send', gm(sendScreenMessage));
+    socket.on('screen:apply', gm(applyScreenEffect));
+    socket.on('screen:stop', gm(stopScreenEffect));
+    socket.on('player:prefs', member(updatePrefs));
+    socket.on('card:create', gm(createCard));
+    socket.on('card:update', gm(updateCard));
+    socket.on('card:delete', gm(deleteCard));
+    socket.on('card:present', gm(presentCard));
+    socket.on('card:close', gm(closeCard));
   });
 }

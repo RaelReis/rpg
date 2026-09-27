@@ -3,6 +3,8 @@ import {
   createDefaultTemplate,
   DEFAULT_INITIATIVE,
   DEFAULT_SETTINGS,
+  flashAllowed,
+  type ActiveScreenEffect,
   type Asset,
   type ChatMessage,
   type FogPatch,
@@ -12,7 +14,10 @@ import {
   type MapPing,
   type Player,
   type Point,
+  type PresentedCard,
   type Scene,
+  type SceneCard,
+  type ScreenEffect,
   type ScreenMessage,
   type Session,
   type Sheet,
@@ -96,6 +101,18 @@ export interface Camera {
 export interface ShownMessage extends ScreenMessage {
   receivedAt: number;
 }
+
+/**
+ * Efeito de tela correndo na tela deste jogador. `leaving` marca o fade de
+ * saida: o efeito continua desenhado ate o fade acabar.
+ */
+export interface ShownEffect extends ScreenEffect {
+  receivedAt: number;
+  leaving: boolean;
+}
+
+/** Paineis de imersao do mestre, abertos pelo trilho. */
+export type ImmersionPanel = 'effects' | 'cards' | null;
 
 export interface ActivePing extends MapPing {
   id: number;
@@ -183,6 +200,13 @@ interface AppState {
   screenMessages: ShownMessage[];
   /** Compositor de mensagem individual do mestre, com os destinatarios iniciais. */
   messageComposer: { recipients: string[] } | null;
+  /** Efeitos de tela desenhados agora (so no jogador). */
+  shownEffects: ShownEffect[];
+  /** Hora do ultimo flash desenhado: segunda barreira do teto de 3 por segundo. */
+  lastFlashAt: number | undefined;
+  /** Painel de imersao do mestre aberto no trilho. */
+  immersionPanel: ImmersionPanel;
+  prefsOpen: boolean;
 
   // --- acoes de sessao
   setSession(session: Session | null): void;
@@ -247,6 +271,15 @@ interface AppState {
   showScreenMessage(message: ScreenMessage): void;
   dismissScreenMessage(id: string): void;
   openMessageComposer(recipients: string[] | null): void;
+  startScreenEffect(effect: ScreenEffect): void;
+  stopScreenEffects(payload: { ids: string[] } | { all: true }): void;
+  markEffectLeaving(id: string): void;
+  removeShownEffect(id: string): void;
+  setActiveScreenEffects(effects: ActiveScreenEffect[]): void;
+  upsertCards(cards: SceneCard[], remove: string[]): void;
+  setPresentedCard(card: PresentedCard | null): void;
+  setImmersionPanel(panel: ImmersionPanel): void;
+  setPrefsOpen(open: boolean): void;
 }
 
 let noticeSeq = 0;
@@ -303,6 +336,10 @@ export const useStore = create<AppState>((set, get) => ({
   unreadChat: 0,
   screenMessages: [],
   messageComposer: null,
+  shownEffects: [],
+  lastFlashAt: undefined,
+  immersionPanel: null,
+  prefsOpen: false,
 
   setSession: (session) => set({ session }),
   setConnected: (connected) => set({ connected }),
@@ -312,6 +349,16 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({
       table,
       rev: s.rev + 1,
+      // Efeitos fixos vem no estado completo — e o que os faz sobreviver a
+      // reconexao. Substituem os fixos que ja estavam na tela; os passageiros
+      // continuam ate acabar. O mestre nao os desenha na propria tela.
+      shownEffects:
+        s.session?.role === 'GM'
+          ? []
+          : [
+              ...s.shownEffects.filter((e) => e.durationMs !== null),
+              ...table.screenEffects.map((e) => ({ ...e, receivedAt: Date.now(), leaving: false })),
+            ],
       // A ficha propria e o ponto de partida natural para o jogador.
       selectedSheetId:
         s.selectedSheetId && table.sheets.some((sh) => sh.id === s.selectedSheetId)
@@ -334,6 +381,8 @@ export const useStore = create<AppState>((set, get) => ({
       wallDraft: [],
       screenMessages: [],
       messageComposer: null,
+      shownEffects: [],
+      immersionPanel: null,
     }),
 
   patchScene: (sceneId, patch) =>
@@ -630,6 +679,42 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({ screenMessages: s.screenMessages.filter((m) => m.id !== id) })),
   openMessageComposer: (recipients) =>
     set({ messageComposer: recipients === null ? null : { recipients } }),
+
+  startScreenEffect: (effect) =>
+    set((s) => {
+      const now = Date.now();
+      if (effect.kind === 'flash') {
+        // O servidor ja segura o ritmo; isto cobre eventos chegando em rajada.
+        if (!flashAllowed(s.lastFlashAt, now)) return {};
+      }
+      const shown: ShownEffect = { ...effect, receivedAt: now, leaving: false };
+      return {
+        shownEffects: [...s.shownEffects.filter((e) => e.id !== effect.id), shown].slice(-12),
+        lastFlashAt: effect.kind === 'flash' ? now : s.lastFlashAt,
+      };
+    }),
+  stopScreenEffects: (payload) =>
+    set((s) => {
+      const stop = 'all' in payload ? null : new Set(payload.ids);
+      return {
+        shownEffects: s.shownEffects.map((e) => (stop === null || stop.has(e.id) ? { ...e, leaving: true } : e)),
+      };
+    }),
+  markEffectLeaving: (id) =>
+    set((s) => ({ shownEffects: s.shownEffects.map((e) => (e.id === id ? { ...e, leaving: true } : e)) })),
+  removeShownEffect: (id) => set((s) => ({ shownEffects: s.shownEffects.filter((e) => e.id !== id) })),
+  setActiveScreenEffects: (screenEffects) =>
+    set((s) => (s.table ? { table: { ...s.table, screenEffects }, rev: s.rev + 1 } : {})),
+  upsertCards: (cards, remove) =>
+    set((s) =>
+      s.table
+        ? { table: { ...s.table, sceneCards: mergeById(s.table.sceneCards, cards, remove) }, rev: s.rev + 1 }
+        : {},
+    ),
+  setPresentedCard: (presentedCard) =>
+    set((s) => (s.table ? { table: { ...s.table, presentedCard }, rev: s.rev + 1 } : {})),
+  setImmersionPanel: (immersionPanel) => set({ immersionPanel }),
+  setPrefsOpen: (prefsOpen) => set({ prefsOpen }),
 }));
 
 // ---------------------------------------------------------------------------

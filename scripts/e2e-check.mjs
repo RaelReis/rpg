@@ -1095,6 +1095,7 @@ async function main() {
   player2.disconnect();
 
   await immersionPerception();
+  await immersionScreen();
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`${checks - failures}/${checks} verificacoes passaram`);
@@ -1268,6 +1269,188 @@ async function immersionPerception() {
   gm.disconnect();
   alice.socket.disconnect();
   bruno.socket.disconnect();
+}
+
+/** Envia uma imagem gerada na hora, com a sessao de quem pede. */
+async function uploadPng(token, kind, name = 'teste.png') {
+  const buffer = await sharp({
+    create: { width: 48, height: 32, channels: 4, background: { r: 40, g: 20, b: 60, alpha: 1 } },
+  })
+    .png()
+    .toBuffer();
+  const form = new FormData();
+  form.append('kind', kind);
+  form.append('file', new Blob([buffer], { type: 'image/png' }), name);
+  return fetch(`${BASE}/api/assets`, { method: 'POST', headers: { 'x-session-token': token }, body: form });
+}
+
+/** Coleta os eventos de um tipo que chegarem numa janela de tempo. */
+function collect(socket, event, ms) {
+  return new Promise((resolve) => {
+    const got = [];
+    const handler = (payload) => got.push(payload);
+    socket.on(event, handler);
+    setTimeout(() => {
+      socket.off(event, handler);
+      resolve(got);
+    }, ms);
+  });
+}
+
+async function immersionScreen() {
+  console.log('\n== I4. Efeitos de tela ==');
+  const { gm, gmToken, sceneId, players } = await freshTable(['Ana', 'Beto']);
+  const [ana, beto] = players;
+
+  // Beto pede para reduzir efeitos; so ele fica sabendo da propria escolha.
+  const anaSeesPlayers = waitFor(ana.socket, 'players:patch', () => true);
+  await rpc(beto.socket, 'player:prefs', { reduceEffects: true });
+  const anaPlayers = await anaSeesPlayers;
+  check(
+    'a preferencia de acessibilidade nao vaza para os outros',
+    !!anaPlayers && anaPlayers.every((p) => p.reduceEffects === undefined),
+  );
+
+  const anaFlash = waitFor(ana.socket, 'screen:effect', (e) => e.kind === 'flash');
+  const betoFlash = waitFor(beto.socket, 'screen:effect', () => true);
+  const flash = await rpc(gm, 'screen:apply', {
+    effect: { kind: 'flash', color: '#ffffff', intensity: 1, durationMs: 500 },
+    recipients: null,
+  });
+  const anaGot = await anaFlash;
+  const betoGot = await betoFlash;
+  check('quem nao reduziu recebe o flash', anaGot?.id === flash.id);
+  check(
+    'quem reduziu recebe uma vinheta suave no lugar do flash',
+    betoGot?.id === flash.id && betoGot?.kind === 'vignette' && betoGot?.intensity <= 0.35,
+    JSON.stringify(betoGot),
+  );
+
+  const betoShakes = collect(beto.socket, 'screen:effect', 600);
+  const anaShake = waitFor(ana.socket, 'screen:effect', (e) => e.kind === 'shake');
+  await rpc(gm, 'screen:apply', { effect: { kind: 'shake', intensity: 0.8, durationMs: 800 }, recipients: null });
+  check('quem nao reduziu recebe o tremor', !!(await anaShake));
+  check('quem reduziu nao recebe o tremor', (await betoShakes).length === 0);
+
+  // Rajada de flashes: a tela nao pode piscar mais de 3 vezes por segundo.
+  await sleep(400);
+  const burst = collect(ana.socket, 'screen:effect', 900);
+  for (let i = 0; i < 6; i++) {
+    await rpc(gm, 'screen:apply', { effect: { kind: 'flash', durationMs: 300 }, recipients: null });
+  }
+  const flashes = (await burst).filter((e) => e.kind === 'flash');
+  check('rajada de flashes e contida pelo servidor', flashes.length >= 1 && flashes.length <= 3, `${flashes.length}`);
+
+  console.log('\n== I5. Efeito fixo sobrevive a reconexao ==');
+  const betoSees = recordTraffic(beto.socket);
+  const anaVignette = waitFor(ana.socket, 'screen:effect', (e) => e.kind === 'vignette' && e.durationMs === null);
+  const fixed = await rpc(gm, 'screen:apply', {
+    effect: { kind: 'vignette', color: '#400000', intensity: 0.7, durationMs: null },
+    recipients: [ana.id],
+  });
+  check('efeito fixo chega ao destinatario', (await anaVignette)?.id === fixed.id);
+
+  ana.socket.disconnect();
+  const anaAgain = await connect();
+  const anaState = (await rpc(anaAgain, 'session:resume', { token: ana.token })).state;
+  check('ao reconectar, o efeito fixo volta', anaState.screenEffects.some((e) => e.id === fixed.id));
+  const betoState = (await rpc(beto.socket, 'session:resume', { token: beto.token })).state;
+  check('quem nao era destinatario nao o recebe', !betoState.screenEffects.some((e) => e.id === fixed.id));
+  check('...nem em evento algum', !betoSees.contains(fixed.id));
+  const gmState = (await rpc(gm, 'session:resume', { token: gmToken })).state;
+  check('o mestre ve o efeito ativo e para quem', gmState.screenEffects.some((e) => e.id === fixed.id && e.recipients?.[0] === ana.id));
+
+  const stopped = waitFor(anaAgain, 'screen:stopped', (p) => p.all === true);
+  await rpc(gm, 'screen:stop', {});
+  check('"parar todos" limpa a tela', !!(await stopped));
+  const afterStop = (await rpc(anaAgain, 'session:resume', { token: ana.token })).state;
+  check('e o efeito fixo nao volta mais', afterStop.screenEffects.length === 0);
+
+  let refused = false;
+  try {
+    await rpc(beto.socket, 'screen:apply', { effect: { kind: 'shake' }, recipients: null });
+  } catch {
+    refused = true;
+  }
+  check('jogador nao aplica efeito de tela', refused);
+
+  console.log('\n== I6. Cartela de cena ==');
+  const anaSeesCards = recordTraffic(anaAgain);
+  const betoSeesCards = recordTraffic(beto.socket);
+
+  const denied = await uploadPng(ana.token, 'card');
+  check('jogador nao envia imagem de cartela', denied.status === 403, `status=${denied.status}`);
+  const up = await uploadPng(gmToken, 'card', 'porao.png');
+  const cardImage = (await up.json()).asset;
+  check('mestre envia imagem de cartela', up.status === 200 && !!cardImage?.id);
+
+  const card = await rpc(gm, 'card:create', { title: 'Capitulo 3', subtitle: 'O Porao Esquecido', assetId: cardImage.id });
+  await rpc(gm, 'scene:update', { sceneId, patch: { introCardId: card.id } });
+  await rpc(gm, 'card:update', { cardId: card.id, patch: { subtitle: 'O Porao Esquecido' } });
+  await sleep(200);
+
+  const anaBefore = JSON.stringify((await rpc(anaAgain, 'session:resume', { token: ana.token })).state);
+  const leaked = [card.id, 'O Porao Esquecido', cardImage.id].filter(
+    (needle) => anaSeesCards.contains(needle) || anaBefore.includes(needle),
+  );
+  check('cartela nao apresentada nao chega ao jogador (id, texto, imagem)', leaked.length === 0, leaked.join(', '));
+
+  const anaCard = waitFor(anaAgain, 'card:presented', (c) => c?.cardId === card.id);
+  const anaAsset = waitFor(anaAgain, 'assets:patch', (p) => p.upsert?.some((a) => a.id === cardImage.id));
+  await rpc(gm, 'card:present', { cardId: card.id, recipients: [ana.id], durationMs: null });
+  const shownCard = await anaCard;
+  check('apresentar entrega titulo, subtitulo e imagem', shownCard?.subtitle === 'O Porao Esquecido' && !!(await anaAsset));
+  check('o jogador nao sabe quem mais ve a cartela', shownCard?.recipients === null);
+  await sleep(150);
+  check('quem nao e destinatario nao recebe a cartela', !betoSeesCards.contains(card.id));
+
+  const mid = (await rpc(anaAgain, 'session:resume', { token: ana.token })).state;
+  check('quem reconecta no meio ve a cartela de novo', mid.presentedCard?.cardId === card.id);
+
+  const closed = waitFor(anaAgain, 'card:presented', (c) => c === null);
+  await rpc(gm, 'card:close', {});
+  check('fechar tira a cartela da tela', (await closed) === null);
+
+  // A cartela de abertura sobe para todos ao ativar a cena.
+  const betoIntro = waitFor(beto.socket, 'card:presented', (c) => c?.cardId === card.id);
+  await rpc(gm, 'scene:activate', { sceneId });
+  const intro = await betoIntro;
+  check('ativar a cena apresenta a cartela de abertura', !!intro && intro.durationMs > 0);
+
+  console.log('\n== I7. Backup com cartelas ==');
+  const exported = await (
+    await fetch(`${BASE}/api/tables/${gmState.id}/export?assets=0`, { headers: { 'x-session-token': gmToken } })
+  ).json();
+  check('backup tem versao 2', exported.format === 2);
+  check('backup leva as cartelas', exported.sceneCards?.length === 1 && exported.scenes[0].introCardId === card.id);
+
+  const reimport = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: exported, gmName: 'Mestre 2' }),
+  });
+  const reimported = await reimport.json();
+  const restoredSocket = await connect();
+  const restored = (await rpc(restoredSocket, 'session:resume', { token: reimported.session.token })).state;
+  check(
+    'cartelas voltam na importacao, com a cena apontando para elas',
+    restored.sceneCards.length === 1 && restored.scenes[0].introCardId === restored.sceneCards[0].id,
+  );
+  restoredSocket.disconnect();
+
+  const legacy = { ...exported, format: 1 };
+  delete legacy.sceneCards;
+  for (const scene of legacy.scenes) delete scene.introCardId;
+  const legacyRes = await fetch(`${BASE}/api/tables/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup: legacy, gmName: 'Mestre 3' }),
+  });
+  check('backup da versao 1 continua importando', legacyRes.status === 200, `status=${legacyRes.status}`);
+
+  gm.disconnect();
+  anaAgain.disconnect();
+  beto.socket.disconnect();
 }
 
 main().catch((err) => {

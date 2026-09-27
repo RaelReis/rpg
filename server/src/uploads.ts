@@ -40,7 +40,7 @@ const FORMAT_TO_MIME: Record<string, string> = {
   avif: 'image/avif',
 };
 
-export const ASSET_KINDS: AssetKind[] = ['map', 'token', 'portrait', 'item', 'effect', 'tile'];
+export const ASSET_KINDS: AssetKind[] = ['map', 'token', 'portrait', 'item', 'effect', 'tile', 'card'];
 
 export function isAssetKind(v: string): v is AssetKind {
   return (ASSET_KINDS as string[]).includes(v);

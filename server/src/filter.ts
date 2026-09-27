@@ -4,12 +4,15 @@ import {
   filterSheetForRole,
   filterTemplateForRole,
   perceives,
+  reduceScreenEffect,
+  type ActiveScreenEffect,
   type Asset,
   type ChatMessage,
   type Handout,
   type InitiativeState,
   type MapEffect,
   type Player,
+  type PresentedCard,
   type Role,
   type Scene,
   type Sheet,
@@ -94,7 +97,8 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
           computedExplored: [...vision.explored],
         };
 
-  return { ...scene, tokens, tiles, effects, walls, fog };
+  // A cartela de abertura e preparacao do mestre: nem o id sai daqui.
+  return { ...scene, tokens, tiles, effects, walls, fog, introCardId: null };
 }
 
 /**
@@ -204,11 +208,58 @@ export function assetIdsOfSheet(sheet: Sheet): (string | null)[] {
  * O retrato e derivado na hora do envio: gravado no jogador, ficaria velho a
  * cada troca de imagem na ficha.
  */
-export function playersWithPortraits(room: Room): Player[] {
-  return room.state.players.map((p) => ({
-    ...p,
-    portraitAssetId: room.sheet(p.sheetId)?.portraitAssetId ?? null,
-  }));
+export function playersWithPortraits(room: Room, viewer?: Viewer): Player[] {
+  return room.state.players.map((p) => {
+    const out: Player = { ...p, portraitAssetId: room.sheet(p.sheetId)?.portraitAssetId ?? null };
+    // Preferencia de acessibilidade e assunto de cada um: so a propria pessoa
+    // recebe o valor.
+    if (!viewer || viewer.playerId !== p.id) delete out.reduceEffects;
+    return out;
+  });
+}
+
+/** O jogador pediu para reduzir efeitos de tela? */
+export function prefersReducedEffects(room: Room, playerId: string): boolean {
+  return room.player(playerId)?.reduceEffects === true;
+}
+
+/** Esta pessoa esta entre os destinatarios (`null` = todos os jogadores)? */
+export function isRecipient(recipients: string[] | null, playerId: string): boolean {
+  return recipients === null || recipients.includes(playerId);
+}
+
+/**
+ * Efeitos fixos ativos para o observador. O mestre ve a lista inteira, com os
+ * destinatarios, para poder remover; o jogador recebe so os que o atingem, ja
+ * na versao reduzida se ele pediu, e sem saber quem mais os recebe.
+ */
+export function screenEffectsForViewer(room: Room, viewer: Viewer): ActiveScreenEffect[] {
+  if (viewer.role === 'GM') return room.state.screenEffects;
+  const reduce = prefersReducedEffects(room, viewer.playerId);
+  const out: ActiveScreenEffect[] = [];
+  for (const active of room.state.screenEffects) {
+    if (!isRecipient(active.recipients, viewer.playerId)) continue;
+    const { recipients: _omit, ...effect } = active;
+    void _omit;
+    const shown = reduce ? reduceScreenEffect(effect) : effect;
+    if (shown) out.push({ ...shown, recipients: null });
+  }
+  return out;
+}
+
+/**
+ * A cartela na tela, na versao do observador — ou null se ele nao e
+ * destinatario. Quem reconecta no meio ve so o tempo que falta.
+ */
+export function presentedCardForViewer(room: Room, viewer: Viewer): PresentedCard | null {
+  const card = room.state.presentedCard;
+  if (!card) return null;
+  const remaining =
+    card.durationMs === null ? null : Math.max(0, card.durationMs - (Date.now() - room.presentationStartedAt));
+  if (remaining === 0) return null;
+  if (viewer.role === 'GM') return { ...card, durationMs: remaining };
+  if (!isRecipient(card.recipients, viewer.playerId)) return null;
+  return { ...card, durationMs: remaining, recipients: null };
 }
 
 /** Somente os assets referenciados pelo que este observador recebeu. */
@@ -229,6 +280,7 @@ function assetsForViewer(
   for (const handout of room.state.handouts) {
     if (handoutForViewer(handout, viewer)) ids.add(handout.assetId);
   }
+  ids.add(presentedCardForViewer(room, viewer)?.assetId);
 
   return room.state.assets.filter((a) => ids.has(a.id));
 }
@@ -281,14 +333,19 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
   const s = room.state;
 
   if (viewer.role === 'GM') {
-    return { ...s, players: playersWithPortraits(room), sheetTemplate: s.sheetTemplate };
+    return {
+      ...s,
+      players: playersWithPortraits(room, viewer),
+      sheetTemplate: s.sheetTemplate,
+      presentedCard: presentedCardForViewer(room, viewer),
+    };
   }
 
   const active = room.activeScene();
   const scene = active ? sceneForViewer(room, active, viewer) : null;
   const sheets = sheetsForViewer(room, viewer, scene?.tokens ?? []);
 
-  const players = playersWithPortraits(room);
+  const players = playersWithPortraits(room, viewer);
 
   return {
     ...s,
@@ -302,6 +359,10 @@ export function stateForViewer(room: Room, viewer: Viewer): TableState {
     sheetTemplate: filterTemplateForRole(s.sheetTemplate, viewer.role),
     initiative: initiativeForViewer(room, viewer),
     chat: chatForViewer(s.chat, viewer),
+    // Cartelas em preparacao nunca saem: nem titulo, nem imagem, nem id.
+    sceneCards: [],
+    screenEffects: screenEffectsForViewer(room, viewer),
+    presentedCard: presentedCardForViewer(room, viewer),
   };
 }
 

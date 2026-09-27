@@ -7,3 +7,4 @@ export * from './defaults.js';
 export * from './events.js';
 export * from './fog-codec.js';
 export * from './perception.js';
+export * from './screen.js';

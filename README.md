@@ -100,6 +100,7 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - campos de ficha marcados como exclusivos do mestre;
 - **alucinações** destinadas a outros jogadores — nem o id chega;
 - cenas ainda não ativadas (material de preparação);
+- **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
 
@@ -430,12 +431,62 @@ chamar seu nome."* Abra pelo ✉ do trilho, pelo ✉ ao lado do jogador em
   offline **não recebe depois** — fora de hora a mensagem perde o sentido —, e
   o mestre é avisado para decidir se repete.
 
+### Efeitos de tela
+
+O 🎬 do trilho abre um painel compacto com cinco efeitos, aplicados a todos
+os jogadores ou a alguns:
+
+| Efeito | Parâmetros |
+| --- | --- |
+| Tremor | intensidade, duração |
+| Flash | cor, intensidade, duração |
+| Vinheta | cor, intensidade, duração ou fixa |
+| Desfoque | intensidade, duração ou fixo |
+| Apagão | duração ou fixo, com *fade* de entrada e saída |
+
+São desenhados numa camada acima do mapa e independente da câmera. Tremor e
+desfoque agem sobre o elemento do mapa com CSS, sem redesenhar o canvas: o
+quadro ocioso continua ocioso e a textura de neblina não é recomposta. A
+animação existe só enquanto o efeito está na tela.
+
+Efeitos **fixos** ficam até o mestre removê-los — um por um na lista de
+ativos, ou todos no **Parar todos**, que também corta o que ainda estiver
+correndo. Eles moram na memória do servidor e voltam para quem reconecta; um
+reinício do servidor os encerra, como encerraria a sessão. O mestre não
+recebe os efeitos na própria tela: ele está conduzindo, e o painel mostra o
+que está ativo e para quem.
+
+**Acessibilidade.** Em ⚙ *Preferências* (no cabeçalho, para todos), a opção
+**Reduzir efeitos de tela** troca o flash por uma vinheta suave da mesma cor e
+cancela o tremor. A troca acontece **no servidor**, antes do envio: quem pediu
+nem recebe o tremor. A preferência fica guardada no jogador e só ele recebe o
+valor. Independentemente disso, **nenhuma tela recebe mais de 3 flashes por
+segundo** — o servidor descarta o excedente, e o cliente aplica o mesmo teto
+como segunda barreira —, e cada flash é um único clarão que se apaga.
+
+### Cartela de cena
+
+Uma tela cheia com imagem de fundo, título e subtítulo — *"Capítulo 3 — O
+Porão"* —, com *fade* de entrada e saída. O 🎞 do trilho abre as cartelas: o
+mestre prepara com antecedência, vê a prévia e **apresenta** a todos ou a
+jogadores escolhidos, por alguns segundos ou até fechar. Enquanto uma cartela
+está no ar, um aviso no canto do mapa do mestre traz o botão de fechar.
+
+Uma cartela **nunca chega ao jogador antes de ser apresentada**: nem título,
+nem imagem, nem id. A imagem sobe pela categoria *Cartela* (só o mestre, com a
+mesma validação por conteúdo) e só é entregue ao jogador junto com a cartela.
+Quem reconecta no meio de uma apresentação a vê de novo, pelo tempo que falta.
+
+Em *Cena → Cartela ao ativar*, uma cena pode abrir com uma cartela: ao ser
+ativada, ela aparece para todos por 6 segundos. A escolha também é material
+de preparação e não vai para o jogador.
+
 ---
 
 ## Backup
 
 Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
-fichas, materiais, tokens, paredes e neblina. Há duas versões — **com imagens**,
+fichas, materiais, cartelas, tokens, paredes e neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
 ou compartilhar a montagem de um sistema.
 
@@ -448,6 +499,14 @@ cria uma mesa nova**, com código novo: sobrescrever uma existente destruiria
 material sem volta, e comparar as duas antes de descartar é decisão de quem
 importou. As fichas voltam sem dono e os materiais sem compartilhamento — os
 jogadores entram de novo pelo código, e o mestre reatribui.
+
+O arquivo tem um campo `format` com a versão. Cada mudança no que ele carrega
+incrementa o número, e a importação continua aceitando as versões anteriores:
+
+| Versão | O que entrou |
+| --- | --- |
+| 1 | Cenas, fichas, materiais, imagens |
+| 2 | Cartelas de cena e a cartela de abertura de cada cena |
 
 O banco (`server/prisma/dev.db`) e a pasta `server/uploads/` continuam sendo o
 backup completo para quem tem acesso ao servidor.
@@ -475,6 +534,7 @@ regras é do mestre.
 | Token | 5 MB | todos |
 | Retrato | 5 MB | todos |
 | Efeito | 5 MB | mestre |
+| Cartela | 10 MB | mestre |
 | Item | 2 MB | todos |
 
 Formatos: PNG, JPEG, WebP, GIF, AVIF; até 8192 px por lado.

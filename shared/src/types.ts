@@ -277,6 +277,11 @@ export interface Scene {
   /** 1 = dia claro; 0 = escuridao total, so a visao dos tokens ilumina. */
   globalLight: number;
   weather: WeatherConfig;
+  /**
+   * Cartela apresentada a todos quando esta cena e ativada. Material do
+   * mestre: sai do payload do jogador, que nao pode saber nem o id.
+   */
+  introCardId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +398,11 @@ export interface Player {
    * Derivado no envio, nunca gravado: a fonte de verdade e a ficha.
    */
   portraitAssetId?: string | null;
+  /**
+   * Acessibilidade: trocar o flash por uma vinheta suave e nao tremer a tela.
+   * Preferencia pessoal — so a propria pessoa recebe o valor.
+   */
+  reduceEffects?: boolean;
 }
 
 export interface InitiativeEntry {
@@ -438,7 +448,7 @@ export interface TableSettings {
   diceEnabled: boolean;
 }
 
-export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile';
+export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card';
 
 export interface Asset {
   id: string;
@@ -518,6 +528,57 @@ export interface ScreenMessage {
   durationMs: number | null;
 }
 
+export type ScreenEffectKind = 'shake' | 'flash' | 'vignette' | 'blur' | 'blackout';
+
+/**
+ * Efeito aplicado a tela inteira de alguns jogadores: tremor, flash, vinheta,
+ * desfoque, apagao. Desenhado acima do mapa e fora da camera.
+ */
+export interface ScreenEffect {
+  id: string;
+  kind: ScreenEffectKind;
+  /** Flash e vinheta. */
+  color: string;
+  /** 0 a 1: amplitude do tremor, forca da vinheta, raio do desfoque. */
+  intensity: number;
+  /**
+   * Milissegundos. `null` e efeito fixo (vinheta, desfoque, apagao): fica ate
+   * o mestre remover e sobrevive a reconexao do jogador.
+   */
+  durationMs: number | null;
+}
+
+/** Efeito fixo ativo, com quem o recebe (`null` = todos os jogadores). */
+export interface ActiveScreenEffect extends ScreenEffect {
+  recipients: string[] | null;
+}
+
+/**
+ * Cartela de cena: tela cheia com imagem, titulo e subtitulo ("Capitulo 3 —
+ * O Porao"). Preparada com antecedencia pelo mestre e so enviada ao jogador
+ * no momento em que e apresentada.
+ */
+export interface SceneCard {
+  id: string;
+  title: string;
+  subtitle: string;
+  assetId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Cartela na tela agora, na versao que o destinatario recebe. */
+export interface PresentedCard {
+  cardId: string;
+  title: string;
+  subtitle: string;
+  assetId: string | null;
+  /** Milissegundos restantes na tela; `null` fica ate o mestre fechar. */
+  durationMs: number | null;
+  /** Para o mestre: quem esta vendo (`null` = todos). Sempre `null` no jogador. */
+  recipients: string[] | null;
+}
+
 /** Estado completo da mesa. O jogador recebe uma versao filtrada disto. */
 export interface TableState {
   id: string;
@@ -533,6 +594,12 @@ export interface TableState {
   assets: Asset[];
   handouts: Handout[];
   chat: ChatMessage[];
+  /** Cartelas preparadas. So o mestre recebe; o jogador ve apenas a apresentada. */
+  sceneCards: SceneCard[];
+  /** Efeitos de tela fixos ativos (em memoria). O jogador recebe so os dele. */
+  screenEffects: ActiveScreenEffect[];
+  /** Cartela na tela agora, se este observador for destinatario. */
+  presentedCard: PresentedCard | null;
   createdAt: number;
   updatedAt: number;
 }

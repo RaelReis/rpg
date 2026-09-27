@@ -58,6 +58,8 @@ export function Rail(): JSX.Element {
   const redo = useStore((s) => s.redo);
   const redoDepth = useStore((s) => s.redoStack.length);
   const openMessageComposer = useStore((s) => s.openMessageComposer);
+  const immersionPanel = useStore((s) => s.immersionPanel);
+  const setImmersionPanel = useStore((s) => s.setImmersionPanel);
 
   const painting = tool === 'fog-reveal' || tool === 'fog-hide';
 
@@ -186,6 +188,20 @@ export function Rail(): JSX.Element {
             onClick={() => openMessageComposer([])}
           >
             ✉
+          </button>
+          <button
+            className={`tool${immersionPanel === 'effects' ? ' active' : ''}`}
+            data-tip="Efeitos de tela — tremor, flash, vinheta, desfoque, apagao"
+            onClick={() => setImmersionPanel(immersionPanel === 'effects' ? null : 'effects')}
+          >
+            🎬
+          </button>
+          <button
+            className={`tool${immersionPanel === 'cards' ? ' active' : ''}`}
+            data-tip="Cartelas de cena — tela cheia com titulo e imagem"
+            onClick={() => setImmersionPanel(immersionPanel === 'cards' ? null : 'cards')}
+          >
+            🎞
           </button>
 
           <span className="sep" />

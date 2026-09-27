@@ -161,6 +161,20 @@ export function ScenePanel(): JSX.Element {
               value={scene.backgroundColor}
               onChange={(v) => patch({ backgroundColor: v })}
             />
+
+            <SelectField
+              label="Cartela ao ativar"
+              value={scene.introCardId ?? ''}
+              options={[
+                { value: '', label: 'Nenhuma' },
+                ...table.sceneCards.map((c) => ({ value: c.id, label: c.title })),
+              ]}
+              onChange={(v) => patch({ introCardId: v || null })}
+            />
+            <span className="hint">
+              Mostrada a todos por alguns segundos sempre que esta cena for ativada. Prepare as
+              cartelas no 🎞 do trilho.
+            </span>
           </Section>
 
           <Section title="Grid">

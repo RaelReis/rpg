@@ -10,6 +10,7 @@ import {
   normalizeTemplate,
   type Handout,
   type Scene,
+  type SceneCard,
   type Sheet,
   type TableState,
 } from '@rpg/shared';
@@ -32,7 +33,16 @@ import { saveImage } from './uploads.js';
  * entram de novo pelo codigo.
  */
 
-export const BACKUP_FORMAT = 1;
+/**
+ * Versao do formato. Cada mudanca no que o arquivo carrega incrementa o numero,
+ * e a importacao continua aceitando as anteriores: um backup antigo e
+ * justamente o que se quer poder abrir anos depois.
+ *
+ * 1 — cenas, fichas, materiais, imagens.
+ * 2 — cartelas de cena (`sceneCards`) e a cartela de abertura de cada cena.
+ */
+export const BACKUP_FORMAT = 2;
+const SUPPORTED_FORMATS = [1, 2];
 
 /** Acima disto o JSON com imagens fica impraticavel de gerar e de abrir. */
 const MAX_EMBEDDED_BYTES = 120 * 1024 * 1024;
@@ -56,6 +66,8 @@ export interface TableBackup {
   sheetTemplate: TableState['sheetTemplate'];
   initiative: TableState['initiative'];
   handouts: Handout[];
+  /** Desde o formato 2. */
+  sceneCards?: SceneCard[];
   scenes: Scene[];
   sheets: Sheet[];
   /** Apenas para reconstruir a autoria; sem credenciais. */
@@ -102,6 +114,7 @@ export async function exportTable(room: Room, includeAssets: boolean): Promise<T
     sheetTemplate: s.sheetTemplate,
     initiative: s.initiative,
     handouts: s.handouts,
+    sceneCards: s.sceneCards,
     scenes: s.scenes,
     sheets: s.sheets,
     players: s.players.map((p) => ({ id: p.id, name: p.name, color: p.color, role: p.role })),
@@ -125,8 +138,10 @@ export async function importTable(
   gmPassword: string,
 ): Promise<{ room: Room; gmToken: string; gmPlayerId: string; missingAssets: number }> {
   if (!backup || typeof backup !== 'object') throw new BackupError('Arquivo vazio ou ilegivel.');
-  if (backup.format !== BACKUP_FORMAT) {
-    throw new BackupError(`Formato de backup incompativel (esperado ${BACKUP_FORMAT}).`);
+  if (!SUPPORTED_FORMATS.includes(backup.format as number)) {
+    throw new BackupError(
+      `Formato de backup incompativel (${String(backup.format)}). Este servidor abre as versoes ${SUPPORTED_FORMATS.join(', ')}.`,
+    );
   }
   if (!Array.isArray(backup.scenes) || backup.scenes.length === 0) {
     throw new BackupError('O backup nao contem nenhuma cena.');
@@ -218,6 +233,17 @@ async function buildImportedTable(
   room.state.sheetTemplate = normalizeTemplate(backup.sheetTemplate ?? createDefaultTemplate());
   room.state.settings = { ...DEFAULT_SETTINGS, ...(backup.settings ?? {}) };
   room.state.initiative = { ...DEFAULT_INITIATIVE, ...(backup.initiative ?? {}) };
+
+  // Cartelas ganham ids novos; a cena que abria com uma delas aponta para a nova.
+  const cardIds = new Map<string, string>();
+  room.state.sceneCards = (backup.sceneCards ?? []).map((card) => {
+    const id = generateId('crd');
+    cardIds.set(card.id, id);
+    return { ...card, id, assetId: remap(card.assetId) };
+  });
+  for (const scene of room.state.scenes) {
+    scene.introCardId = scene.introCardId ? (cardIds.get(scene.introCardId) ?? null) : null;
+  }
 
   room.state.handouts = (backup.handouts ?? []).map((h) => ({
     ...h,

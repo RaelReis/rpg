@@ -304,8 +304,8 @@ export function emitWalls(room: Room, scene: Scene, upsert: Wall[], remove: stri
 }
 
 export function emitPlayers(room: Room): void {
-  const players = playersWithPortraits(room);
   for (const socket of socketsOf(room)) {
+    const players = playersWithPortraits(room, socket.data.viewer);
     // Sem os dados da imagem o jogador veria o retrato do colega quebrado.
     syncAssets(room, socket, players.map((p) => p.portraitAssetId));
     socket.emit('players:patch', players);

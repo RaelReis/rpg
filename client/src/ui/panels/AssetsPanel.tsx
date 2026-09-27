@@ -15,6 +15,7 @@ const KIND_LABELS: Record<AssetKind, string> = {
   portrait: 'Retratos',
   item: 'Itens',
   effect: 'Efeitos',
+  card: 'Cartelas',
 };
 
 export function AssetsPanel(): JSX.Element {

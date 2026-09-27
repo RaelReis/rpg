@@ -1,4 +1,5 @@
 import type {
+  ActiveScreenEffect,
   Asset,
   Cell,
   ChatMessage,
@@ -9,8 +10,11 @@ import type {
   Layer,
   MapEffect,
   Player,
+  PresentedCard,
   Role,
   Scene,
+  SceneCard,
+  ScreenEffect,
   ScreenMessage,
   ScreenMessageStyle,
   Session,
@@ -152,6 +156,20 @@ export interface ScreenMessageDelivery {
   unconfirmed: string[];
 }
 
+export interface ScreenEffectRequest {
+  effect: Partial<ScreenEffect>;
+  /** Jogadores que recebem; `null` = todos. */
+  recipients: string[] | null;
+}
+
+export interface CardPresentRequest {
+  cardId: string;
+  /** Jogadores que veem; `null` = todos. */
+  recipients: string[] | null;
+  /** Milissegundos na tela; `null` fica ate o mestre fechar. */
+  durationMs: number | null;
+}
+
 export interface ChatSendPayload {
   text: string;
   whisper: boolean;
@@ -232,6 +250,18 @@ export interface ClientToServerEvents {
   'chat:send': (payload: ChatSendPayload, ack: Ack<null>) => void;
   /** Mensagem individual no centro da tela (so o mestre envia). */
   'message:send': (payload: ScreenMessageRequest, ack: Ack<ScreenMessageDelivery>) => void;
+  /** Efeito de tela (so o mestre). Fixos ficam ativos ate `screen:stop`. */
+  'screen:apply': (payload: ScreenEffectRequest, ack: Ack<ScreenEffect>) => void;
+  /** Remove um efeito fixo, ou todos os efeitos quando `effectId` e omitido. */
+  'screen:stop': (payload: { effectId?: string }, ack: Ack<null>) => void;
+  /** Preferencias pessoais de quem esta conectado. */
+  'player:prefs': (payload: { reduceEffects?: boolean }, ack: Ack<null>) => void;
+
+  'card:create': (payload: { title: string; subtitle?: string; assetId?: string | null }, ack: Ack<SceneCard>) => void;
+  'card:update': (payload: { cardId: string; patch: Partial<SceneCard> }, ack: Ack<null>) => void;
+  'card:delete': (payload: { cardId: string }, ack: Ack<null>) => void;
+  'card:present': (payload: CardPresentRequest, ack: Ack<null>) => void;
+  'card:close': (payload: Record<string, never>, ack: Ack<null>) => void;
   'map:ping': (payload: Omit<MapPing, 'playerName' | 'color'>) => void;
   // Nao ha evento de cursor: ninguem, nem o mestre, ve o ponteiro dos outros.
   // O ping continua sendo o jeito deliberado de apontar algo no mapa.
@@ -265,6 +295,17 @@ export interface ServerToClientEvents {
   'chat:message': (message: ChatMessage) => void;
   /** O cliente confirma pelo ack assim que recebe: e o "entregue" do mestre. */
   'message:show': (message: ScreenMessage, ack: (received: boolean) => void) => void;
+  /** Um efeito comeca na tela deste jogador (ja reduzido, se ele pediu). */
+  'screen:effect': (effect: ScreenEffect) => void;
+  /** Efeitos encerrados pelo mestre; `all` limpa a tela. */
+  'screen:stopped': (payload: { ids: string[] } | { all: true }) => void;
+  /** Lista de efeitos fixos ativos, para o painel do mestre. */
+  'screen:active': (effects: ActiveScreenEffect[]) => void;
+
+  /** Cartelas preparadas (so o mestre recebe). */
+  'cards:patch': (payload: { upsert?: SceneCard[]; remove?: string[] }) => void;
+  /** Cartela entra na tela (ou sai, com `null`). */
+  'card:presented': (card: PresentedCard | null) => void;
   'map:ping': (ping: MapPing) => void;
 
   'notice': (payload: { level: 'info' | 'warn' | 'error'; message: string }) => void;
@@ -283,6 +324,8 @@ export const UPLOAD_LIMITS = {
   portrait: 5 * 1024 * 1024,
   item: 2 * 1024 * 1024,
   effect: 5 * 1024 * 1024,
+  /** Fundo de cartela de cena: tela cheia, entao imagem grande. */
+  card: 10 * 1024 * 1024,
 } as const;
 
 export const ALLOWED_IMAGE_MIMES = [
