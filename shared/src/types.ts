@@ -559,6 +559,11 @@ export interface TableSettings {
   /** Jogadores podem criar anotacoes na camada 4. */
   playersCanAnnotate: boolean;
   diceEnabled: boolean;
+  /**
+   * Quem esta com a vez pode passa-la. Sem isto so o mestre avancava, e a
+   * faixa dizia "sua vez" a quem nao tinha o que fazer com ela.
+   */
+  playersPassTurn: boolean;
 }
 
 export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card' | 'clue';

@@ -85,6 +85,15 @@ export interface UndoEntry {
   label: string;
   undo: () => void | Promise<void>;
   redo: () => void | Promise<void>;
+  /**
+   * Motivo para nao desfazer (ou refazer) agora, ou `null` se pode.
+   *
+   * O historico e local, mas a mesa nao: desfazer um movimento depois que um
+   * jogador moveu o mesmo token o teletransportava de volta — atravessando
+   * paredes, por cima do movimento dele. Quem monta a entrada diz como
+   * conferir que o objeto ainda esta como a acao o deixou.
+   */
+  blocked?: (direction: 'undo' | 'redo') => string | null;
 }
 
 /** O que a ferramenta de parede desenha a cada clique. */
@@ -667,6 +676,12 @@ export const useStore = create<AppState>((set, get) => ({
       get().notify('info', 'Nada para desfazer.');
       return;
     }
+    const reason = entry.blocked?.('undo');
+    if (reason) {
+      set({ undoStack: stack.slice(0, -1) });
+      get().notify('info', `Desfazer ignorado (${entry.label}): ${reason}.`);
+      return;
+    }
     set((s) => ({ undoStack: stack.slice(0, -1), redoStack: [...s.redoStack, entry].slice(-50) }));
     void Promise.resolve(entry.undo()).then(() => get().notify('info', `Desfeito: ${entry.label}`));
   },
@@ -676,6 +691,12 @@ export const useStore = create<AppState>((set, get) => ({
     const entry = stack[stack.length - 1];
     if (!entry) {
       get().notify('info', 'Nada para refazer.');
+      return;
+    }
+    const reason = entry.blocked?.('redo');
+    if (reason) {
+      set({ redoStack: stack.slice(0, -1) });
+      get().notify('info', `Refazer ignorado (${entry.label}): ${reason}.`);
       return;
     }
     set((s) => ({ redoStack: stack.slice(0, -1), undoStack: [...s.undoStack, entry].slice(-50) }));

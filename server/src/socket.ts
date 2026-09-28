@@ -27,6 +27,7 @@ import {
   deleteAsset,
   kickPlayer,
   nextTurn,
+  passTurn,
   pingMap,
   previousTurn,
   promotePlayer,
@@ -291,6 +292,11 @@ export function registerSocketHandlers(io: TypedServer): void {
       if (!ctx) return fail(ack, 'Sessao nao encontrada.');
       if (!isGm(ctx)) return fail(ack, 'Apenas o mestre passa a vez.');
       nextTurn(ctx, ack);
+    });
+    socket.on('turns:pass', (ack) => {
+      const ctx = contextOf(socket);
+      if (!ctx) return fail(ack, 'Sessao nao encontrada.');
+      passTurn(ctx, ack);
     });
     socket.on('turns:previous', (ack) => {
       const ctx = contextOf(socket);

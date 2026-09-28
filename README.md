@@ -280,6 +280,9 @@ mesa — e a ficha já chega com uma imagem de corpo inteiro pedida na entrada. 
 imagem nenhuma, o token continua sendo desenhado como peça redonda, então nunca
 fica invisível.
 
+Para pegar o token, vale a figura **ou** a célula que ele ocupa — o anel dos pés
+responde ao clique, como a figura.
+
 A escolha é **só visual**. A área que o token ocupa para movimento, visão e
 alcance continua sendo o tamanho declarado, não a altura do desenho — o
 tamanho define a largura, e a altura vem da proporção da imagem.
@@ -299,7 +302,9 @@ seleciona vários tokens por retângulo; `Shift` no clique soma à seleção.
 mapa do mestre — mover, criar, apagar, transformar, pintar neblina. O
 histórico é local, e não colaborativo: desfazer uma exclusão recria um objeto
 equivalente, com id novo, e o refazer seguinte apaga esse novo. Qualquer ação
-nova depois de um desfazer descarta o que havia para refazer.
+nova depois de um desfazer descarta o que havia para refazer. Se outra pessoa
+mexeu no mesmo token ou tile depois, o desfazer daquele movimento é ignorado,
+com aviso — em vez de teletransportar a peça por cima do movimento dela.
 
 **Paredes** saem em sequência e **cada clique grava um trecho na hora** — não
 há rascunho a perder e não há nada a confirmar no fim. Duplo clique ou `Esc`
@@ -703,6 +708,7 @@ e serve a qualquer sistema.
 | `+` | Coloca na ordem quem está selecionado no mapa (monstros, aliados) |
 | Arrastar uma ficha do painel até a faixa | Coloca aquele personagem na ordem |
 | Pular / esconder / remover | Aparecem ao passar o mouse sobre a miniatura |
+| **Passar** (jogador) | Quem está com a vez a passa adiante; desligável em *Mesa → Regras da mesa* |
 
 A vez atual fica destacada na faixa (com o nome ao lado, ou *"sua vez"* para
 quem está com ela), no retrato do grupo e como anel pulsante no token do mapa. O

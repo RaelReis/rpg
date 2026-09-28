@@ -66,6 +66,7 @@ export const DEFAULT_SETTINGS: TableSettings = {
   wallsBlockMovement: true,
   playersCanAnnotate: false,
   diceEnabled: true,
+  playersPassTurn: true,
 };
 
 export const DEFAULT_TURNS: TurnState = {

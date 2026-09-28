@@ -199,6 +199,13 @@ export function PlayersPanel(): JSX.Element {
             checked={settings.diceEnabled}
             onChange={(v) => void act('settings:update', { diceEnabled: v })}
           />
+
+          <Toggle
+            label="Jogadores passam a propria vez"
+            hint="Quem esta com a vez ganha o botao Passar. Desligado, so voce avanca a ordem."
+            checked={settings.playersPassTurn}
+            onChange={(v) => void act('settings:update', { playersPassTurn: v })}
+          />
         </Section>
       )}
 

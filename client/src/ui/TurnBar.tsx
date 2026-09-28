@@ -164,6 +164,17 @@ export function TurnBar(): JSX.Element | null {
           </span>
         )}
 
+        {/* Quem esta com a vez a passa quando termina, sem esperar o mestre. */}
+        {myTurn && !gm && table.settings.playersPassTurn && (
+          <button
+            className="btn sm turn-pass"
+            onClick={() => void act('turns:pass')}
+            title="Terminei: passar a vez para o proximo"
+          >
+            Passar
+          </button>
+        )}
+
         {gm && (
           <>
             <button

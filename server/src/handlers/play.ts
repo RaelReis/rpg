@@ -255,6 +255,22 @@ export function nextTurn(ctx: Ctx, ack: Ack<null>): void {
   ok(ack, null);
 }
 
+/**
+ * O jogador passa a propria vez. So vale para quem esta com ela — conferido
+ * aqui, e nao escondendo o botao: pelo socket, qualquer um poderia avancar a
+ * ordem da mesa.
+ */
+export function passTurn(ctx: Ctx, ack: Ack<null>): void {
+  if (!ctx.room.state.settings.playersPassTurn) {
+    return fail(ack, 'Nesta mesa, so o mestre passa a vez.');
+  }
+  const turns = ctx.room.state.turns;
+  const active = turns.entries.find((e) => e.id === turns.activeEntryId);
+  if (!active || active.playerId !== ctx.viewer.playerId) return fail(ack, 'Nao e a sua vez.');
+  advance(ctx, 1);
+  ok(ack, null);
+}
+
 export function previousTurn(ctx: Ctx, ack: Ack<null>): void {
   advance(ctx, -1);
   ok(ack, null);

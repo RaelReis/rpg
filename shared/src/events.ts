@@ -282,6 +282,8 @@ export interface ClientToServerEvents {
   /** Passa a vez para uma miniatura especifica, sem percorrer a ordem. */
   'turns:set': (payload: { entryId: string }, ack: Ack<null>) => void;
   'turns:next': (ack: Ack<null>) => void;
+  /** Quem esta com a vez a passa adiante (so a propria, e se a mesa permitir). */
+  'turns:pass': (ack: Ack<null>) => void;
   'turns:previous': (ack: Ack<null>) => void;
 
   'player:update': (patch: { name?: string; color?: string }, ack: Ack<null>) => void;

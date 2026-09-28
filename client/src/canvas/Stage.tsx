@@ -922,7 +922,13 @@ export function Stage(): JSX.Element {
               };
               const moveTo = (p: Point) =>
                 void act('tile:update', { sceneId: currentScene.id, tileId, patch: { x: p.x, y: p.y } });
-              state.pushUndo({ label: 'mover tile', undo: () => moveTo(start), redo: () => moveTo(end) });
+              const sceneId = currentScene.id;
+              state.pushUndo({
+                label: 'mover tile',
+                undo: () => moveTo(start),
+                redo: () => moveTo(end),
+                blocked: (dir) => movedSince(sceneId, 'tile', new Map([[tileId, dir === 'undo' ? end : start]])),
+              });
             }
             break;
           }
@@ -976,17 +982,25 @@ export function Stage(): JSX.Element {
             state.moveTokenLocal(currentScene.id, id, x, y);
             after.set(id, { x, y });
             const drop = { sceneId: currentScene.id, tokenId: id, x, y, dragging: false };
-            if (blockedHintShownRef.current) {
-              // O arraste ja parou num obstaculo e o aviso ja apareceu: a
-              // recusa do soltar e esperada, e o servidor ja encaixou o token
-              // na celula que ele alcanca. Repetir "ha uma parede" em toast
-              // so dobraria o aviso.
-              void rpc('token:move', drop).catch((err: Error & { code?: string }) => {
-                if (err.code !== 'MOVE_BLOCKED') useStore.getState().notify('error', err.message);
-              });
-            } else {
-              void act('token:move', drop);
-            }
+            const sent = blockedHintShownRef.current
+              ? // O arraste ja parou num obstaculo e o aviso ja apareceu: a
+                // recusa do soltar e esperada, e o servidor ja encaixou o token
+                // na celula que ele alcanca. Repetir "ha uma parede" em toast
+                // so dobraria o aviso.
+                rpc('token:move', drop).catch((err: Error & { code?: string }) => {
+                  if (err.code !== 'MOVE_BLOCKED') useStore.getState().notify('error', err.message);
+                })
+              : act('token:move', drop);
+            // O desfazer confere contra onde o token de fato ficou, que pode
+            // nao ser o pedido: barrado numa parede, o servidor o encaixa em
+            // outra celula. O servidor emite o movimento antes de responder,
+            // entao aqui o store ja tem a posicao final.
+            const sceneId = currentScene.id;
+            void sent.finally(() => {
+              const final = activeScene(useStore.getState());
+              const t = final?.id === sceneId ? final.tokens.find((tk) => tk.id === id) : undefined;
+              if (t) after.set(id, { x: t.x, y: t.y });
+            });
           }
 
           if (gesture.moved) {
@@ -995,10 +1009,12 @@ export function Stage(): JSX.Element {
                 void act('token:move', { sceneId: currentScene.id, tokenId: id, x: p.x, y: p.y, dragging: false });
               }
             };
+            const sceneId = currentScene.id;
             state.pushUndo({
               label: before.size > 1 ? `mover ${before.size} tokens` : 'mover token',
               undo: () => place(before),
               redo: () => place(after),
+              blocked: (dir) => movedSince(sceneId, 'token', dir === 'undo' ? after : before),
             });
           }
           break;
@@ -1605,6 +1621,23 @@ function dropSpot(scene: Scene, world: Point, free: boolean): Point {
   return snapTokenPosition(scene.grid, topLeft, 1);
 }
 
+/**
+ * Conferencia do desfazer de movimento: os objetos ainda estao onde a acao os
+ * deixou? Se alguem os moveu depois, desfazer atropelaria esse movimento.
+ */
+function movedSince(sceneId: string, kind: 'token' | 'tile', expected: Map<string, Point>): string | null {
+  const scene = useStore.getState().table?.scenes.find((s) => s.id === sceneId);
+  const pool: { id: string; x: number; y: number }[] = kind === 'token' ? (scene?.tokens ?? []) : (scene?.tiles ?? []);
+  for (const [id, p] of expected) {
+    const item = pool.find((t) => t.id === id);
+    if (!item) return kind === 'token' ? 'o token nao existe mais' : 'o tile nao existe mais';
+    if (Math.hypot(item.x - p.x, item.y - p.y) > 1) {
+      return kind === 'token' ? 'o token foi movido depois' : 'o tile foi movido depois';
+    }
+  }
+  return null;
+}
+
 /** Token de uma ficha na cena, se ela ja tiver um. */
 function sheetTokenOn(scene: Scene, sheetId: string): Token | null {
   return scene.tokens.find((t) => t.sheetId === sheetId) ?? null;
@@ -1630,7 +1663,12 @@ async function dropSheet(scene: Scene, sheetId: string, spot: Point): Promise<vo
     state.moveTokenLocal(scene.id, existing.id, spot.x, spot.y);
     place(spot);
     state.selectToken(existing.id);
-    state.pushUndo({ label: `mover ${sheet.name}`, undo: () => place(from), redo: () => place(spot) });
+    state.pushUndo({
+      label: `mover ${sheet.name}`,
+      undo: () => place(from),
+      redo: () => place(spot),
+      blocked: (dir) => movedSince(scene.id, 'token', new Map([[existing.id, dir === 'undo' ? spot : from]])),
+    });
     return;
   }
 

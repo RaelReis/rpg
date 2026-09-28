@@ -2303,6 +2303,13 @@ export function tokenAtPoint(
         const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
         const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
         if (lx >= -w / 2 && lx <= w / 2 && ly >= -artH && ly <= 0) return token;
+        // A celula que o token ocupa tambem responde: e onde fica o anel dos
+        // pes, e onde o README diz que esta a posicao dele. So com a figura, o
+        // clique no anel — o gesto natural de quem nunca usou a mesa — virava
+        // uma selecao retangular vazia, sem nenhum retorno.
+        if (world.x >= token.x && world.x <= token.x + w && world.y >= token.y && world.y <= token.y + h) {
+          return token;
+        }
         continue;
       }
     }
