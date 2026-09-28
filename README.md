@@ -365,8 +365,10 @@ impressa (acima de 20 pontos, vira barra). O retrato pisca ao perder ou
 recuperar pontos, pulsa com pouca resistência, ganha o selo *Morrendo* em 0 PV
 ou *Em colapso* em 0 PD, e brilha em latão na vez do personagem.
 
-- O jogador vê o próprio retrato primeiro e o dos colegas quando **Barras do
-  grupo** está ligado (aba *Mesa*); o mestre vê todos.
+- O jogador vê o próprio retrato primeiro e o dos colegas quando **Barras e
+  retratos do grupo** está ligado (aba *Mesa → Regras da mesa*), estejam eles à
+  vista ou não; o mestre vê todos. Dos NPCs, só chegam as barras dos tokens à
+  vista.
 - Clicar no retrato abre a ficha, para quem pode abri-la.
 - O botão **Grupo** recolhe os retratos.
 - O que conta como PV e PD é o **papel no retrato**, escolhido no editor do
@@ -675,7 +677,8 @@ Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
 fichas, materiais, cartelas, gatilhos, quadro de pistas, tokens, paredes e
 neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
-ou compartilhar a montagem de um sistema.
+ou compartilhar a montagem de um sistema. Os arquivos saem com o sufixo
+`-completo` ou `-estrutura`, para não se confundirem.
 
 O arquivo **não carrega a senha de mestre nem as sessões dos jogadores**. Um
 backup circula por e-mail e drive; se levasse credenciais, quem o recebesse

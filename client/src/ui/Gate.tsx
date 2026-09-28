@@ -128,6 +128,19 @@ export function Gate(): JSX.Element {
   async function handleImport(file: File | undefined): Promise<void> {
     if (!file) return;
     const name = gmName.trim() || tableName.trim();
+    // O backup nao leva a senha; sem uma aqui, a mesa importada ficava sem
+    // senha em silencio, e o mestre so descobria ao tentar voltar de outro
+    // aparelho.
+    if (
+      name &&
+      !newPassword &&
+      !window.confirm(
+        'Importar sem senha de mestre? Sem ela, so este navegador guarda o papel de mestre da mesa importada.',
+      )
+    ) {
+      if (backupRef.current) backupRef.current.value = '';
+      return;
+    }
     if (!name) {
       setError('Preencha seu nome de mestre antes de importar.');
       return;
@@ -328,9 +341,12 @@ export function Gate(): JSX.Element {
                   onChange={(e) => setNewPassword(e.target.value)}
                   autoComplete="new-password"
                 />
+                {/* O texto antigo dizia que, sem senha, qualquer um assumia a mesa — o
+                    servidor nunca deixou. O risco real e o inverso: sem senha, o
+                    mestre que troca de aparelho ou limpa o navegador nao volta. */}
                 <span className="hint">
-                  Protege o papel de mestre. Sem senha, qualquer pessoa com o codigo pode assumir o
-                  controle da mesa.
+                  Com senha, voce volta como mestre de outro aparelho pelo link com &amp;mestre. Sem ela, so
+                  este navegador guarda o papel de mestre.
                 </span>
               </div>
 
@@ -350,7 +366,8 @@ export function Gate(): JSX.Element {
               </button>
               <span className="hint">
                 Restaura cenas, fichas e materiais de um arquivo exportado. Cria sempre uma mesa
-                nova, com codigo novo — nada existente e sobrescrito.
+                nova, com codigo novo — nada existente e sobrescrito. Usa o seu nome e a senha de
+                mestre preenchidos acima.
               </span>
 
               <input

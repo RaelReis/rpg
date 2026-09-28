@@ -689,6 +689,7 @@ export function Stage(): JSX.Element {
           new Set(state.hiddenLayers),
           vision,
           assetUrlOf,
+          gm ? null : (state.session?.playerId ?? null),
         );
 
         // Porta, para o jogador: o clique seco a abre ou fecha no soltar. Fica

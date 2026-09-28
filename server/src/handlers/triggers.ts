@@ -196,7 +196,7 @@ function runAction(
       const who = entry.playerName ? `${entry.tokenName} (${entry.playerName})` : entry.tokenName;
       for (const socket of socketsOf(room)) {
         if (socket.data.viewer.role === 'GM') {
-          socket.emit('notice', { level: 'info', message: `⚡ ${trigger.name}: ${who} entrou.` });
+          socket.emit('notice', { level: 'info', message: `Gatilho "${trigger.name}": ${who} entrou.` });
         }
       }
       return;

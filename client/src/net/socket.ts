@@ -356,6 +356,20 @@ function registerListeners(s: ClientSocket): void {
   s.on('handout:presented', ({ handoutId }) => {
     const state = store();
     const handout = state.table?.handouts.find((h) => h.id === handoutId);
+    // O mestre nao recebe a propria apresentacao em janela: ela abria sobre o
+    // painel dele e travava os cliques seguintes (retirar o acesso, por
+    // exemplo) ate ser fechada. Para ele basta saber a quem chegou.
+    if (state.session?.role === 'GM') {
+      if (!handout) return;
+      const names = handout.sharedWithAll
+        ? 'todos'
+        : (state.table?.players ?? [])
+            .filter((p) => handout.sharedWith.includes(p.id))
+            .map((p) => p.name)
+            .join(', ');
+      state.notify('info', `Apresentado a ${names}: ${handout.title}`);
+      return;
+    }
     state.openHandout(handoutId);
     if (handout) state.notify('info', `O mestre apresentou: ${handout.title}`);
   });

@@ -170,7 +170,9 @@ export function updateSheet(
   }
 
   if (payload.name !== undefined && (gm || isOwner)) {
+    const previous = sheet.name;
     sheet.name = safeString(payload.name, 60, sheet.name);
+    if (sheet.name !== previous) renameLinked(ctx.room, sheet.id, previous, sheet.name);
   }
   if (payload.portraitAssetId !== undefined && (gm || isOwner)) {
     const previous = sheet.portraitAssetId;
@@ -191,6 +193,33 @@ export function updateSheet(
   ctx.room.touchSheet(sheet.id);
   emitSheet(ctx.room, sheet);
   ok(ack, null);
+}
+
+/**
+ * O token e a vez da ficha seguem o nome dela. A ficha "Nova ficha" virava
+ * "Guarda", e o mapa e a ordem continuavam dizendo "Nova ficha". So troca o
+ * que ainda tinha o nome antigo: um token renomeado a parte fica como esta.
+ */
+function renameLinked(room: Room, sheetId: string, from: string, to: string): void {
+  for (const scene of room.state.scenes) {
+    for (const token of scene.tokens) {
+      if (token.sheetId !== sheetId || token.name !== from) continue;
+      token.name = to;
+      room.touchScene(scene.id);
+      emitTokenUpsert(room, scene, token);
+    }
+  }
+  let turnsChanged = false;
+  for (const entry of room.state.turns.entries) {
+    if (entry.sheetId === sheetId && entry.name === from) {
+      entry.name = to;
+      turnsChanged = true;
+    }
+  }
+  if (turnsChanged) {
+    room.touch('table');
+    emitTurns(room);
+  }
 }
 
 /**

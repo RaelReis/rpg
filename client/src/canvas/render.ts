@@ -502,7 +502,12 @@ function drawToken(input: RenderInput, token: Token): void {
   const cx = token.x + w / 2;
   const cy = token.y + h / 2;
 
-  if (!litEnoughToDraw(input, token.layer, { x: cx, y: cy })) return;
+  // O proprio personagem aparece mesmo numa celula escura ou selada: o
+  // servidor ja o manda de proposito, e sem isto o jogador perdia o token de
+  // vista quando o mestre selava a area em volta dele.
+  const viewer = input.previewPlayerId ?? input.playerId;
+  const own = input.role !== 'GM' || input.previewPlayerId !== null ? token.ownerPlayerId === viewer : false;
+  if (!own && !litEnoughToDraw(input, token.layer, { x: cx, y: cy })) return;
 
   const radius = Math.min(w, h) / 2;
   const isSelected = input.selectedTokenIds.has(token.id);
@@ -2271,6 +2276,8 @@ export function tokenAtPoint(
   hiddenLayers: Set<number>,
   vision: VisionResult,
   assetUrlOf?: (assetId: string | null) => string | null,
+  /** O proprio token responde ao clique mesmo fora da luz (ver `drawToken`). */
+  ownerId: string | null = null,
 ): Token | null {
   // Mesma ordem do desenho, invertida: quem aparece por cima e pego primeiro.
   const stack = [...scene.tokens].sort((a, b) => {
@@ -2287,7 +2294,7 @@ export function tokenAtPoint(
     const cx = token.x + w / 2;
     const cy = token.y + h / 2;
 
-    if (!vision.unrestricted && token.layer > 2) {
+    if (!vision.unrestricted && token.layer > 2 && (ownerId === null || token.ownerPlayerId !== ownerId)) {
       if (!vision.visible.has(cellKey(cellAtPoint(scene, { x: cx, y: cy })))) continue;
     }
 

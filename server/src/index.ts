@@ -149,7 +149,10 @@ app.get('/api/tables/:id/export', asyncRoute(async (req, res) => {
     const stamp = new Date().toISOString().slice(0, 10);
     const slug = room.state.name.replace(/[^\w-]+/g, '-').toLowerCase() || 'mesa';
 
-    res.setHeader('Content-Disposition', `attachment; filename="${slug}-${stamp}.json"`);
+    // Os dois tipos de backup saiam com o mesmo nome, e baixar os dois no mesmo
+    // dia deixava "(1)" decidir qual era o completo.
+    const kind = req.query.assets !== '0' ? 'completo' : 'estrutura';
+    res.setHeader('Content-Disposition', `attachment; filename="${slug}-${stamp}-${kind}.json"`);
     res.json(backup);
   } catch (err) {
     if (err instanceof BackupError) return res.status(409).json({ error: err.message });

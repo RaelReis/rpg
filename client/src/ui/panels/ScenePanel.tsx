@@ -603,8 +603,8 @@ export function ScenePanel(): JSX.Element {
             </div>
 
             <span className="hint">
-              Desenhe com a ferramenta de parede: cada clique grava um trecho,{' '}
-              <strong>Enter</strong> encerra, <strong>Alt</strong> faz uma porta.
+              Desenhe com a ferramenta de parede: cada clique grava um trecho; duplo clique,{' '}
+              <strong>Esc</strong> ou <strong>Enter</strong> encerram, e <strong>Alt</strong> faz uma porta.
               <br />
               Para excluir ou converter uma parede, clique nela com o <strong>botao direito</strong> no
               mapa — ou use a lixeira desta lista.

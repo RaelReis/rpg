@@ -156,6 +156,18 @@ export function effectVisibleTo(effect: MapEffect, viewer: Viewer): boolean {
 function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
   const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly && f.type === 'resource').map(f => f.id));
   const fieldIds = new Set<string>();
+
+  /*
+   * PV e PD de outro personagem de JOGADOR vao sempre, com ou sem o token dele
+   * a vista: sao os retratos do grupo, e o colega sumia do canto da tela a cada
+   * vez que saia da linha de visao. NPC continua dependendo do token visivel —
+   * o PV do monstro atras da parede nao e assunto do grupo.
+   */
+  if (room.player(sheet.ownerPlayerId)?.role === 'PLAYER') {
+    for (const field of room.state.sheetTemplate.fields) {
+      if (field.vital && publicFields.has(field.id)) fieldIds.add(field.id);
+    }
+  }
   for (const token of tokens) {
     if (token.sheetId !== sheet.id) continue;
     for (const bar of token.bars) if (publicFields.has(bar.fieldId)) fieldIds.add(bar.fieldId);
@@ -184,11 +196,10 @@ export function sheetForViewer(room: Room, sheet: Sheet, viewer: Viewer): Sheet 
 
   if (!room.state.settings.showPartyBars) return null;
 
+  // Sem cena ativa ainda ha os retratos do grupo (ver `barOnlySheet`).
   const scene = room.activeScene();
-  if (!scene) return null;
-
-  const vision = visionFor(scene, viewer);
-  const visible = scene.tokens.filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId));
+  const vision = scene ? visionFor(scene, viewer) : null;
+  const visible = scene && vision ? scene.tokens.filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId)) : [];
   return barOnlySheet(room, sheet, visible);
 }
 

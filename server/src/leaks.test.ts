@@ -34,7 +34,7 @@ import { updateHandout } from './handlers/handouts.js';
 import { createTokenHandler, deleteTile, deleteToken, moveToken, updateToken } from './handlers/map.js';
 import { activateScene } from './handlers/scene.js';
 import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
-import { createSheet, deleteSheet } from './handlers/sheets.js';
+import { createSheet, deleteSheet, updateSheet } from './handlers/sheets.js';
 import { handleJoin } from './handlers/session.js';
 import { Room, rooms } from './room.js';
 
@@ -527,5 +527,35 @@ describe('grupo na cena nova e NPC que nasce oculto', () => {
     for (const p of room.state.players) if (p.role === 'PLAYER') p.connected = false;
     createTokenHandler(ctxOf(room, gm), { sceneId: 'scn-ativa', token: { name: 'Preparo' } }, ack);
     expect(ack.mock.calls[1][0].data.visibility).toBe('visible');
+  });
+});
+
+describe('fase 3: retratos do grupo e nome da ficha', () => {
+  it('Q-017: o PV do colega chega mesmo com o token dele fora da visao; o do NPC nao', () => {
+    const room = table();
+    // Bruno esta em (1400,0), fora da visao da Alice no escuro total.
+    room.state.sheets.push(sheetOf('sht-SEGREDO-npc', null));
+    room.activeScene()!.tokens.push(createToken({ sheetId: 'sht-SEGREDO-npc', x: 1400, y: 700, bars: [{ fieldId: 'hp', color: '#f00' }] }));
+    const state = stateForViewer(room, { playerId: 'alice', role: 'PLAYER' });
+    const bruno = state.sheets.find((s) => s.id === 'sht-bruno');
+    expect(bruno?.values.hp).toBeDefined();
+    // So as resistencias: nada da ficha do colega alem delas.
+    expect(Object.keys(bruno?.values ?? {}).sort()).toEqual(['energy', 'hp']);
+    expect(secretsIn(JSON.stringify(state.sheets))).toEqual([]);
+  });
+
+  it('Q-019: renomear a ficha renomeia o token e a vez; token renomeado a parte fica', () => {
+    const room = table();
+    ensurePartyInTurns(room);
+    const scene = room.activeScene()!;
+    scene.tokens.find((t) => t.id === 'tok-alice')!.name = 'sht-alice';
+    scene.tokens.push(createToken({ id: 'tok-alice-2', sheetId: 'sht-alice', name: 'Alice disfarcada' }));
+    const gm = connect(room, 'mestre');
+
+    updateSheet(ctxOf(room, gm), { sheetId: 'sht-alice', name: 'Alice Moreau' }, vi.fn());
+
+    expect(scene.tokens.find((t) => t.id === 'tok-alice')?.name).toBe('Alice Moreau');
+    expect(scene.tokens.find((t) => t.id === 'tok-alice-2')?.name).toBe('Alice disfarcada');
+    expect(room.state.turns.entries.find((e) => e.sheetId === 'sht-alice')?.name).toBe('Alice Moreau');
   });
 });
