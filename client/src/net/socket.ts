@@ -229,7 +229,9 @@ async function applySession(session: Session, state: TableState): Promise<void> 
   const store = useStore.getState();
   store.setSession(session);
   store.setTable(state);
-  store.setSideTab(session.role === 'GM' ? 'scene' : 'sheet');
+  // Escolhe a aba sem abrir o painel: no celular ele cobre o mapa, e abrir
+  // aqui desfazia o painel fechado de saida (ver `sideOpen` no store).
+  useStore.setState({ sideTab: session.role === 'GM' ? 'scene' : 'sheet' });
 }
 
 export function leaveTable(): void {

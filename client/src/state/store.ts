@@ -353,6 +353,15 @@ let noticeSeq = 0;
 let pingSeq = 0;
 
 /** Muta a cena e devolve `true` se ela existe — evita repetir a busca. */
+/** Mesma largura do bloco de celular em styles.css. */
+function narrowScreen(): boolean {
+  try {
+    return window.matchMedia('(max-width: 700px)').matches;
+  } catch {
+    return false;
+  }
+}
+
 function withScene(table: TableState | null, sceneId: string, fn: (scene: Scene) => void): boolean {
   const scene = table?.scenes.find((s) => s.id === sceneId);
   if (!scene) return false;
@@ -384,7 +393,9 @@ export const useStore = create<AppState>((set, get) => ({
   editingSceneId: null,
   mapSceneId: null,
   sideTab: 'chat',
-  sideOpen: true,
+  // No celular o painel cobre o mapa inteiro: aberto de saida, quem entrava
+  // pelo convite via a ficha e nenhum mapa, sem saber que ele estava ali atras.
+  sideOpen: !narrowScreen(),
   camera: { x: 0, y: 0, zoom: 1 },
   hiddenLayers: [],
   showPartyVision: false,

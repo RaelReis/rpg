@@ -3323,3 +3323,95 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--b
   border-radius: 999px;
   box-shadow: var(--shadow-lg);
 }
+
+/* ---------------------------------------------------------------------------
+   Celular
+   O convite chega pelo WhatsApp e abre no telefone. Antes daqui, a tela
+   quebrava: o painel cobria o mapa ja de saida, a faixa de turnos encolhia ate
+   largura zero no cabecalho, a fileira de retratos empurrava a pagina para 718px
+   de largura e os recursos da ficha vazavam pela direita. O escopo e o minimo
+   para jogar: o mestre continua sendo pensado para a tela grande.
+   --------------------------------------------------------------------------- */
+@media (max-width: 700px) {
+  /* Duas linhas: a de baixo inteira para a vez de agir, que e o que o jogador
+     mais consulta. Nome da mesa e presenca saem — o HUD do grupo ja mostra
+     quem esta ali. */
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 8px;
+    row-gap: 6px;
+    padding: 6px 10px;
+  }
+  .topbar .brand,
+  .topbar .presence,
+  .topbar .topbar-sep {
+    display: none;
+  }
+  .topbar .code {
+    white-space: nowrap;
+  }
+  .topbar .turn-bar {
+    order: 1;
+    flex: 1 0 100%;
+    justify-content: center;
+  }
+
+  /* As dicas escondidas das ferramentas do trilho passavam da borda e davam
+     a pagina 5px de rolagem lateral. Nada no mapa precisa sair dele. */
+  .stage-wrap {
+    overflow: hidden;
+  }
+
+  /* O painel vira gaveta: deixa uma faixa do mapa a vista, onde fica o botao
+     de fechar, para nao parecer que o mapa sumiu. */
+  .side {
+    inset: 0 0 0 56px;
+    /* Sem isto a coluna da grade crescia ate o conteudo (as oito abas do
+       mestre) e o painel passava da tela. */
+    grid-template-columns: minmax(0, 1fr);
+    border-left: 1px solid var(--line);
+    box-shadow: -16px 0 32px rgba(0, 0, 0, 0.5);
+  }
+  /* 44px e o alvo de toque minimo; a aba de 18px presa a borda era impossivel
+     de acertar com o dedo. O mesmo lugar aberto e fechado: o dedo ja sabe. */
+  .side-toggle,
+  .side-toggle:hover,
+  .side-toggle:focus-visible {
+    top: 10px;
+    left: 6px;
+    right: auto;
+    transform: none;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    box-shadow: var(--shadow);
+  }
+
+  /* Retratos em duas colunas, sem rolagem lateral. */
+  .party-hud {
+    max-width: calc(100% - 24px);
+  }
+  .party-hud-row {
+    flex-wrap: wrap;
+    overflow: visible;
+    max-width: 100%;
+  }
+  .party-hud:not(:hover):not(:focus-within) .hud-card,
+  .party-hud .hud-card {
+    flex: 0 0 calc(50% - 5px);
+    min-width: 0;
+  }
+
+  /* Ficha em duas colunas; recursos (barra, botoes e os dois numeros) e campos
+     largos ocupam a linha inteira, que e o espaco de que precisam. */
+  .fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fields .span-2,
+  .fields .span-3,
+  .fields .sheet-cell-resource {
+    grid-column: 1 / -1;
+  }
+}

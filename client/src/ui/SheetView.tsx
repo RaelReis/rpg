@@ -73,7 +73,7 @@ export function SheetView({
         <Section key={section.id} title={section.label} collapsible>
           <div className="fields">
             {fields.map((field) => (
-              <div key={field.id} className={`span-${field.span}`}>
+              <div key={field.id} className={`span-${field.span} sheet-cell-${field.type}`}>
                 <FieldEditor
                   field={field}
                   sheet={sheet}

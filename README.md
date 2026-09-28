@@ -48,6 +48,13 @@ mande esse link e o código da mesa para os amigos.
   aparelho, acrescente `&mestre` ao link — a senha de mestre continua exigida.
   Numa mesa **sem** senha, ninguém assume o papel pelo convite; defina uma
   senha ao criar a mesa se quiser poder voltar de outro aparelho.
+- **No celular** (até 700 px de largura) a mesa abre no mapa. O cabeçalho
+  ganha uma segunda linha só para a faixa de turnos; o painel (ficha, chat,
+  materiais) vira uma gaveta, aberta e fechada pelo botão redondo no canto
+  superior esquerdo do mapa; os retratos do grupo ficam em duas colunas e a
+  ficha em duas, com os recursos na linha inteira. Arrastar o próprio token
+  funciona com o dedo; zoom por pinça ainda não existe — use o botão de
+  enquadrar. A preparação da mesa continua pensada para a tela grande.
 
 A campanha inteira mora em `server/prisma/dev.db` e `server/uploads/`. Copie
 os dois antes de cada sessão.
@@ -57,7 +64,7 @@ Outros comandos:
 | Comando | O que faz |
 | --- | --- |
 | `npm run share` | Publica a mesa para os amigos por um Cloudflare Tunnel |
-| `npm test` | Testes unitários do pacote compartilhado (grade, visão, dados, fichas) |
+| `npm test` | Testes unitários de `shared/`, `client/` e `server/` |
 | `npm run typecheck` | Verifica os três pacotes com o TypeScript |
 | `npm run test:e2e` | Teste ponta a ponta com dois clientes reais (exige o servidor no ar) |
 | `npm run bench:fog` | Mede as recomposições da textura de neblina numa sessão típica |
