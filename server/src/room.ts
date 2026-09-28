@@ -370,12 +370,25 @@ export class Room {
     }
   }
 
+  /**
+   * Mensagem e rolagem gravam na hora, sem esperar o debounce.
+   *
+   * Uma queda do servidor perdia o ultimo 1,5 s — num arraste, so um passo do
+   * token; no chat, a rolagem decisiva que a mesa inteira viu. O volume de
+   * mensagens e baixo o bastante para nao pesar como pesaria o movimento.
+   */
   appendChat(message: ChatMessage): void {
     this.state.chat.push(message);
     if (this.state.chat.length > CHAT_HISTORY_SIZE) {
       this.state.chat.splice(0, this.state.chat.length - CHAT_HISTORY_SIZE);
     }
     this.touch('table');
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    // A falha ja volta a marcar e reagenda dentro de persistPending.
+    void this.flush().catch(() => {});
   }
 }
 

@@ -39,6 +39,18 @@ describe('audit regressions', () => {
     expect(prisma.table.update).toHaveBeenCalledTimes(2);
     expect(room.persistenceError).toBe(false);
   });
+  it('grava a mensagem do chat sem esperar o debounce', async () => {
+    vi.useFakeTimers();
+    const room = fixture();
+    vi.mocked(prisma.table.update).mockResolvedValue({} as never);
+    room.appendChat({ id: 'msg', authorId: null, authorName: 'x', text: 'rolou 20', createdAt: 0 } as never);
+    // Zero ms: so as promessas andam; o debounce de 1,5 s nao chega a vencer.
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    expect(prisma.table.update).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(vi.mocked(prisma.table.update).mock.calls[0])).toContain('rolou 20');
+  });
+
   it('resolves valid sessions, caches them, and refuses a removed player', async () => {
     const room = fixture();
     room.state.players.push({ id: 'p', name: 'P', role: 'PLAYER', color: '#ffffff', connected: true, lastSeen: 0, sheetId: null });

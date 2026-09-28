@@ -6,15 +6,17 @@ import type { BoardItem, ClueBoard } from './types.js';
  * O quadro e colaborativo, mas os materiais nao sao: um cartao pregado pelo
  * grupo pode apontar para uma carta que so a Alice recebeu. Para quem nao tem
  * acesso, o cartao chega como "Material indisponivel" — sem titulo, sem
- * imagem e sem o id do material, que ja entregaria que ele existe. Quando o
- * material for compartilhado, o servidor reenvia o cartao completo.
+ * imagem, sem o id do material, que ja entregaria que ele existe, e sem a
+ * legenda: quem escreve a legenda costuma descrever justamente o material, e
+ * ela chegava inteira a quem nao podia le-lo. Quando o material for
+ * compartilhado, o servidor reenvia o cartao completo.
  */
 
 /** Versao do item para um observador que pode (ou nao) ver o material citado. */
 export function boardItemForViewer(item: BoardItem, canSeeHandout: (handoutId: string) => boolean): BoardItem {
   if (item.kind !== 'handout') return item;
   if (item.handoutId && canSeeHandout(item.handoutId)) return { ...item, unavailable: false };
-  return { ...item, handoutId: null, unavailable: true };
+  return { ...item, handoutId: null, text: "", unavailable: true };
 }
 
 export function boardForViewer(board: ClueBoard, canSeeHandout: (handoutId: string) => boolean): ClueBoard {

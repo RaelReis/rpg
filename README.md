@@ -39,7 +39,9 @@ mande esse link e o código da mesa para os amigos.
 - Se o servidor cair no meio da sessão, ele sobe de novo sozinho; o link
   continua o mesmo e os jogadores reconectam.
 - O link muda a cada `npm run share`.
-- **Ctrl+C** encerra tudo e grava a mesa.
+- **Ctrl+C** encerra tudo e grava a mesa. As mudanças são gravadas em lote,
+  a cada 1,5 s; mensagens e rolagens do chat são gravadas na hora, para uma
+  queda do servidor não levar a rolagem que a mesa inteira viu.
 - Encerre o `npm run dev` antes: os dois usariam a mesma porta.
 - Quem entra pelo convite entra como jogador: a opção "entrar como mestre" não
   aparece numa mesa que já tem mestre. Para voltar como mestre de outro
@@ -134,7 +136,7 @@ não deveria saber de algo, aquilo não entra no payload dele:
 - **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem;
 - **gatilhos** do mapa — nem as áreas, nem os nomes, nem o registro de disparos;
 - no quadro de pistas, o **cartão de um material** que o jogador não recebeu:
-  chega como "Material indisponível", sem título, imagem ou id;
+  chega como "Material indisponível", sem título, imagem, id ou legenda;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
 
@@ -668,9 +670,11 @@ sessões e vai no backup.
 
 **Materiais não compartilhados.** Um cartão pode apontar para uma carta que só
 a Alice recebeu. Para quem não tem acesso, ele chega como **"Material
-indisponível"** — sem título, sem imagem e sem o id do material. Quando o
-mestre compartilha o material, o cartão se completa sozinho na tela de quem
-ganhou acesso. Um jogador não consegue pregar um material que não recebeu.
+indisponível"** — sem título, sem imagem, sem o id do material e sem a
+legenda, que costuma descrever justamente o material; quem não o vê também não
+consegue reescrevê-la. Quando o mestre compartilha o material, o cartão se
+completa sozinho na tela de quem ganhou acesso. Um jogador não consegue pregar
+um material que não recebeu.
 
 **Sincronização.** Em tempo real, com a última escrita vencendo por item.
 Durante o arraste, a posição vai aos outros na hora (quem arrasta não recebe o

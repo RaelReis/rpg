@@ -30,6 +30,7 @@ vi.mock('./db.js', () => ({
 import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
 import { stateForViewer } from './filter.js';
 import type { Ctx } from './handlers/context.js';
+import { createBoardItem, updateBoardItem } from './handlers/board.js';
 import { updateHandout } from './handlers/handouts.js';
 import {
   createEffectHandler,
@@ -381,6 +382,37 @@ describe('vazamentos: achados do relatorio de QA', () => {
     updateHandout(ctxOf(room, gm), { handoutId: 'SEGREDO-carta', patch: { sharedWith: [] } }, vi.fn());
 
     expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+  });
+
+  // Q-032. O cartao de material indisponivel escondia titulo, imagem e id, mas
+  // a legenda que o mestre escreveu nele — em geral, sobre o material — ia
+  // inteira a todos.
+  it('Q-032: legenda de cartao de material fechado nao chega a quem nao o ve', () => {
+    const room = table();
+    room.state.handouts.push({
+      id: 'hnd-carta',
+      title: 'carta',
+      text: '',
+      assetId: null,
+      sharedWith: ['bruno'],
+      sharedWithAll: false,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    const gm = connect(room, 'mestre');
+    const bruno = connect(room, 'bruno');
+    const alice = connect(room, 'alice');
+
+    const ack = vi.fn();
+    createBoardItem(ctxOf(room, gm), { item: { kind: 'handout', handoutId: 'hnd-carta', text: 'legenda SEGREDO' } }, ack);
+    const itemId = ack.mock.calls[0][0].data.id as string;
+    expect(JSON.stringify(bruno.received)).toContain('legenda SEGREDO');
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+    expect(secretsIn(JSON.stringify(stateForViewer(room, alice.socket.data.viewer)))).toEqual([]);
+
+    // E quem nao ve o material nao reescreve, as cegas, a legenda do mestre.
+    updateBoardItem(ctxOf(room, alice), { itemId, patch: { text: 'apagado' } });
+    expect(room.state.board.items[0].text).toBe('legenda SEGREDO');
   });
 });
 
