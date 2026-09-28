@@ -152,16 +152,18 @@ const WALL_LABELS: Record<WallKind, { one: string; many: string }> = {
   wall: { one: 'parede', many: 'paredes' },
   door: { one: 'porta', many: 'portas' },
   window: { one: 'janela', many: 'janelas' },
+  secret: { one: 'parede secreta', many: 'paredes secretas' },
 };
 
 const WALL_ICONS: Record<WallKind, IconName> = {
   wall: 'wall',
   door: 'door',
   window: 'window',
+  secret: 'secretWall',
 };
 
-function wallKindOf(wall: Pick<Wall, 'door' | 'window'>): WallKind {
-  return wall.door ? 'door' : wall.window ? 'window' : 'wall';
+function wallKindOf(wall: Pick<Wall, 'door' | 'window' | 'hidden'>): WallKind {
+  return wall.door ? 'door' : wall.window ? 'window' : wall.hidden ? 'secret' : 'wall';
 }
 
 interface ContextMenuState {
@@ -1530,6 +1532,7 @@ function addWallSegment(scene: Scene, point: Point, kind: WallKind): void {
     y2: point.y,
     door: kind === 'door',
     window: kind === 'window',
+    hidden: kind === 'secret',
   };
   let wallId: string | null = null;
 
@@ -1737,8 +1740,10 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
   const label = WALL_LABELS[kind].one;
 
   const convert = (next: WallKind) => {
-    const before = { door: wall.door, window: wall.window, open: wall.open };
-    const patch = { door: next === 'door', window: next === 'window' };
+    const before = { door: wall.door, window: wall.window, open: wall.open, hidden: wall.hidden };
+    // Sair de secreta revela; entrar em secreta esconde — inclusive a porta
+    // que o mestre quer tirar do mapa dos jogadores de novo.
+    const patch = { door: next === 'door', window: next === 'window', hidden: next === 'secret' };
     void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch });
     useStore.getState().pushUndo({
       label: `transformar em ${WALL_LABELS[next].one}`,
@@ -1763,7 +1768,7 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
           {wall.open ? 'Fechar porta' : 'Abrir porta'}
         </button>
       )}
-      {(['wall', 'door', 'window'] as WallKind[])
+      {(['wall', 'door', 'window', 'secret'] as WallKind[])
         .filter((k) => k !== kind)
         .map((k) => (
           <button key={k} role="menuitem" onClick={() => convert(k)}>

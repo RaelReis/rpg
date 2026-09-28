@@ -86,7 +86,7 @@ export interface RenderInput {
   /** Parede em polilinha ainda aberta, incluindo o segmento sob o cursor. */
   wallPath: Point[] | null;
   /** Tipo do proximo trecho de parede, para a previa sair na cor certa. */
-  wallKind: 'wall' | 'door' | 'window';
+  wallKind: 'wall' | 'door' | 'window' | 'secret';
   /** Ponta de parede existente onde o cursor vai encaixar, se houver. */
   wallSnap: Point | null;
   /** Pre-visualizacao do pincel de neblina sob o cursor. */
@@ -1990,6 +1990,7 @@ function drawWallPath(input: RenderInput): void {
   ctx.globalAlpha = 0.9;
   ctx.lineJoin = 'round';
   if (input.wallKind === 'window') ctx.setLineDash([10 / camera.zoom, 5 / camera.zoom]);
+  if (input.wallKind === 'secret') ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
 
   ctx.beginPath();
   ctx.moveTo(path[0].x, path[0].y);
@@ -2046,10 +2047,12 @@ function drawWallEndpoints(input: RenderInput): void {
   ctx.restore();
 }
 
-const WALL_COLORS: Record<'wall' | 'door' | 'window', string> = {
+const WALL_COLORS: Record<'wall' | 'door' | 'window' | 'secret', string> = {
   wall: '#cf5b52',
   door: '#d9a441',
   window: '#7fb3d8',
+  // O mesmo roxo tracejado com que a parede secreta ja aparece no mapa.
+  secret: '#9b7ede',
 };
 
 /** Area que o pincel de neblina vai afetar se houver clique agora. */

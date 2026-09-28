@@ -41,6 +41,11 @@ const WALL_KINDS: { id: WallKind; icon: IconName; tip: string }[] = [
   { id: 'wall', icon: 'wall', tip: 'Parede solida — barra a visao e a passagem' },
   { id: 'door', icon: 'door', tip: 'Porta — abre e fecha; Alt no clique faz uma porta avulsa' },
   { id: 'window', icon: 'window', tip: 'Janela — deixa ver o outro lado, mas barra a passagem' },
+  {
+    id: 'secret',
+    icon: 'secretWall',
+    tip: 'Parede secreta — barra como a comum e nunca chega ao jogador; revele transformando em porta',
+  },
 ];
 
 export function Rail(): JSX.Element {

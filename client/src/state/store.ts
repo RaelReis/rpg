@@ -97,7 +97,12 @@ export interface UndoEntry {
 }
 
 /** O que a ferramenta de parede desenha a cada clique. */
-export type WallKind = 'wall' | 'door' | 'window';
+/**
+ * `secret` e a parede com `hidden`: barra visao e passagem como a comum, mas
+ * nunca vai ao jogador (nem sem a visao estrita). Revela-se transformando em
+ * porta. Antes nao havia como cria-la pela interface, so pelo socket.
+ */
+export type WallKind = 'wall' | 'door' | 'window' | 'secret';
 
 /** Forma da proxima area de gatilho. */
 export type TriggerShapeKind = 'rect' | 'circle' | 'polygon';

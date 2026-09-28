@@ -11,6 +11,7 @@ import { act } from '../net/socket';
 import { useStore } from '../state/store';
 import { Modal, SelectField, Toggle } from './common';
 import { Icon } from './icons';
+import { renameRef, slugOf, uniqueId } from './templateIds';
 
 /**
  * Editor do modelo de ficha.
@@ -43,6 +44,30 @@ export function TemplateEditor(): JSX.Element {
   );
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Ids que ja existem na mesa ficam fixos: os valores das fichas estao
+  // guardados sob eles, e trocar o id apagaria o que os jogadores escreveram.
+  const [savedIds] = useState(() => new Set(current?.fields.map((f) => f.id) ?? []));
+  // Campos novos cujo id o mestre editou a mao: deixam de seguir o nome.
+  const [customIds, setCustomIds] = useState(() => new Set<string>());
+  // Chave estavel de cada linha. O id muda enquanto o nome e digitado, e usa-lo
+  // como chave recriava a linha a cada tecla, tirando o foco do campo de nome.
+  const [rowKeys, setRowKeys] = useState<Record<string, string>>({});
+  const rowKey = (id: string) => rowKeys[id] ?? id;
+
+  /** Troca o id de um campo novo, levando junto as referencias nas formulas. */
+  function renameField(from: string, to: string): void {
+    if (from === to) return;
+    setDraft((d) => ({
+      ...d,
+      fields: d.fields.map((f) => ({
+        ...f,
+        id: f.id === from ? to : f.id,
+        rollFormula: renameRef(f.rollFormula, from, to),
+      })),
+    }));
+    setRowKeys((k) => ({ ...k, [to]: k[from] ?? from }));
+  }
 
   const sections = [...draft.sections].sort((a, b) => a.order - b.order);
 
@@ -79,7 +104,7 @@ export function TemplateEditor(): JSX.Element {
       fields: [
         ...d.fields,
         {
-          id: generateId('fld'),
+          id: uniqueId('novo_campo', new Set(d.fields.map((f) => f.id))),
           label: 'Novo campo',
           type: 'text',
           sectionId,
@@ -103,6 +128,16 @@ export function TemplateEditor(): JSX.Element {
   }
 
   function patchField(id: string, patch: Partial<SheetField>): void {
+    // Campo novo acompanha o nome ate o mestre fixar o id a mao.
+    if (patch.label !== undefined && !savedIds.has(id) && !customIds.has(id)) {
+      const taken = new Set(draft.fields.filter((f) => f.id !== id).map((f) => f.id));
+      const next = uniqueId(slugOf(patch.label), taken);
+      if (next !== id) {
+        renameField(id, next);
+        setDraft((d) => ({ ...d, fields: d.fields.map((f) => (f.id === next ? { ...f, ...patch } : f)) }));
+        return;
+      }
+    }
     setDraft((d) => ({
       ...d,
       fields: d.fields.map((f) => {
@@ -152,7 +187,10 @@ export function TemplateEditor(): JSX.Element {
    * isso ela ficaria presa a uma mesa, e cada campanha nova comecaria do zero.
    */
   function exportTemplate(): void {
-    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' });
+    // Com versao, para um formato futuro poder converter o arquivo antigo.
+    const blob = new Blob([JSON.stringify({ format: 1, template: draft }, null, 2)], {
+      type: 'application/json',
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -164,7 +202,10 @@ export function TemplateEditor(): JSX.Element {
   async function importTemplate(file: File | undefined): Promise<void> {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<SheetTemplate>;
+      const raw = JSON.parse(await file.text()) as { format?: number; template?: Partial<SheetTemplate> } &
+        Partial<SheetTemplate>;
+      // Aceita o arquivo com versao e o antigo, que era o modelo puro.
+      const parsed: Partial<SheetTemplate> = raw?.template ?? raw;
       if (!Array.isArray(parsed?.fields) || !Array.isArray(parsed?.sections)) {
         throw new Error('O arquivo nao parece um modelo de ficha.');
       }
@@ -263,8 +304,15 @@ export function TemplateEditor(): JSX.Element {
               ) : (
                 fields.map((field) => (
                   <FieldRow
-                    key={field.id}
+                    key={rowKey(field.id)}
                     field={field}
+                    idLocked={savedIds.has(field.id)}
+                    onRename={(to) => {
+                      const taken = new Set(draft.fields.filter((f) => f.id !== field.id).map((f) => f.id));
+                      const next = uniqueId(to || 'campo', taken);
+                      setCustomIds((c) => new Set(c).add(next));
+                      renameField(field.id, next);
+                    }}
                     sections={sections}
                     allFields={draft.fields}
                     onPatch={(p) => patchField(field.id, p)}
@@ -299,6 +347,8 @@ export function TemplateEditor(): JSX.Element {
 
 function FieldRow({
   field,
+  idLocked,
+  onRename,
   sections,
   allFields,
   onPatch,
@@ -306,6 +356,9 @@ function FieldRow({
   onMove,
 }: {
   field: SheetField;
+  /** O campo ja existe na mesa: o id fica fixo. */
+  idLocked: boolean;
+  onRename: (id: string) => void;
   sections: SheetSection[];
   allFields: SheetField[];
   onPatch: (patch: Partial<SheetField>) => void;
@@ -545,7 +598,24 @@ function FieldRow({
               menu acima insere a referencia certa sem precisar copiar o id na mao. Aceita{' '}
               <span className="mono">4d6kh3</span> para manter os melhores dados.
             </span>
-            <span className="hint mono">id deste campo: {field.id}</span>
+            {idLocked ? (
+              <span className="hint">
+                Nas formulas, este campo e <span className="mono">@{field.id}</span> — fixo, porque as fichas
+                guardam os valores por ele.
+              </span>
+            ) : (
+              <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+                <span className="hint">Nas formulas, este campo e @</span>
+                <input
+                  className="input mono"
+                  style={{ width: 180 }}
+                  value={field.id}
+                  maxLength={32}
+                  aria-label="Id do campo nas formulas"
+                  onChange={(e) => onRename(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                />
+              </span>
+            )}
           </label>
 
           <label className="field">

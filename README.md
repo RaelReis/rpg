@@ -318,7 +318,9 @@ exatamente pelo vértice de um canto não escapa mais pela fresta.
 
 O que o próximo trecho será é escolhido no **trilho**, enquanto a ferramenta
 está ativa: ▤ parede sólida, 🚪 porta, 🪟 **janela** — que deixa ver o outro
-lado mas barra a passagem. `Alt` no clique faz uma porta avulsa.
+lado mas barra a passagem — e **parede secreta**, que barra como a comum e nunca
+chega ao jogador; para revelá-la, transforme-a em porta pelo botão direito.
+`Alt` no clique faz uma porta avulsa.
 
 Clique com o **botão direito sobre uma parede** para excluí-la, convertê-la
 entre parede, porta e janela, ou abrir e fechar a porta. Botão direito
@@ -426,7 +428,8 @@ para a sala onde estava metade do corpo dele.
 
 ## Fichas
 
-O mestre monta o modelo em *Fichas → Editar modelo de ficha*: seções e campos
+O mestre monta o modelo em *Fichas → Modelo* (o botão fica no alto da aba,
+mesmo antes de existir qualquer ficha): seções e campos
 de texto, número, sim/não, lista de opções, **recurso** (barra tipo vida/mana),
 **inventário** (itens com quantidade e ícone próprio) e imagem.
 
@@ -448,15 +451,20 @@ barras sobre os tokens no mapa.
 
 Um campo com **fórmula de rolagem** ganha um dado clicável. A fórmula aceita
 referências a outros campos da mesma ficha com `@id`, por exemplo
-`1d20+@destreza` — o id de cada campo aparece no editor de modelo. `Alt` no
-clique sussurra o resultado ao mestre.
+`1d20+@destreza`. O id vem do nome do campo — *Destreza* vira `destreza`,
+*Pontos de Vida* vira `pontos_de_vida` — e aparece nas opções do campo no
+editor, onde dá para trocá-lo enquanto o campo é novo; depois de salvo ele fica
+fixo, porque as fichas guardam os valores por ele. O menu *Referenciar um campo*
+insere a referência sem digitar o id, e o dado mostra a fórmula pelos nomes
+("1d20+Destreza"). `Alt` no clique sussurra o resultado ao mestre.
 
 Quem resolve as referências e joga os dados é o **servidor**: uma rolagem
 decidida no navegador seria apenas uma sugestão.
 
 ### Reaproveitar o modelo
 
-Os botões **Exportar** e **Importar** no editor salvam o modelo como JSON.
+Os botões **Exportar** e **Importar** no editor salvam o modelo como JSON (com
+um campo `format`; arquivos antigos, sem ele, continuam sendo aceitos).
 Montar a ficha de um sistema dá trabalho; sem isso ela ficaria presa a uma
 mesa, e cada campanha nova começaria do zero. O modelo importado entra como
 rascunho — você revisa antes de aplicar.

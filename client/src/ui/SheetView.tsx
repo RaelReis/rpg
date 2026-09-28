@@ -172,15 +172,6 @@ function SheetHeader({
           </span>
         </label>
 
-        {gm && (
-          <button
-            className="btn ghost sm"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={() => useStore.getState().openTemplateEditor(true)}
-          >
-            Editar modelo de ficha
-          </button>
-        )}
       </div>
 
       {onExpand && (
@@ -391,7 +382,7 @@ function FieldLabel({
           className="roll-btn"
           disabled={rolling}
           onClick={(e) => void roll(e)}
-          title={`Rolar ${field.rollFormula} — Alt para sussurrar ao mestre`}
+          title={`Rolar ${readableFormula(field.rollFormula, allFields)} — Alt para sussurrar ao mestre`}
           aria-label={`Rolar ${field.label}`}
         >
           <Icon name="roll" size="sm" />
@@ -408,6 +399,15 @@ function FieldLabel({
  * "Mente": a propria perícia ja esta escrita no rotulo, repeti-la no
  * subtitulo so faria ruido.
  */
+/**
+ * A formula como o jogador le: `1d20+@destreza` vira "1d20+Destreza". O
+ * tooltip mostrava os ids crus, e com os ids aleatorios de antes aparecia
+ * "1d20+@fld_eqa0f9zga6ec".
+ */
+function readableFormula(formula: string, allFields: SheetField[]): string {
+  return formula.replace(/@([A-Za-z0-9_-]+)/g, (raw, id: string) => allFields.find((f) => f.id === id)?.label ?? raw);
+}
+
 function referencedFieldLabels(field: SheetField, allFields: SheetField[]): string[] {
   const ids = [...field.rollFormula.matchAll(/@([A-Za-z0-9_-]+)/g)]
     .map((m) => m[1])

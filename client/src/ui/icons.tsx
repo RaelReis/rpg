@@ -193,6 +193,7 @@ export const ICONS = {
   settings: Settings,
 
   // paredes
+  secretWall: EyeOff,
   door: DoorOpen,
   doorClosed: DoorClosed,
   window: AppWindow,

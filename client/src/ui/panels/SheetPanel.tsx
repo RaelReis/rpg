@@ -43,16 +43,28 @@ export function SheetPanel(): JSX.Element {
         title={gm ? `Fichas (${sheets.length})` : 'Minha ficha'}
         actions={
           gm && (
-            <button
-              className="btn sm"
-              onClick={() =>
-                void act<Sheet>('sheet:create', { name: 'Nova ficha' }).then(
-                  (sheet) => sheet && selectSheet(sheet.id),
-                )
-              }
-            >
-              <Icon name="add" size="sm" /> Ficha
-            </button>
+            <>
+              {/* Sempre a vista, mesmo sem nenhuma ficha: o botao ficava so
+                  dentro de uma ficha aberta, e para montar o modelo antes de
+                  os jogadores entrarem era preciso criar uma ficha a toa. */}
+              <button
+                className="btn ghost sm"
+                onClick={() => useStore.getState().openTemplateEditor(true)}
+                title="Editar o modelo de ficha da mesa"
+              >
+                Modelo
+              </button>
+              <button
+                className="btn sm"
+                onClick={() =>
+                  void act<Sheet>('sheet:create', { name: 'Nova ficha' }).then(
+                    (sheet) => sheet && selectSheet(sheet.id),
+                  )
+                }
+              >
+                <Icon name="add" size="sm" /> Ficha
+              </button>
+            </>
           )
         }
       >
