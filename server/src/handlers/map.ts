@@ -37,6 +37,7 @@ import {
 } from '../broadcast.js';
 import { tokenForViewer, visionFor } from '../filter.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
+import { removeTokens } from './cascade.js';
 import { checkTriggers } from './triggers.js';
 
 /** Tokens, tiles, efeitos, paredes e neblina. */
@@ -389,21 +390,10 @@ export function deleteToken(ctx: Ctx, payload: { sceneId: string; tokenId: strin
   const scene = ctx.room.scene(payload?.sceneId);
   if (!scene) return fail(ack, 'Cena nao encontrada.');
 
-  const index = scene.tokens.findIndex((t) => t.id === payload.tokenId);
-  if (index === -1) return fail(ack, 'Token nao encontrado.');
+  if (!scene.tokens.some((t) => t.id === payload.tokenId)) return fail(ack, 'Token nao encontrado.');
 
-  scene.tokens.splice(index, 1);
-
-  // Efeitos presos ao token desaparecem junto com ele.
-  const orphans = scene.effects.filter((e) => e.anchor === 'token' && e.tokenId === payload.tokenId);
-  if (orphans.length) {
-    scene.effects = scene.effects.filter((e) => !orphans.includes(e));
-    emitEffects(ctx.room, scene, [], orphans.map((e) => e.id));
-  }
-
-  ctx.room.touchScene(scene.id);
-  emitTokenRemoved(ctx.room, scene, payload.tokenId);
-  refreshVision(ctx.room, scene);
+  // Leva junto os efeitos presos a ele e a vez dele na ordem.
+  removeTokens(ctx.room, scene, new Set([payload.tokenId]));
   ok(ack, null);
 }
 

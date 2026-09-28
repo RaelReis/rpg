@@ -717,6 +717,12 @@ mostra as últimas doze vezes e conta as anteriores numa linha de texto.
 
 Quem entra na mesa já nasce na ordem, e quem sai dela sai da ordem junto.
 
+Exclusões levam junto o que dependia do objeto: **remover um jogador** apaga a
+ficha, os tokens dela e a vez dele (para manter o personagem como NPC, troque o
+dono da ficha antes); **apagar uma ficha** apaga os tokens dela e a vez; **apagar
+um token** tira a vez dele da ordem. Um token do jogador sem ficha, como um
+familiar, fica no mapa sem dono.
+
 O que o mestre esconde, fica escondido: uma miniatura marcada como oculta não
 chega ao jogador — nem na ordem, nem no histórico, nem como "a vez de alguém".
 O mesmo vale para a vez de um token **oculto ou exclusivo do mestre**, venha ela

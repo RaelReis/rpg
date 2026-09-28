@@ -12,10 +12,11 @@ import {
   type TurnEntry,
 } from '@rpg/shared';
 
-import { sendFullStateToAll, emitPlayers, emitTurns, socketsOf, type TypedSocket } from '../broadcast.js';
+import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, socketsOf, type TypedSocket } from '../broadcast.js';
 import { prisma } from '../db.js';
 import type { Room } from '../room.js';
 import { deleteAssetFiles } from '../uploads.js';
+import { dropTurnEntries, removeSheet } from './cascade.js';
 import { clampNumber, fail, isGm, ok, safeString, type Ctx } from './context.js';
 
 /** Turnos, chat, pings, jogadores e remocao de imagens. */
@@ -73,6 +74,9 @@ export function ensurePartyInTurns(room: Room): boolean {
 
   for (const token of scene.tokens) {
     if (token.layer !== 3 || token.ownerPlayerId === null) continue;
+    // So quem ainda e jogador da mesa: um token com dono que saiu (ou que
+    // virou mestre) recriava a vez de alguem que nao esta mais jogando.
+    if (room.player(token.ownerPlayerId)?.role !== 'PLAYER') continue;
     if (turns.entries.length >= MAX_ENTRIES) break;
 
     const sheet = room.sheet(token.sheetId);
@@ -356,24 +360,28 @@ export async function kickPlayer(ctx: Ctx, payload: { playerId: string }, ack: A
   ctx.room.state.players = ctx.room.state.players.filter((p) => p.id !== target.id);
   ctx.room.removePlayerRecord(target.id);
 
-  // Quem saiu da mesa sai da ordem de turnos junto.
-  const turns = ctx.room.state.turns;
-  const remaining = turns.entries.filter((e) => e.playerId !== target.id);
-  if (remaining.length !== turns.entries.length) {
-    const goneActive = !remaining.some((e) => e.id === turns.activeEntryId);
-    turns.entries = remaining;
-    if (goneActive) turns.activeEntryId = remaining.find((e) => !e.skipped)?.id ?? null;
-    ctx.room.touch('table');
-    emitTurns(ctx.room);
+  /*
+   * Quem sai da mesa leva o personagem junto: a ficha, os tokens dela e a vez
+   * na ordem. Antes a ficha virava NPC, o token ficava com um dono que nao
+   * existe e a vez continuava na ordem — e o token com dono fantasma fazia
+   * `ensurePartyInTurns` recriar a vez depois. Para manter o personagem como
+   * NPC, o mestre troca o dono da ficha antes de remover (a confirmacao diz).
+   */
+  for (const sheet of ctx.room.state.sheets.filter((s) => s.ownerPlayerId === target.id)) {
+    removeSheet(ctx.room, sheet.id);
   }
 
-  // A ficha continua na mesa, agora sem dono: o mestre decide o que fazer com ela.
-  for (const sheet of ctx.room.state.sheets) {
-    if (sheet.ownerPlayerId === target.id) {
-      sheet.ownerPlayerId = null;
-      ctx.room.touchSheet(sheet.id);
+  // Tokens dele sem ficha (um familiar, um aliado) ficam no mapa, sem dono.
+  for (const scene of ctx.room.state.scenes) {
+    for (const token of scene.tokens) {
+      if (token.ownerPlayerId !== target.id) continue;
+      token.ownerPlayerId = null;
+      ctx.room.touchScene(scene.id);
+      emitTokenUpsert(ctx.room, scene, token);
     }
   }
+
+  if (dropTurnEntries(ctx.room, (e) => e.playerId === target.id)) emitTurns(ctx.room);
 
   for (const socket of socketsOf(ctx.room)) {
     if (socket.data.viewer.playerId === target.id) {

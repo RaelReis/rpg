@@ -90,7 +90,10 @@ export function SheetPanel(): JSX.Element {
               className="btn ghost sm danger"
               style={{ alignSelf: 'flex-start' }}
               onClick={() => {
-                if (window.confirm(`Excluir a ficha "${selected.name}"?`)) {
+                const tokens = table.scenes.flatMap((s) => s.tokens).filter((t) => t.sheetId === selected.id).length;
+                const which = tokens === 1 ? 'O token' : `Os ${tokens} tokens`;
+                const extra = tokens > 0 ? `\n\n${which} dela e a vez na ordem saem junto.` : '';
+                if (window.confirm(`Excluir a ficha "${selected.name}"?${extra}`)) {
                   void act('sheet:delete', { sheetId: selected.id });
                 }
               }}
@@ -110,7 +113,9 @@ export function SheetPanel(): JSX.Element {
           <Empty>
             {gm
               ? 'Nenhuma ficha criada ainda.'
-              : 'Sua ficha aparecera assim que o mestre configurar o modelo.'}
+              : // A mensagem antiga falava em "configurar o modelo", que nao era o
+                // caso: sem ficha, o jogador so volta a ter uma pelo mestre.
+                'Voce esta sem ficha nesta mesa. Peca ao mestre para criar uma para voce.'}
           </Empty>
         </section>
       )}

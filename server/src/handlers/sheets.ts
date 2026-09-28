@@ -24,6 +24,7 @@ import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, socketsOf,
 import { prisma, toJson } from '../db.js';
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import { assetIdsOfSheet, sheetForViewer } from '../filter.js';
+import { removeSheet } from './cascade.js';
 import { applyCharacterArt, spawnCharacterToken, syncCharacterOwner } from './characters.js';
 import { publishChat } from './play.js';
 import type { Room } from '../room.js';
@@ -189,41 +190,13 @@ export function updateSheet(
   ok(ack, null);
 }
 
+/**
+ * Apaga a ficha com os tokens dela e a vez na ordem (ver `removeSheet`).
+ * Antes o token ficava no mapa sem ficha e a vez continuava na ordem; para
+ * manter a peca, o mestre desliga a ficha do token antes de apagar.
+ */
 export function deleteSheet(ctx: Ctx, payload: { sheetId: string }, ack: Ack<null>): void {
-  const index = ctx.room.state.sheets.findIndex((s) => s.id === payload?.sheetId);
-  if (index === -1) return fail(ack, 'Ficha nao encontrada.');
-
-  const [removed] = ctx.room.state.sheets.splice(index, 1);
-  ctx.room.removeSheetRecord(removed.id);
-
-  // Desfaz os vinculos para nao deixar tokens e jogadores apontando para o vazio.
-  for (const scene of ctx.room.state.scenes) {
-    for (const token of scene.tokens) {
-      if (token.sheetId === removed.id) {
-        token.sheetId = null;
-        ctx.room.touchScene(scene.id);
-      }
-    }
-  }
-  for (const player of ctx.room.state.players) {
-    if (player.sheetId === removed.id) {
-      player.sheetId = null;
-      ctx.room.touchPlayer(player.id);
-    }
-  }
-
-  // A ficha apagada sai da ordem de turnos com o resto dos vinculos.
-  const turns = ctx.room.state.turns;
-  const remaining = turns.entries.filter((e) => e.sheetId !== removed.id);
-  if (remaining.length !== turns.entries.length) {
-    const goneActive = !remaining.some((e) => e.id === turns.activeEntryId);
-    turns.entries = remaining;
-    if (goneActive) turns.activeEntryId = remaining.find((e) => !e.skipped)?.id ?? null;
-    ctx.room.touch('table');
-    emitTurns(ctx.room);
-  }
-
-  for (const socket of socketsOf(ctx.room)) socket.emit('sheets:patch', { remove: [removed.id] });
+  if (!removeSheet(ctx.room, payload?.sheetId)) return fail(ack, 'Ficha nao encontrada.');
   ok(ack, null);
 }
 

@@ -33,6 +33,7 @@ import type { Ctx } from './handlers/context.js';
 import { updateHandout } from './handlers/handouts.js';
 import { deleteTile, deleteToken, moveToken, updateToken } from './handlers/map.js';
 import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
+import { deleteSheet } from './handlers/sheets.js';
 import { handleJoin } from './handlers/session.js';
 import { Room, rooms } from './room.js';
 
@@ -423,11 +424,11 @@ describe('reproducoes do relatorio de QA', () => {
     expect(room.state.players).toHaveLength(3);
   });
 
-  // Q-007. `kickPlayer` tira as vezes do jogador, mas o token dele continua
+  // Q-007. `kickPlayer` tirava as vezes do jogador, mas o token dele continuava
   // com `ownerPlayerId` apontando para quem saiu — e `ensurePartyInTurns`
-  // recria a vez a partir desse token. Foi assim que a "Alice fantasma" voltou
-  // para a ordem durante o teste.
-  it.fails('Q-007: jogador removido nao volta para a ordem nem deixa token com dono fantasma', async () => {
+  // recriava a vez a partir desse token. Foi assim que a "Alice fantasma"
+  // voltou para a ordem durante o teste.
+  it('Q-007: jogador removido nao volta para a ordem nem deixa token com dono fantasma', async () => {
     const room = table();
     ensurePartyInTurns(room);
     expect(room.state.turns.entries.some((e) => e.playerId === 'bruno')).toBe(true);
@@ -439,5 +440,33 @@ describe('reproducoes do relatorio de QA', () => {
 
     expect(room.state.turns.entries.filter((e) => e.playerId === 'bruno' || e.tokenId === 'tok-bruno')).toEqual([]);
     expect(room.activeScene()!.tokens.filter((t) => t.ownerPlayerId === 'bruno')).toEqual([]);
+  });
+
+  it('Q-007: remover o jogador leva a ficha e o token dele; o familiar fica, sem dono', async () => {
+    const room = table();
+    room.activeScene()!.tokens.push(createToken({ id: 'tok-corvo', name: 'Corvo', ownerPlayerId: 'bruno', x: 1470, y: 0 }));
+    ensurePartyInTurns(room);
+    const gm = connect(room, 'mestre');
+
+    await kickPlayer(ctxOf(room, gm), { playerId: 'bruno' }, vi.fn());
+
+    expect(room.sheet('sht-bruno')).toBeUndefined();
+    expect(room.activeScene()!.tokens.find((t) => t.id === 'tok-bruno')).toBeUndefined();
+    expect(room.activeScene()!.tokens.find((t) => t.id === 'tok-corvo')?.ownerPlayerId).toBeNull();
+  });
+
+  it('Q-007: apagar a ficha leva os tokens dela e a vez; apagar o token leva a vez', () => {
+    const room = table();
+    ensurePartyInTurns(room);
+    const gm = connect(room, 'mestre');
+    const vezes = () => room.state.turns.entries.map((e) => e.tokenId);
+    expect(vezes()).toEqual(expect.arrayContaining(['tok-alice', 'tok-bruno']));
+
+    deleteSheet(ctxOf(room, gm), { sheetId: 'sht-bruno' }, vi.fn());
+    expect(room.activeScene()!.tokens.find((t) => t.id === 'tok-bruno')).toBeUndefined();
+    expect(vezes()).not.toContain('tok-bruno');
+
+    deleteToken(ctxOf(room, gm), { sceneId: 'scn-ativa', tokenId: 'tok-alice' }, vi.fn());
+    expect(vezes()).not.toContain('tok-alice');
   });
 });

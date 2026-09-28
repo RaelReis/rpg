@@ -136,7 +136,12 @@ export function PlayersPanel(): JSX.Element {
                       className="btn ghost sm danger"
                       title="Remover da mesa"
                       onClick={() => {
-                        if (window.confirm(`Remover ${player.name} da mesa?`)) {
+                        if (
+                          window.confirm(
+                            `Remover ${player.name} da mesa?\n\nA ficha, o token e a vez dele saem junto. ` +
+                              'Para manter o personagem como NPC, troque o dono da ficha antes (aba Fichas).',
+                          )
+                        ) {
                           void act('player:kick', { playerId: player.id });
                         }
                       }}
