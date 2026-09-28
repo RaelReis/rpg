@@ -23,6 +23,7 @@ import {
   type Tile,
   type TableState,
   type Token,
+  type TurnEntry,
   type TurnState,
   type VisionResult,
 } from '@rpg/shared';
@@ -371,15 +372,28 @@ export function turnsForViewer(room: Room, viewer: Viewer): TurnState {
   if (viewer.role === 'GM') return turns;
 
   const unseenTokens = new Set<string>();
+  // Por ficha: tem token a mostra em alguma cena? E tem algum escondido?
+  const sheetShown = new Set<string>();
+  const sheetConcealed = new Set<string>();
   for (const scene of room.state.scenes) {
     for (const token of scene.tokens) {
-      if (!perceives(token, viewer.playerId) || concealedFromPlayers(token)) unseenTokens.add(token.id);
+      const unseen = !perceives(token, viewer.playerId) || concealedFromPlayers(token);
+      if (unseen) unseenTokens.add(token.id);
+      if (token.sheetId) (unseen ? sheetConcealed : sheetShown).add(token.sheetId);
     }
   }
 
+  // Vez sem token (a ficha entrou na ordem numa cena onde o NPC nao esta):
+  // vale o que os tokens da ficha dizem. Sem isto, o NPC oculto em outra cena
+  // aparecia na faixa com o nome.
+  const concealedBySheet = (e: TurnEntry) =>
+    e.tokenId === null && e.sheetId !== null && sheetConcealed.has(e.sheetId) && !sheetShown.has(e.sheetId);
+
   const hidden = new Set(
     turns.entries
-      .filter((e) => e.hiddenFromPlayers || (e.tokenId !== null && unseenTokens.has(e.tokenId)))
+      .filter(
+        (e) => e.hiddenFromPlayers || (e.tokenId !== null && unseenTokens.has(e.tokenId)) || concealedBySheet(e),
+      )
       .map((e) => e.id),
   );
   if (hidden.size === 0) return turns;

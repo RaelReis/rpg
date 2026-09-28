@@ -559,3 +559,20 @@ describe('fase 3: retratos do grupo e nome da ficha', () => {
     expect(room.state.turns.entries.find((e) => e.sheetId === 'sht-alice')?.name).toBe('Alice Moreau');
   });
 });
+
+describe('vez de NPC oculto em outra cena', () => {
+  it('a vez sem token, de ficha cujos tokens estao todos ocultos, nao chega ao jogador', () => {
+    const room = table();
+    room.state.sheets.push(sheetOf('sht-SEGREDO-vilao', null));
+    const outra = createScene({ id: 'scn-outra' });
+    outra.tokens.push(createToken({ sheetId: 'sht-SEGREDO-vilao', name: 'SEGREDO-vilao', visibility: 'hidden' }));
+    room.state.scenes.push(outra);
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+
+    // Como o cliente faz ao arrastar a ficha na cena ativa, onde o NPC nao tem token.
+    addTurnEntries(ctxOf(room, gm), { entries: [{ sheetId: 'sht-SEGREDO-vilao', tokenId: null, playerId: null, name: 'SEGREDO-vilao' }] }, vi.fn());
+
+    expect(secretsIn(traffic(room, alice))).toEqual([]);
+  });
+});

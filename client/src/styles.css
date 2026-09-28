@@ -1259,6 +1259,57 @@ button.hud-portrait:focus-visible {
   flex-direction: column;
   gap: 6px;
 }
+
+/*
+ * Retratos do grupo em repouso: faixa baixa, retrato pequeno ao lado do nome
+ * e das resistencias. O cartao inteiro (~150x270px cada) cobria o canto do
+ * mapa, e com tres jogadores escondia o proprio token de quem jogava ali. Com
+ * o mouse (ou o foco) no HUD, os cartoes grandes voltam.
+ */
+.party-hud:not(:hover):not(:focus-within) .hud-card {
+  flex-basis: 168px;
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  grid-template-rows: auto 1fr;
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 5px 7px 6px;
+  border-top-width: 2px;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-portrait {
+  grid-row: 1 / span 2;
+  width: 38px;
+  aspect-ratio: 1;
+  align-self: center;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-portrait::before,
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-portrait::after {
+  width: 6px;
+  height: 6px;
+  border-width: 1px;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-initials {
+  font-size: 15px;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-stamp {
+  padding: 0 3px;
+  border-width: 1px;
+  font-size: 8px;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-name {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 13px;
+  text-align: left;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-vitals {
+  gap: 3px;
+}
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-pips,
+.party-hud:not(:hover):not(:focus-within) .hud-card .hud-track {
+  display: none;
+}
 .hud-vital {
   --vital: #d9534f;
   display: flex;
@@ -2653,7 +2704,11 @@ button.hud-portrait:focus-visible {
 .modal-shell { border: 0; padding: 0; background: transparent; color: var(--ink); width: min(980px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); overflow: visible; }
 .modal-shell::backdrop { background: rgba(0, 0, 0, .68); }
 .modal-shell .modal { max-width: 100%; }
-button.dropzone { width: 100%; color: inherit; font: inherit; }
+/* Sem fundo declarado, o botao herdava o cinza padrao do navegador, e a dica
+   de formato e tamanho ficava com contraste de 1,12:1 sobre ele. */
+button.dropzone { width: 100%; color: inherit; font: inherit; background: transparent; }
+/* Formatos e limite: com --ink-3 ficava em 3,6:1; --ink-2 passa de 7:1. */
+.dropzone .hint { color: var(--ink-2); }
 button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
 
 /* ---------------------------------------------------------------------------
