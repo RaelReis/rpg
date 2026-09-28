@@ -384,6 +384,24 @@ describe('vazamentos: achados do relatorio de QA', () => {
     expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
   });
 
+  // D3. O "exclusivo do mestre" deixou de existir como campo: mesa gravada
+  // antes da unificacao tem de continuar escondendo o token e a luz dele.
+  it('token gravado como exclusivo do mestre segue fora do payload do jogador', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.fog.mode = 'off';
+    const loaded = createScene({
+      ...scene,
+      tokens: [...scene.tokens, { id: 'SEGREDO-legado', name: 'x', layer: 3, lightRadius: 6, gmOnly: true } as never],
+    });
+    room.state.scenes = [loaded];
+    const alice = connect(room, 'alice');
+    const legacy = loaded.tokens.find((t) => t.id === 'SEGREDO-legado')!;
+    expect(legacy.visibility).toBe('hidden');
+    expect(legacy.lightRadius).toBe(0);
+    expect(secretsIn(JSON.stringify(stateForViewer(room, alice.socket.data.viewer)))).toEqual([]);
+  });
+
   // Q-032. O cartao de material indisponivel escondia titulo, imagem e id, mas
   // a legenda que o mestre escreveu nele — em geral, sobre o material — ia
   // inteira a todos.

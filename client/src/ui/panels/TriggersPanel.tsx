@@ -552,7 +552,7 @@ function ActionFields({
       // Os ocultos primeiro: e quase sempre um deles que a pessoa procura.
       const tokens = (scene?.tokens ?? [])
         .slice()
-        .sort((a, b) => Number(b.visibility === 'hidden' || b.gmOnly) - Number(a.visibility === 'hidden' || a.gmOnly));
+        .sort((a, b) => Number(b.visibility === 'hidden') - Number(a.visibility === 'hidden'));
       return (
         <SelectField
           label="Token"
@@ -561,7 +561,7 @@ function ActionFields({
             { value: '', label: 'Escolha...' },
             ...tokens.map((t) => ({
               value: t.id,
-              label: `${t.name}${t.visibility === 'hidden' || t.gmOnly ? ' (oculto)' : ''}`,
+              label: `${t.name}${t.visibility === 'hidden' ? ' (oculto)' : ''}`,
             })),
           ]}
           onChange={(tokenId) => onChange({ ...action, tokenId })}

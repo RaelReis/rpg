@@ -140,12 +140,12 @@ export function effectShownTo(
 }
 
 /**
- * O efeito chega a este observador? Exclusivo do mestre, oculto e alucinacao
- * de outra pessoa ficam de fora do payload.
+ * O efeito chega a este observador? Oculto e alucinacao de outra pessoa ficam
+ * de fora do payload.
  */
 export function effectVisibleTo(effect: MapEffect, viewer: Viewer): boolean {
   if (viewer.role === 'GM') return true;
-  if (effect.gmOnly || effect.visibility === 'hidden') return false;
+  if (effect.visibility === 'hidden') return false;
   return perceives(effect, viewer.playerId);
 }
 

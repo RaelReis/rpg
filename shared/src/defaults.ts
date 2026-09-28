@@ -1,6 +1,7 @@
 import { DEFAULT_GRID } from './grid.js';
 import type {
   FogConfig,
+  LegacyVisibility,
   Trigger,
   TriggerArea,
   MapEffect,
@@ -196,7 +197,10 @@ export function createTrigger(area: TriggerArea, partial: Partial<Trigger> = {})
   };
 }
 
-export function createToken(partial: Partial<Token> = {}): Token {
+export function createToken(partial: Partial<Token> & LegacyVisibility = {}): Token {
+  // O "exclusivo do mestre" antigo escondia o token e apagava a luz dele para
+  // os jogadores; oculto com a luz zerada da o mesmo resultado na mesa.
+  const legacyGmOnly = partial.gmOnly === true;
   return {
     id: partial.id ?? generateId('tok'),
     name: partial.name ?? 'Token',
@@ -210,13 +214,12 @@ export function createToken(partial: Partial<Token> = {}): Token {
     // Arte inteira e o padrao: e assim que a peca aparece na mesa de verdade,
     // e a ficha do personagem ja chega com uma imagem de corpo.
     shape: partial.shape ?? 'art',
-    visibility: partial.visibility ?? 'visible',
+    visibility: legacyGmOnly ? 'hidden' : (partial.visibility ?? 'visible'),
     opacity: partial.opacity ?? 1,
-    gmOnly: partial.gmOnly ?? false,
     ownerPlayerId: partial.ownerPlayerId ?? null,
     sheetId: partial.sheetId ?? null,
     visionRadius: partial.visionRadius ?? 0,
-    lightRadius: partial.lightRadius ?? 0,
+    lightRadius: legacyGmOnly ? 0 : (partial.lightRadius ?? 0),
     bars: partial.bars ?? [],
     label: partial.label ?? '',
     locked: partial.locked ?? false,
@@ -243,7 +246,7 @@ export function createTile(partial: Partial<Tile> = {}): Tile {
   };
 }
 
-export function createEffect(partial: Partial<MapEffect> = {}): MapEffect {
+export function createEffect(partial: Partial<MapEffect> & LegacyVisibility = {}): MapEffect {
   return {
     id: partial.id ?? generateId('efx'),
     kind: partial.kind ?? 'circle',
@@ -262,8 +265,7 @@ export function createEffect(partial: Partial<MapEffect> = {}): MapEffect {
     angle: partial.angle ?? 0,
     spread: partial.spread ?? 60,
     layer: partial.layer ?? 4,
-    visibility: partial.visibility ?? 'visible',
-    gmOnly: partial.gmOnly ?? false,
+    visibility: partial.gmOnly === true ? 'hidden' : (partial.visibility ?? 'visible'),
     fontSize: partial.fontSize ?? 28,
     style: partial.style ?? 'flat',
     colorAlt: partial.colorAlt ?? '#ffffff',

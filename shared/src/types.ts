@@ -103,6 +103,11 @@ export interface FogConfig {
 
 export type TokenVisibility = 'visible' | 'hidden' | 'dim';
 
+/** Campo que tokens e efeitos gravados antes da unificacao ainda trazem. */
+export interface LegacyVisibility {
+  gmOnly?: boolean;
+}
+
 /**
  * Como o token e desenhado no mapa.
  *
@@ -136,10 +141,14 @@ export interface Token {
   rotation: number;
   layer: Layer;
   shape: TokenShape;
+  /**
+   * Quem ve, junto de `visibleTo`. Havia tambem um `gmOnly` ("exclusivo do
+   * mestre"), que para o jogador dava o mesmo que `hidden` e so diferia na luz;
+   * tres controles para uma pergunta so confundiam o mestre. Tokens antigos
+   * com `gmOnly` viram `hidden` com a luz zerada em `createToken`.
+   */
   visibility: TokenVisibility;
   opacity: number;
-  /** Visivel apenas para o mestre, independente do fog. */
-  gmOnly: boolean;
   /** Jogador dono (pode mover e enxerga pelo token). Null = do mestre. */
   ownerPlayerId: string | null;
   /** Ficha vinculada; alimenta as barras e a janela de atributos. */
@@ -230,8 +239,8 @@ export interface MapEffect {
   /** Abertura do cone, em graus. */
   spread: number;
   layer: Layer;
+  /** Como no token: o antigo `gmOnly` virou `hidden` em `createEffect`. */
   visibility: TokenVisibility;
-  gmOnly: boolean;
   fontSize: number;
   style: EffectStyle;
   /** Cor secundaria; os estilos que a usam fazem degrade entre as duas. */

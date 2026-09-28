@@ -128,7 +128,7 @@ function computePartyVision(scene: Scene): Set<string> {
     if (token.layer !== 3) continue;
     if (isHallucination(token)) continue;
     const isEye = token.ownerPlayerId !== null && token.visionRadius > 0;
-    const isLight = token.lightRadius > 0 && !token.gmOnly;
+    const isLight = token.lightRadius > 0;
     if (!isEye && !isLight) continue;
 
     const radius = Math.max(isEye ? token.visionRadius : 0, token.lightRadius);

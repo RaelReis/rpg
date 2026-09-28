@@ -15,6 +15,7 @@ import {
   type FogPaintPayload,
   type FogResetPayload,
   type Layer,
+  type LegacyVisibility,
   type MapEffect,
   type Scene,
   type Tile,
@@ -113,7 +114,7 @@ const lastDragVision = new Map<string, number>();
 
 export function createTokenHandler(
   ctx: Ctx,
-  payload: { sceneId: string; token: Partial<Token> },
+  payload: { sceneId: string; token: Partial<Token> & LegacyVisibility },
   ack: Ack<Token>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -136,16 +137,17 @@ export function createTokenHandler(
     shape: TOKEN_SHAPES.includes(t.shape as never) ? t.shape : undefined,
     // Sem visibilidade pedida, o NPC criado com a mesa assistindo nasce oculto:
     // visivel, ele aparecia no mapa dos jogadores antes de o mestre esconde-lo.
-    // Alucinacao e token exclusivo do mestre nao entram na regra: a lista
-    // `visibleTo` e o `gmOnly` ja sao a escolha de quem ve, e somar o
-    // oculto a eles faria o token continuar escondido depois de revelado.
+    // Alucinacao nao entra na regra: a lista `visibleTo` ja e a escolha de
+    // quem ve, e somar o oculto a ela faria o token continuar escondido
+    // depois de revelado. O `gmOnly` antigo chega a `createToken`, que o
+    // converte em oculto.
     visibility: VISIBILITIES.includes(t.visibility as never)
       ? t.visibility
       : !t.ownerPlayerId && t.visibleTo == null && !t.gmOnly && playersWatching(ctx.room)
         ? 'hidden'
         : 'visible',
     opacity: clampNumber(t.opacity, 0.05, 1, 1),
-    gmOnly: Boolean(t.gmOnly),
+    gmOnly: t.gmOnly === true,
     ownerPlayerId: t.ownerPlayerId ?? null,
     sheetId: t.sheetId ?? null,
     visionRadius: clampNumber(t.visionRadius, 0, 40, 0),
@@ -176,7 +178,7 @@ export function createTokenHandler(
 
 export function updateToken(
   ctx: Ctx,
-  payload: { sceneId: string; tokenId: string; patch: Partial<Token> },
+  payload: { sceneId: string; tokenId: string; patch: Partial<Token> & LegacyVisibility },
   ack: Ack<null>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -218,8 +220,11 @@ export function updateToken(
       visionAffected = true;
     }
     if (p.opacity !== undefined) token.opacity = clampNumber(p.opacity, 0.05, 1, token.opacity);
-    if (p.gmOnly !== undefined) {
-      token.gmOnly = Boolean(p.gmOnly);
+    // Pedido no formato antigo (scripts, clientes desatualizados): exclusivo
+    // do mestre e oculto; tirar a marca revela.
+    if (p.gmOnly !== undefined && p.visibility === undefined) {
+      if (p.gmOnly) token.visibility = 'hidden';
+      else if (token.visibility === 'hidden') token.visibility = 'visible';
       visionAffected = true;
     }
     if (p.ownerPlayerId !== undefined) {
@@ -624,7 +629,7 @@ export function deleteTile(ctx: Ctx, payload: { sceneId: string; tileId: string 
 
 export function createEffectHandler(
   ctx: Ctx,
-  payload: { sceneId: string; effect: Partial<MapEffect> },
+  payload: { sceneId: string; effect: Partial<MapEffect> & LegacyVisibility },
   ack: Ack<MapEffect>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -664,7 +669,7 @@ export function createEffectHandler(
     // Anotacao de jogador vive na camada de efeitos e nunca e exclusiva do mestre.
     layer: gm ? asLayer(e.layer, 4) : 4,
     visibility: gm && VISIBILITIES.includes(e.visibility as never) ? e.visibility! : 'visible',
-    gmOnly: gm ? Boolean(e.gmOnly) : false,
+    gmOnly: gm && e.gmOnly === true,
     fontSize: clampNumber(e.fontSize, 8, 200, 28),
     style: EFFECT_STYLES.includes(e.style as never) ? e.style : 'flat',
     colorAlt: safeString(e.colorAlt, 32, '#ffffff'),
@@ -680,7 +685,7 @@ export function createEffectHandler(
 
 export function updateEffect(
   ctx: Ctx,
-  payload: { sceneId: string; effectId: string; patch: Partial<MapEffect> },
+  payload: { sceneId: string; effectId: string; patch: Partial<MapEffect> & LegacyVisibility },
   ack: Ack<null>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -720,7 +725,10 @@ export function updateEffect(
     if (p.visibility !== undefined && VISIBILITIES.includes(p.visibility as never)) {
       effect.visibility = p.visibility;
     }
-    if (p.gmOnly !== undefined) effect.gmOnly = Boolean(p.gmOnly);
+    if (p.gmOnly !== undefined && p.visibility === undefined) {
+      if (p.gmOnly) effect.visibility = 'hidden';
+      else if (effect.visibility === 'hidden') effect.visibility = 'visible';
+    }
     if (p.visibleTo !== undefined) effect.visibleTo = visibleToOf(ctx, p.visibleTo);
   }
 

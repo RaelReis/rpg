@@ -234,7 +234,7 @@ export function visionSources(scene: Scene, playerId: string | null): Token[] {
     if (t.layer !== 3) return false;
     // Alucinacao nao ilumina nem enxerga: a neblina dos outros a denunciaria.
     if (isHallucination(t)) return false;
-    if (t.lightRadius > 0 && !t.gmOnly) return true;
+    if (t.lightRadius > 0) return true;
     return t.ownerPlayerId !== null && t.ownerPlayerId === playerId && t.visionRadius > 0;
   });
 }
@@ -461,7 +461,7 @@ export function newlyExploredCells(scene: Scene): string[] {
     if (token.layer !== 3) continue;
     if (isHallucination(token)) continue;
     const isPlayerEye = token.ownerPlayerId !== null && token.visionRadius > 0;
-    const isLight = token.lightRadius > 0 && !token.gmOnly;
+    const isLight = token.lightRadius > 0;
     if (!isPlayerEye && !isLight) continue;
 
     const radius = Math.max(isPlayerEye ? token.visionRadius : 0, token.lightRadius);

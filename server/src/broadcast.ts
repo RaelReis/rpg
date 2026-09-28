@@ -34,7 +34,7 @@ export interface SocketData {
   /**
    * Efeitos que este socket recebeu. Com ele, a remocao so vai para quem tinha
    * o efeito: mandar `remove` de um id a todos entregaria a existencia de uma
-   * alucinacao (ou de um efeito exclusivo do mestre) a quem nunca a viu.
+   * alucinacao (ou de um efeito oculto) a quem nunca a viu.
    */
   visibleEffects: Set<string>;
   /**

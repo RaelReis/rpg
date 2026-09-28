@@ -261,7 +261,6 @@ function runAction(
       const token = scene.tokens.find((t) => t.id === action.tokenId);
       if (!token) return;
       token.visibility = 'visible';
-      token.gmOnly = false;
       room.touchScene(scene.id);
       emitTokenUpsert(room, scene, token);
       refreshVision(room, scene);

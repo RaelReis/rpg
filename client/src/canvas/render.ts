@@ -590,11 +590,11 @@ function drawToken(input: RenderInput, token: Token): void {
     ctx.setLineDash([]);
   }
 
-  // Sinais que so o mestre ve: token escondido dos jogadores ou exclusivo dele.
-  if (input.role === 'GM' && (token.gmOnly || token.visibility !== 'visible')) {
+  // Sinais que so o mestre ve: dourado para oculto, azul para semitransparente.
+  if (input.role === 'GM' && token.visibility !== 'visible') {
     ctx.beginPath();
     ctx.arc(cx, cy, radius * 1.02, 0, Math.PI * 2);
-    ctx.strokeStyle = token.gmOnly ? '#d9a441' : '#6ea8d8';
+    ctx.strokeStyle = token.visibility === 'hidden' ? '#d9a441' : '#6ea8d8';
     ctx.lineWidth = 1.5 / camera.zoom;
     ctx.setLineDash([3 / camera.zoom, 5 / camera.zoom]);
     ctx.stroke();
@@ -719,10 +719,10 @@ function drawArtToken(
     ctx.restore();
   }
 
-  // Sinais que so o mestre ve: oculto dos jogadores, ou exclusivo dele.
-  if (input.role === 'GM' && (token.gmOnly || token.visibility !== 'visible')) {
+  // Sinais que so o mestre ve: dourado para oculto, azul para semitransparente.
+  if (input.role === 'GM' && token.visibility !== 'visible') {
     ctx.save();
-    ctx.strokeStyle = token.gmOnly ? '#d9a441' : '#6ea8d8';
+    ctx.strokeStyle = token.visibility === 'hidden' ? '#d9a441' : '#6ea8d8';
     ctx.lineWidth = 1.5 / camera.zoom;
     ctx.setLineDash([3 / camera.zoom, 5 / camera.zoom]);
     ctx.strokeRect(-artW / 2, -artH, artW, artH);
@@ -895,7 +895,7 @@ function effectOrigin(input: RenderInput, effect: MapEffect): Point | null {
 function drawEffect(input: RenderInput, effect: MapEffect): void {
   if (
     input.previewPlayerId !== null &&
-    (effect.gmOnly || effect.visibility === 'hidden' || !perceives(effect, input.previewPlayerId))
+    (effect.visibility === 'hidden' || !perceives(effect, input.previewPlayerId))
   ) {
     return;
   }

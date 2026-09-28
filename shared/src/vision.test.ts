@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createEffect, createScene, createTile, createToken, createWall } from './defaults.js';
 import { cellKey } from './grid.js';
-import type { Scene, Token, Wall } from './types.js';
+import type { LegacyVisibility, Scene, Token, Wall } from './types.js';
 import {
   canPlayerSeeToken,
   collectBlockers,
@@ -147,8 +147,17 @@ describe('canPlayerSeeToken', () => {
     explored: new Set(visible),
   });
 
-  const at = (x: number, y: number, extra: Partial<Token> = {}) =>
+  // `gmOnly` e o campo antigo: passa por `createToken`, que o converte, para
+  // os testes seguirem cobrindo tokens gravados antes da unificacao.
+  const at = (x: number, y: number, extra: Partial<Token> & LegacyVisibility = {}) =>
     createToken({ x, y, ...extra });
+
+  it('o antigo exclusivo do mestre vira oculto, sem a luz que os jogadores nao viam', () => {
+    const t = at(0, 0, { gmOnly: true, lightRadius: 4 });
+    expect(t.visibility).toBe('hidden');
+    expect(t.lightRadius).toBe(0);
+    expect('gmOnly' in t).toBe(false);
+  });
 
   it('o mestre ve tudo, inclusive o que escondeu', () => {
     const s = scene();

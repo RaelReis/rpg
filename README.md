@@ -122,7 +122,7 @@ de um jeito, e o mesmo gesto aparecia com símbolos diferentes em cada painel.
 A regra do projeto é **não enviar e depois esconder na interface**. Se o jogador
 não deveria saber de algo, aquilo não entra no payload dele:
 
-- tokens marcados como ocultos ou exclusivos do mestre;
+- tokens e efeitos marcados como *Só o mestre*;
 - tokens dentro da neblina (quando a visão estrita está ligada);
 - as **paredes** da cena — elas descrevem a planta do mapa e apareceriam
   inteiras no inspecionador de rede do navegador;
@@ -348,8 +348,17 @@ acontecer antes de soltar.
 **NPC criado com jogadores conectados nasce oculto** — a ficha nova ou o token
 enviado pelo mestre sem visibilidade escolhida. Visível, ele aparecia no mapa de
 todos antes de o mestre conseguir escondê-lo; um aviso lembra de revelá-lo
-quando for a hora. Alucinações e tokens exclusivos do mestre seguem a própria
-escolha.
+quando for a hora. Alucinações seguem a própria escolha.
+
+**Quem vê**, no inspetor do token ou do efeito, é um controle só: *Todos*,
+*Todos, semitransparente* (só para tokens), *Só o mestre* ou *Alguns
+jogadores* (a alucinação, abaixo). Eram três — visibilidade, “exclusivo do
+mestre” e “visível para” — que davam o mesmo resultado ao jogador por regras
+diferentes. Um token *Só o mestre* que emite luz continua iluminando para os
+jogadores, como uma tocha que se vê sem saber quem a carrega; zere a luz para
+esconder as duas coisas. Tokens e efeitos gravados como “exclusivos do mestre”
+viram *Só o mestre* ao carregar a mesa, com a luz zerada — a luz deles não
+chegava aos jogadores, e assim continua.
 
 **Ativar uma cena** abre uma confirmação com *Levar o grupo para esta cena*,
 marcada: os personagens dos jogadores que ainda não estão nela entram em volta do
@@ -507,8 +516,8 @@ aparece na tela do jogador é decidido no servidor; o cliente só desenha.
 
 ### Alucinações
 
-No inspetor de um token ou de um efeito de mapa, **Visível para** escolhe
-entre *todos* (o normal) e *apenas…* alguns jogadores. Quem não está na lista
+No inspetor de um token ou de um efeito de mapa, **Quem vê → Alguns jogadores**
+abre a lista de jogadores para marcar. Quem não está na lista
 não recebe o objeto: ele não é escondido na tela, ele não existe no payload
 daquela pessoa — nem como id, nem na ordem de iniciativa, nem no aviso de que
 foi apagado. Mudar a lista tira o objeto da tela de quem saiu e o entrega a
@@ -766,7 +775,7 @@ familiar, fica no mapa sem dono.
 
 O que o mestre esconde, fica escondido: uma miniatura marcada como oculta não
 chega ao jogador — nem na ordem, nem no histórico, nem como "a vez de alguém".
-O mesmo vale para a vez de um token **oculto ou exclusivo do mestre**, venha ela
+O mesmo vale para a vez de um token que **só o mestre vê**, venha ela
 pelo `+` ou pela ficha arrastada até a faixa. A ocultação é lida do token na hora
 do envio, então revelar o NPC no meio da cena revela também a vez dele.
 
