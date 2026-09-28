@@ -22,7 +22,7 @@ import {
 
 import { act, emit, onTokenBlocked, rpc } from '../net/socket';
 import { createTriggerWithUndo } from '../state/triggerOps';
-import { activeScene, findAsset, findSheet, useStore, type WallKind } from '../state/store';
+import { activeScene, findAsset, findSheet, setMapViewCenter, useStore, type WallKind } from '../state/store';
 import {
   centerOn,
   clampCamera,
@@ -445,6 +445,7 @@ export function Stage(): JSX.Element {
       idleKeyRef.current = key;
     }
 
+    setMapViewCenter({ x: cameraRef.current.x, y: cameraRef.current.y });
     renderScene({
       ctx,
       scene: currentScene,
@@ -613,6 +614,9 @@ export function Stage(): JSX.Element {
         measureRef.current = { from: world, to: world };
       } else if (state.tool === 'ping') {
         emit('map:ping', { sceneId: currentScene.id, x: world.x, y: world.y, focus: e.altKey });
+        // Uso unico: com a ferramenta presa no ping, o clique seguinte no
+        // proprio token pingava de novo em vez de seleciona-lo.
+        state.setTool(state.toolBeforePing);
         gestureRef.current = gesture;
         return;
       } else if (state.tool === 'fog-reveal' || state.tool === 'fog-hide') {
@@ -1595,16 +1599,33 @@ function resolveWallVertex(
 
   // Junta em T: projeta o ponto sobre a parede mais proxima ao alcance.
   let onWall: Point | null = null;
+  let onWallSegment: Wall | null = null;
   let onWallDistance = reach * 0.6;
   for (const wall of scene.walls) {
     const projected = projectOntoSegment(world, wall);
     const d = Math.hypot(projected.x - world.x, projected.y - world.y);
     if (d <= onWallDistance) {
       onWall = projected;
+      onWallSegment = wall;
       onWallDistance = d;
     }
   }
-  if (onWall) return { point: onWall, snapped: true };
+  if (onWall && onWallSegment) {
+    // Se um vertice da grade esta sobre essa parede e ao alcance, ele ganha da
+    // projecao: a junta fica na grade. So com a projecao, um clique a 3px do
+    // canto dava um vertice em 653,3 e a parede nova saia torta.
+    if (!free) {
+      const vertex = snapToGridVertex(scene, world);
+      const onLine = projectOntoSegment(vertex, onWallSegment);
+      if (
+        Math.hypot(onLine.x - vertex.x, onLine.y - vertex.y) < 0.5 &&
+        Math.hypot(vertex.x - world.x, vertex.y - world.y) <= reach
+      ) {
+        return { point: vertex, snapped: true };
+      }
+    }
+    return { point: onWall, snapped: true };
+  }
 
   return { point: free ? world : snapToGridVertex(scene, world), snapped: false };
 }

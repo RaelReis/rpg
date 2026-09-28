@@ -184,7 +184,9 @@ O pincel tem duas ações destrutivas que **não** são a mesma coisa:
 
 Cobrir é o gesto do dia a dia; selar é para o que o grupo não pode ver de jeito
 nenhum. O alternador aparece no trilho quando o pincel de cobrir está ativo, e
-a prévia sob o cursor fica vermelha quando você está selando.
+a prévia — do pincel livre e do retângulo — fica vermelha quando você está
+selando. No mapa do mestre, as áreas seladas ficam com um tom vermelho, para ele
+ver o que trancou sem trocar de perspectiva.
 
 No modo por visão, cada token precisa de um **dono** e de um **raio de visão**
 para enxergar. `Luz emitida` é diferente: revela para todos os jogadores — é a
@@ -824,7 +826,7 @@ na verdade é outra coisa é recusado.
 | `V` | Selecionar e mover |
 | `H` | Mover o mapa |
 | `M` | Medir distância |
-| `P` | Ping (com `Alt`, puxa a câmera da mesa) |
+| `P` | Ping (com `Alt`, puxa a câmera da mesa); depois de um ping, volta à ferramenta anterior |
 | `F` | Enquadrar o mapa |
 | `Esc` | Limpar seleção |
 | `Delete` | Remover o que está selecionado (mestre) |

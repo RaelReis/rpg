@@ -13,7 +13,7 @@ import {
 } from '@rpg/shared';
 
 import { act } from '../../net/socket';
-import { activeScene, findAsset, useStore } from '../../state/store';
+import { activeScene, findAsset, mapViewCenter, useStore } from '../../state/store';
 import {
   ColorField,
   Dropzone,
@@ -616,6 +616,22 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
 
   function create(anchor: MapEffect['anchor'], preset: Partial<MapEffect> = {}): void {
     if (!scene) return;
+    /*
+     * Nasce no centro do que esta na tela, e nao no centro do mapa: la ele
+     * podia cair fora da vista. E se ja houver um efeito solto ali, anda para
+     * o lado — cinco cliques nos Elementos empilhavam cinco areas no mesmo
+     * ponto, ilegiveis.
+     */
+    const view = mapViewCenter() ?? { x: scene.width / 2, y: scene.height / 2 };
+    const spot = { ...view };
+    const step = scene.grid.size * 2;
+    for (let i = 0; i < 12; i++) {
+      const taken = effects.some(
+        (e) => e.anchor === 'free' && Math.hypot(e.x - spot.x, e.y - spot.y) < step / 2,
+      );
+      if (!taken) break;
+      spot.x += step;
+    }
     void act('effect:create', {
       sceneId,
       effect: {
@@ -624,10 +640,13 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
         tokenId: anchor === 'token' ? selectedTokenId : null,
         cell:
           anchor === 'grid'
-            ? { a: Math.round(scene.width / 2 / scene.grid.size), b: Math.round(scene.height / 2 / scene.grid.size) }
+            ? {
+                a: Math.floor((spot.x - scene.grid.offsetX) / scene.grid.size),
+                b: Math.floor((spot.y - scene.grid.offsetY) / scene.grid.size),
+              }
             : null,
-        x: anchor === 'free' ? scene.width / 2 : 0,
-        y: anchor === 'free' ? scene.height / 2 : 0,
+        x: anchor === 'free' ? spot.x : 0,
+        y: anchor === 'free' ? spot.y : 0,
         label: kind === 'text' ? 'Anotacao' : '',
         ...preset,
       },

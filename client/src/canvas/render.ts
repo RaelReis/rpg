@@ -1978,6 +1978,7 @@ function drawDrafts(input: RenderInput): void {
 
   drawWallEndpoints(input);
   drawWallPath(input);
+  drawSealedCells(input);
   drawFogCursor(input);
   drawMarquee(input);
   drawHandles(input);
@@ -2080,6 +2081,24 @@ function drawFogCursor(input: RenderInput): void {
   ctx.restore();
 }
 
+/**
+ * Areas seladas, no mapa do mestre. Ele enxerga o mapa inteiro, e nada
+ * mostrava o que tinha selado: o selo so aparecia na tela do jogador, ou
+ * ligando "mostrar ate onde o grupo enxerga". Fica fora da previa pelos olhos
+ * de um jogador, que ja desenha a neblina como ele a ve.
+ */
+function drawSealedCells(input: RenderInput): void {
+  const { ctx, scene, camera, role } = input;
+  if (role !== 'GM' || input.previewPlayerId !== null) return;
+  if (scene.fog.mode === 'off' || scene.fog.hidden.length === 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = '#cf5b52';
+  for (const key of scene.fog.hidden) fillCell(ctx, scene, parseCellKey(key), 0.4 / camera.zoom);
+  ctx.restore();
+}
+
 /** Retangulo arrastado: selecao, area de neblina ou tile novo. */
 function drawMarquee(input: RenderInput): void {
   const marquee = input.marquee;
@@ -2097,7 +2116,9 @@ function drawMarquee(input: RenderInput): void {
     'fog-hide': '#8a8f9c',
     tile: '#5cc98a',
   };
-  const color = palette[marquee.kind];
+  // Selando, o retangulo fica vermelho como a previa do pincel livre: o gesto
+  // e o mesmo de cobrir, e so a cor avisa que a area vai ficar trancada.
+  const color = marquee.kind === 'fog-hide' && input.fogSeal ? '#cf5b52' : palette[marquee.kind];
 
   ctx.save();
   ctx.fillStyle = color;

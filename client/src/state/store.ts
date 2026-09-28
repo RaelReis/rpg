@@ -153,6 +153,8 @@ interface AppState {
 
   // --- interface
   tool: Tool;
+  /** Ferramenta em uso antes do ping: o ping e de uso unico e volta a ela. */
+  toolBeforePing: Tool;
   /** Selecao de tokens; multipla, para mover ou apagar um grupo de uma vez. */
   selectedTokenIds: string[];
   selectedTileId: string | null;
@@ -366,6 +368,7 @@ export const useStore = create<AppState>((set, get) => ({
   rev: 0,
 
   tool: 'select',
+  toolBeforePing: 'select',
   selectedTokenIds: [],
   selectedTileId: null,
   selectedWallIds: [],
@@ -647,7 +650,8 @@ export const useStore = create<AppState>((set, get) => ({
       };
     }),
 
-  setTool: (tool) => set({ tool }),
+  setTool: (tool) =>
+    set((s) => ({ tool, toolBeforePing: tool === 'ping' && s.tool !== 'ping' ? s.tool : s.toolBeforePing })),
   selectToken: (id) =>
     set({ selectedTokenIds: id ? [id] : [], selectedTileId: null, selectedWallIds: [] }),
 
@@ -876,6 +880,19 @@ export function editingScene(state: AppState = useStore.getState()): Scene | nul
  * preparando a mesa sozinho, antes de qualquer jogador entrar, o freio so
  * atrapalharia sem proteger ninguem.
  */
+
+/*
+ * Centro do mapa que esta na tela, atualizado a cada quadro desenhado. Fica
+ * fora do estado do React de proposito: a camera muda a cada quadro de pan, e
+ * so quem cria algo "aqui" (os presets de efeito) precisa ler.
+ */
+let viewCenter: { x: number; y: number } | null = null;
+export function setMapViewCenter(point: { x: number; y: number }): void {
+  viewCenter = point;
+}
+export function mapViewCenter(): { x: number; y: number } | null {
+  return viewCenter;
+}
 
 export function isGm(state: AppState = useStore.getState()): boolean {
   return state.session?.role === 'GM';

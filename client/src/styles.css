@@ -1457,6 +1457,12 @@ button.hud-portrait:focus-visible {
   min-width: 0;
 }
 
+/* Ficha arrastada sobre a faixa: o latao diz que soltar ali a poe na ordem. */
+.turn-strip.sheet-over {
+  border-color: var(--brass);
+  box-shadow: 0 0 0 2px rgba(217, 164, 65, 0.25);
+}
+
 .turn-strip {
   display: flex;
   align-items: center;

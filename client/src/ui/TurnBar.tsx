@@ -31,6 +31,10 @@ export function TurnBar(): JSX.Element | null {
   const [showHistory, setShowHistory] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ id: string; after: boolean } | null>(null);
+  // Ficha passando sobre a faixa: ela acende para dizer que aceita o soltar.
+  // Presa ao arraste em curso, para apagar tambem quando ele acaba fora dela.
+  const [sheetOver, setSheetOver] = useState(false);
+  const draggingSheet = useStore((s) => s.dragging?.kind === 'sheet');
 
   void rev;
   if (!table) return null;
@@ -105,13 +109,23 @@ export function TurnBar(): JSX.Element | null {
   return (
     <div className="turn-bar">
       <div
-        className="turn-strip"
+        className={`turn-strip${sheetOver && draggingSheet ? ' sheet-over' : ''}`}
         onDragOver={(e) => {
           if (!gm) return;
           const payload = useStore.getState().dragging;
           if (dragId || payload?.kind === 'sheet') e.preventDefault();
+          if (payload?.kind === 'sheet' && !sheetOver) setSheetOver(true);
+        }}
+        onDragLeave={(e) => {
+          // Pelas coordenadas, e nao por relatedTarget: no Chrome ele chega
+          // nulo, e passar de uma miniatura para outra apagava o destaque.
+          const r = e.currentTarget.getBoundingClientRect();
+          if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) {
+            setSheetOver(false);
+          }
         }}
         onDrop={(e) => {
+          setSheetOver(false);
           if (!gm) return;
           const payload = useStore.getState().dragging;
           if (payload?.kind === 'sheet') {
@@ -290,6 +304,9 @@ function Mini({
       }}
       onDrop={(e) => {
         if (!gm) return;
+        // Ficha solta sobre a miniatura sobe para a faixa, que a poe na ordem.
+        // Parar aqui engolia o soltar: so funcionava no fundo da faixa.
+        if (useStore.getState().dragging?.kind === 'sheet') return;
         e.preventDefault();
         e.stopPropagation();
         onDropMini(sideOf(e));
