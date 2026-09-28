@@ -142,7 +142,8 @@ interface AppState {
   /** Selecao de tokens; multipla, para mover ou apagar um grupo de uma vez. */
   selectedTokenIds: string[];
   selectedTileId: string | null;
-  selectedWallId: string | null;
+  /** Paredes selecionadas; o retangulo de selecao pega varias para apagar juntas. */
+  selectedWallIds: string[];
   selectedSheetId: string | null;
   selectedAssetId: string | null;
   /**
@@ -271,6 +272,8 @@ interface AppState {
   selectTokens(ids: string[]): void;
   selectTile(id: string | null): void;
   selectWall(id: string | null): void;
+  /** Resultado do retangulo de selecao: tokens e paredes de uma vez. */
+  selectArea(tokenIds: string[], wallIds: string[]): void;
   setEditingScene(id: string | null): void;
   setFogBrush(radius: number): void;
   setWallDraft(points: Point[]): void;
@@ -348,7 +351,7 @@ export const useStore = create<AppState>((set, get) => ({
   tool: 'select',
   selectedTokenIds: [],
   selectedTileId: null,
-  selectedWallId: null,
+  selectedWallIds: [],
   selectedSheetId: null,
   selectedAssetId: null,
   editingSceneId: null,
@@ -419,7 +422,7 @@ export const useStore = create<AppState>((set, get) => ({
       rev: 0,
       selectedTokenIds: [],
       selectedTileId: null,
-      selectedWallId: null,
+      selectedWallIds: [],
       pings: [],
       undoStack: [],
       redoStack: [],
@@ -467,7 +470,7 @@ export const useStore = create<AppState>((set, get) => ({
         wallDraft: changed ? [] : s.wallDraft,
         selectedTokenIds: changed ? [] : s.selectedTokenIds,
         selectedTileId: changed ? null : s.selectedTileId,
-        selectedWallId: changed ? null : s.selectedWallId,
+        selectedWallIds: changed ? [] : s.selectedWallIds,
         selectedTriggerId: changed ? null : s.selectedTriggerId,
         triggerDraft: changed ? [] : s.triggerDraft,
       };
@@ -628,7 +631,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   setTool: (tool) => set({ tool }),
   selectToken: (id) =>
-    set({ selectedTokenIds: id ? [id] : [], selectedTileId: null, selectedWallId: null }),
+    set({ selectedTokenIds: id ? [id] : [], selectedTileId: null, selectedWallIds: [] }),
 
   toggleTokenSelection: (id) =>
     set((s) => ({
@@ -636,14 +639,15 @@ export const useStore = create<AppState>((set, get) => ({
         ? s.selectedTokenIds.filter((t) => t !== id)
         : [...s.selectedTokenIds, id],
       selectedTileId: null,
-      selectedWallId: null,
+      selectedWallIds: [],
     })),
 
-  selectTokens: (ids) => set({ selectedTokenIds: ids, selectedTileId: null, selectedWallId: null }),
+  selectTokens: (ids) => set({ selectedTokenIds: ids, selectedTileId: null, selectedWallIds: [] }),
   selectTile: (selectedTileId) =>
-    set({ selectedTileId, selectedTokenIds: [], selectedWallId: null }),
-  selectWall: (selectedWallId) =>
-    set({ selectedWallId, selectedTokenIds: [], selectedTileId: null }),
+    set({ selectedTileId, selectedTokenIds: [], selectedWallIds: [] }),
+  selectWall: (id) => set({ selectedWallIds: id ? [id] : [], selectedTokenIds: [], selectedTileId: null }),
+  selectArea: (selectedTokenIds, selectedWallIds) =>
+    set({ selectedTokenIds, selectedWallIds, selectedTileId: null }),
   setEditingScene: (editingSceneId) => set({ editingSceneId }),
   setFogBrush: (radius) => set({ fogBrush: Math.min(8, Math.max(0, Math.round(radius))) }),
   setFogShape: (fogShape) => set({ fogShape }),
@@ -697,7 +701,7 @@ export const useStore = create<AppState>((set, get) => ({
   setPreviewPlayer: (previewPlayerId) =>
     // A previa e so de leitura: manter uma selecao ativa convidaria a editar
     // o mapa enquanto se olha pela perspectiva de outra pessoa.
-    set({ previewPlayerId, selectedTokenIds: [], selectedTileId: null, selectedWallId: null }),
+    set({ previewPlayerId, selectedTokenIds: [], selectedTileId: null, selectedWallIds: [] }),
 
   notify: (level, message) => {
     const id = ++noticeSeq;

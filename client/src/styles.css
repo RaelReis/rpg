@@ -48,10 +48,6 @@
 
   --topbar-h: 46px;
   --panel-w: 540px;
-  /* Abas sem grade nem grid de imagens (Chat, Materiais, Mesa) nao precisam
-     da mesma largura que Cena/Tokens/Fichas/Imagens — reservar 540px pras
-     tres tambem so tira espaco do mapa sem servir a nada naquela aba. */
-  --panel-w-narrow: 380px;
 }
 
 * {
@@ -1836,6 +1832,9 @@ button.hud-portrait:focus-visible {
 
 /* Painel lateral */
 .side {
+  /* Largura fixa, igual em todas as abas. Antes Chat, Materiais e Mesa
+     estreitavam o painel para 380px: o mapa pulava a cada troca de aba e as
+     oito abas do mestre nao cabiam, ficando escondidas numa faixa sem barra. */
   width: var(--panel-w);
   background: var(--panel);
   border-left: 1px solid var(--line);
@@ -1847,30 +1846,20 @@ button.hud-portrait:focus-visible {
 .side.hidden {
   display: none;
 }
-/* So em telas largas: no breakpoint mobile o painel vira overlay de tela
-   cheia (mais abaixo), e a regra de largura por aba nao pode disputar com
-   isso — teria especificidade maior que `.side { width: auto }` de la. */
-@media (min-width: 901px) {
-  .side[data-tab='chat'],
-  .side[data-tab='handouts'],
-  .side[data-tab='players'] {
-    width: var(--panel-w-narrow);
-  }
-}
-
 .side-tabs {
   display: flex;
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.side-tabs::-webkit-scrollbar {
-  display: none;
-}
+/* As abas dividem a largura em vez de rolar: com rolagem escondida, as do
+   fim (Gatilhos, Mesa) sumiam da vista sem nenhum sinal de que existiam. */
 .side-tabs button {
-  flex: 1 0 auto;
-  padding: 10px 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -2014,6 +2003,11 @@ button.hud-portrait:focus-visible {
 .item.active {
   border-color: var(--brass-dim);
   background: var(--brass-glow);
+}
+/* Cena aberta no painel mas fora do ar: contorno tracejado neutro, para nao
+   competir com o bronze que marca a cena dos jogadores. */
+.item.scene-editing {
+  border: 1px dashed var(--line);
 }
 .item .name {
   flex: 1;

@@ -42,6 +42,7 @@ import {
   tileAtPoint,
   tokenAtPoint,
   tokensInRect,
+  wallsInRect,
   wallAtPoint,
   closedDoorNear,
   doorAtPoint,
@@ -405,7 +406,7 @@ export function Stage(): JSX.Element {
       activeEntry?.tokenId != null ||
       state.selectedTokenIds.length > 0 ||
       state.selectedTileId !== null ||
-      state.selectedWallId !== null ||
+      state.selectedWallIds.length > 0 ||
       state.pings.length > 0 ||
       // A porta que barrou o arraste pisca por um instante.
       (flashWallRef.current !== null && performance.now() < flashWallRef.current.until) ||
@@ -455,9 +456,11 @@ export function Stage(): JSX.Element {
       hiddenLayers: new Set(state.hiddenLayers),
       selectedTokenIds: new Set(state.selectedTokenIds),
       selectedTileId: state.selectedTileId,
-      selectedWallId:
-        state.selectedWallId ??
-        (flashWallRef.current && performance.now() < flashWallRef.current.until ? flashWallRef.current.id : null),
+      selectedWallIds: new Set(
+        flashWallRef.current && performance.now() < flashWallRef.current.until
+          ? [...state.selectedWallIds, flashWallRef.current.id]
+          : state.selectedWallIds,
+      ),
       marquee: marqueeRef.current,
       wallPath,
       wallKind: state.wallKind,
@@ -1072,7 +1075,12 @@ export function Stage(): JSX.Element {
             state.session?.playerId ?? null,
           );
           const hits = tokensInRect(currentScene, rect, new Set(state.hiddenLayers), vision);
-          state.selectTokens(hits.map((t) => t.id));
+          // Paredes entram so para o mestre: o jogador nem pode apaga-las.
+          const walls = state.session?.role === 'GM' ? wallsInRect(currentScene, rect) : [];
+          state.selectArea(
+            hits.map((t) => t.id),
+            walls.map((w) => w.id),
+          );
           break;
         }
 
@@ -1752,7 +1760,7 @@ async function deleteWallWithUndo(scene: Scene, wall: Wall): Promise<void> {
   };
 
   remove();
-  if (state.selectedWallId === originalId) state.selectWall(null);
+  if (state.selectedWallIds.includes(originalId)) state.selectWall(null);
   state.pushUndo({
     label: `excluir ${WALL_LABELS[wallKindOf(wall)].one}`,
     undo: async () => {
@@ -1846,29 +1854,32 @@ async function deleteSelection(scene: Scene): Promise<void> {
   const state = useStore.getState();
   const tokens = scene.tokens.filter((t) => state.selectedTokenIds.includes(t.id));
   const tile = scene.tiles.find((t) => t.id === state.selectedTileId) ?? null;
-  const wall = scene.walls.find((w) => w.id === state.selectedWallId) ?? null;
+  const walls = scene.walls.filter((w) => state.selectedWallIds.includes(w.id));
 
-  if (wall) {
-    await deleteWallWithUndo(scene, wall);
+  // Uma parede so, clicada, mantem o rotulo proprio ("excluir porta").
+  if (walls.length === 1 && tokens.length === 0 && !tile) {
+    await deleteWallWithUndo(scene, walls[0]);
     return;
   }
 
-  if (tokens.length === 0 && !tile) return;
+  if (tokens.length === 0 && !tile && walls.length === 0) return;
 
   // Desfazer recria objetos equivalentes, com ids novos: o suficiente para
   // consertar um engano, sem sincronizar historicos entre clientes. Os ids
   // vivos ficam aqui, para o refazer apagar os recriados e nao os originais.
   let tokenIds = tokens.map((t) => t.id);
   let tileId = tile?.id ?? null;
+  let wallIds = walls.map((w) => w.id);
 
   const removeAll = () => {
     for (const tokenId of tokenIds) void act('token:delete', { sceneId: scene.id, tokenId });
     if (tileId) void act('tile:delete', { sceneId: scene.id, tileId });
+    for (const wallId of wallIds) void act('wall:delete', { sceneId: scene.id, wallId });
   };
 
   removeAll();
   state.pushUndo({
-    label: tokens.length > 1 ? `excluir ${tokens.length} tokens` : 'excluir do mapa',
+    label: deleteLabel(tokens.length, walls.length),
     undo: async () => {
       const recreated = await Promise.all(
         tokens.map(({ id: _omit, ...rest }) => {
@@ -1882,12 +1893,26 @@ async function deleteSelection(scene: Scene): Promise<void> {
         void _omitTile;
         tileId = (await act<Tile>('tile:create', { sceneId: scene.id, tile: rest }))?.id ?? null;
       }
+      const rebuilt = await Promise.all(
+        walls.map(({ id: _omitWall, ...rest }) => {
+          void _omitWall;
+          return act<Wall>('wall:create', { sceneId: scene.id, wall: rest });
+        }),
+      );
+      wallIds = rebuilt.flatMap((w) => (w ? [w.id] : []));
     },
     redo: removeAll,
   });
 
   state.selectToken(null);
   state.selectTile(null);
+  state.selectWall(null);
+}
+
+function deleteLabel(tokens: number, walls: number): string {
+  if (walls === 0) return tokens > 1 ? `excluir ${tokens} tokens` : 'excluir do mapa';
+  if (tokens === 0) return `excluir ${walls} paredes`;
+  return `excluir ${tokens + walls} itens`;
 }
 
 // ---------------------------------------------------------------------------

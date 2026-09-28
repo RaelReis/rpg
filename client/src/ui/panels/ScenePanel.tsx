@@ -28,7 +28,7 @@ export function ScenePanel(): JSX.Element {
   const rev = useStore((s) => s.rev);
   const table = useStore((s) => s.table);
   const [newSceneName, setNewSceneName] = useState('');
-  const selectedWallId = useStore((s) => s.selectedWallId);
+  const selectedWallIds = useStore((s) => s.selectedWallIds);
   const selectWall = useStore((s) => s.selectWall);
   const hiddenLayers = useStore((s) => s.hiddenLayers);
   const toggleLayer = useStore((s) => s.toggleLayer);
@@ -76,8 +76,16 @@ export function ScenePanel(): JSX.Element {
             .sort((a, b) => a.order - b.order)
             .map((s) => {
               const live = s.id === table.activeSceneId;
+              const editing = s.id === editingId && !live;
+              // Bronze e so para a cena no ar, como na tira do cabecalho. Antes
+              // o bronze seguia a cena em configuracao: ao abrir outra cena
+              // para preparar, a que estava no ar perdia o destaque e o mestre
+              // passava a mexer achando que aquela era a dos jogadores.
               return (
-                <div key={s.id} className={`item${s.id === editingId ? ' active' : ''}`}>
+                <div
+                  key={s.id}
+                  className={`item${live ? ' active' : ''}${editing ? ' scene-editing' : ''}`}
+                >
                   <button
                     className="name"
                     style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left' }}
@@ -86,6 +94,7 @@ export function ScenePanel(): JSX.Element {
                   >
                     {s.name}
                   </button>
+                  {editing && <span className="tag">configurando</span>}
                   {live && <span className="tag on">no ar</span>}
                   {!live && (
                     <button
@@ -522,7 +531,7 @@ export function ScenePanel(): JSX.Element {
               {scene.walls.map((wall, index) => (
                 <div
                   key={wall.id}
-                  className={`item${wall.id === selectedWallId ? ' active' : ''}`}
+                  className={`item${selectedWallIds.includes(wall.id) ? ' active' : ''}`}
                   onClick={() => selectWall(wall.id)}
                 >
                   <span

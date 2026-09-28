@@ -80,7 +80,7 @@ export interface RenderInput {
   hiddenLayers: Set<number>;
   selectedTokenIds: Set<string>;
   selectedTileId: string | null;
-  selectedWallId: string | null;
+  selectedWallIds: Set<string>;
   /** Retangulo em construcao: selecao, area de neblina ou tile novo. */
   marquee: { from: Point; to: Point; kind: MarqueeKind } | null;
   /** Parede em polilinha ainda aberta, incluindo o segmento sob o cursor. */
@@ -1542,7 +1542,7 @@ function drawWalls(input: RenderInput): void {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    if (wall.id === input.selectedWallId) {
+    if (input.selectedWallIds.has(wall.id)) {
       // Halo claro por baixo: a parede fica obvia sem perder a cor que diz
       // o tipo dela (porta, secreta, comum).
       ctx.save();
@@ -2360,6 +2360,46 @@ export function tokensInRect(
     }
     return true;
   });
+}
+
+/**
+ * Paredes que o retangulo de selecao toca. Basta encostar: exigir o trecho
+ * inteiro dentro obrigaria a cercar paredes longas que atravessam o mapa so
+ * para apaga-las.
+ */
+export function wallsInRect(
+  scene: Scene,
+  rect: { x: number; y: number; width: number; height: number },
+): Wall[] {
+  return scene.walls.filter((wall) => segmentTouchesRect(wall, rect));
+}
+
+/** Recorte de Liang-Barsky: o segmento tem algum trecho dentro do retangulo? */
+function segmentTouchesRect(
+  seg: { x1: number; y1: number; x2: number; y2: number },
+  rect: { x: number; y: number; width: number; height: number },
+): boolean {
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: [number, number][] = [
+    [-dx, seg.x1 - rect.x],
+    [dx, rect.x + rect.width - seg.x1],
+    [-dy, seg.y1 - rect.y],
+    [dy, rect.y + rect.height - seg.y1],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
 }
 
 export { isHex, worldToScreen };
