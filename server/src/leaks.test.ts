@@ -31,9 +31,20 @@ import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
 import { stateForViewer } from './filter.js';
 import type { Ctx } from './handlers/context.js';
 import { updateHandout } from './handlers/handouts.js';
-import { createTokenHandler, deleteTile, deleteToken, moveToken, updateToken } from './handlers/map.js';
+import {
+  createEffectHandler,
+  createTileHandler,
+  createTokenHandler,
+  createWallHandler,
+  deleteTile,
+  deleteToken,
+  moveToken,
+  paintFog,
+  updateToken,
+} from './handlers/map.js';
+import { createTriggerHandler } from './handlers/triggers.js';
 import { activateScene } from './handlers/scene.js';
-import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
+import { addTurnEntries, ensurePartyInTurns, kickPlayer, pingMap } from './handlers/play.js';
 import { createSheet, deleteSheet, updateSheet } from './handlers/sheets.js';
 import { handleJoin } from './handlers/session.js';
 import { Room, rooms } from './room.js';
@@ -574,5 +585,32 @@ describe('vez de NPC oculto em outra cena', () => {
     addTurnEntries(ctxOf(room, gm), { entries: [{ sheetId: 'sht-SEGREDO-vilao', tokenId: null, playerId: null, name: 'SEGREDO-vilao' }] }, vi.fn());
 
     expect(secretsIn(traffic(room, alice))).toEqual([]);
+  });
+});
+
+describe('2.2: montar cena fora do ar', () => {
+  it('nada do que o mestre monta numa cena fora do ar chega ao jogador', () => {
+    const room = table();
+    room.state.scenes.push(createScene({ id: 'SEGREDO-cena-preparo', name: 'SEGREDO-porao' }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    const ctx = ctxOf(room, gm);
+    const sceneId = 'SEGREDO-cena-preparo';
+
+    createWallHandler(ctx, { sceneId, wall: { x1: 0, y1: 0, x2: 70, y2: 0 } }, vi.fn());
+    createWallHandler(ctx, { sceneId, wall: { x1: 0, y1: 70, x2: 70, y2: 70, door: true } }, vi.fn());
+    const tokenAck = vi.fn();
+    createTokenHandler(ctx, { sceneId, token: { name: 'SEGREDO-chefe', visibility: 'visible', x: 140, y: 140 } }, tokenAck);
+    createTileHandler(ctx, { sceneId, tile: { x: 0, y: 0, width: 70, height: 70 } }, vi.fn());
+    createEffectHandler(ctx, { sceneId, effect: { kind: 'circle', label: 'SEGREDO-runa', x: 70, y: 70 } }, vi.fn());
+    createTriggerHandler(ctx, { sceneId, trigger: { name: 'SEGREDO-armadilha', area: { kind: 'rect', x: 0, y: 0, width: 70, height: 70 } } }, vi.fn());
+    paintFog(ctx, { sceneId, cells: ['0,0', '1,0'], action: 'block' }, vi.fn());
+    pingMap(ctx, { sceneId, x: 10, y: 10, focus: true });
+    moveToken(ctx, { sceneId, tokenId: tokenAck.mock.calls[0][0].data.id, x: 210, y: 140 }, vi.fn());
+
+    expect(alice.received).toEqual([]);
+    expect(secretsIn(traffic(room, alice))).toEqual([]);
+    // O mestre, sim, recebe o que montou.
+    expect(JSON.stringify(gm.received)).toContain('SEGREDO-chefe');
   });
 });

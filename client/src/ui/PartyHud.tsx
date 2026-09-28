@@ -9,7 +9,7 @@ import {
   type VitalRole,
 } from '@rpg/shared';
 
-import { activeScene, findAsset, isGm, useStore } from '../state/store';
+import { activeScene, liveScene, findAsset, isGm, useStore } from '../state/store';
 import { Icon } from './icons';
 
 /**
@@ -90,7 +90,8 @@ export function PartyHud(): JSX.Element | null {
   // Quem esta em turno: pela entrada ligada ao jogador, a ficha ou ao token.
   const turns = table.turns;
   const activeEntry = turns.entries.find((e) => e.id === turns.activeEntryId);
-  const scene = activeScene(useStore.getState());
+  // A vez e da cena no ar, mesmo com o mestre montando outra no mapa.
+  const scene = liveScene(useStore.getState());
   const activeSheetId =
     activeEntry?.sheetId ??
     (activeEntry?.tokenId

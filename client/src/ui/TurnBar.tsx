@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { concealedFromPlayers, type TurnEntry, type TurnRecord } from '@rpg/shared';
 
 import { act } from '../net/socket';
-import { activeScene, findAsset, findSheet, isGm, useStore } from '../state/store';
+import { activeScene, liveScene, findAsset, findSheet, isGm, useStore } from '../state/store';
 import { Icon } from './icons';
 
 /**
@@ -60,7 +60,9 @@ export function TurnBar(): JSX.Element | null {
   function addSheet(sheetId: string): void {
     const sheet = findSheet(sheetId);
     if (!sheet) return;
-    const token = activeScene(useStore.getState())?.tokens.find((t) => t.sheetId === sheet.id);
+    // A ordem e da cena no ar: o token da vez e o de la, mesmo com o mestre
+    // montando outra cena no mapa.
+    const token = liveScene(useStore.getState())?.tokens.find((t) => t.sheetId === sheet.id);
     void act('turns:add', {
       entries: [
         { sheetId: sheet.id, tokenId: token?.id ?? null, playerId: sheet.ownerPlayerId, name: sheet.name },
@@ -434,7 +436,7 @@ function faceOf(entry: TurnEntry): { url: string | null; color: string } {
     ? (state.table?.players.find((p) => p.id === entry.playerId) ?? null)
     : null;
   const token = entry.tokenId
-    ? (activeScene(state)?.tokens.find((t) => t.id === entry.tokenId) ?? null)
+    ? (liveScene(state)?.tokens.find((t) => t.id === entry.tokenId) ?? null)
     : null;
 
   const asset = findAsset(sheet?.portraitAssetId ?? player?.portraitAssetId ?? token?.assetId ?? null);

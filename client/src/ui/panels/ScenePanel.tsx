@@ -36,6 +36,7 @@ export function ScenePanel(): JSX.Element {
   const showTriggers = useStore((s) => s.showTriggers);
   const toggleTriggers = useStore((s) => s.toggleTriggers);
   const editingSceneId = useStore((s) => s.editingSceneId);
+  const mapSceneId = useStore((s) => s.mapSceneId);
   const setEditingScene = useStore((s) => s.setEditingScene);
 
   void rev;
@@ -148,23 +149,34 @@ export function ScenePanel(): JSX.Element {
             collapsible
             actions={
               !editingLive && (
-                <button
-                  className="btn sm"
-                  onClick={() => {
-                    requestSceneActivation(scene.id);
-                  }}
-                  title="Ativar esta cena para todos os jogadores"
-                >
-                  Ativar para todos
-                </button>
+                <>
+                  {mapSceneId !== scene.id && (
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => useStore.getState().setMapScene(scene.id)}
+                      title="Abrir esta cena no seu mapa para montar paredes, tokens, tiles e gatilhos, sem ativar"
+                    >
+                      Editar no mapa
+                    </button>
+                  )}
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      requestSceneActivation(scene.id);
+                    }}
+                    title="Ativar esta cena para todos os jogadores"
+                  >
+                    Ativar para todos
+                  </button>
+                </>
               )
             }
           >
             {!editingLive && (
               <span className="hint">
-                Fundo, grid, neblina e clima daqui valem so para esta cena, mesmo fora do ar. O mapa
-                que voce ve, porem, continua sendo o da cena ativa — parede, tile e token novos
-                desenhados nele vao para ela, nao para esta.
+                Fundo, grid, neblina e clima daqui valem so para esta cena, mesmo fora do ar. Para
+                montar paredes, tokens, tiles e gatilhos dela, use <strong>Editar no mapa</strong>: o
+                seu mapa passa a mostra-la, e os jogadores continuam na cena no ar sem receber nada.
               </span>
             )}
             <TextField label="Nome" value={scene.name} onChange={(v) => patch({ name: v })} maxLength={80} />

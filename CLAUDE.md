@@ -106,6 +106,11 @@ quando o corte era do meu próprio recorte de screenshot.
   quatro cantos, e o corpo não pode parar em cima da parede. Sem isso, tokens de
   tamanho par atravessavam qualquer parede, porque o snap encaixa o centro deles
   exatamente sobre as linhas da grade.
+- **No cliente, `activeScene()` é a cena do mapa, não a cena no ar.** Com o
+  mestre montando uma cena fora do ar (`mapSceneId`), ela devolve essa cena;
+  o que diz respeito à mesa ao vivo (faixa de turnos, HUD do grupo) usa
+  `liveScene()`. O servidor não precisa saber: os emissores já só entregam ao
+  jogador o que é da `activeSceneId`.
 - **Condições são gravadas por id** (`burning`, `dead`), com migração dos emojis
   antigos em `normalizeConditions`.
 

@@ -354,6 +354,13 @@ marcada: os personagens dos jogadores que ainda não estão nela entram em volta
 centro do mapa, e a ordem de turnos passa a apontar para eles. Desmarque para
 uma cena sem o grupo, como um sonho ou um flashback.
 
+**Montar uma cena fora do ar**: em *Cena*, com uma cena que não está no ar
+aberta, *Editar no mapa* passa o mapa do mestre para ela. Paredes, portas,
+tokens, tiles, efeitos, neblina e gatilhos vão para essa cena, e os jogadores
+continuam na cena no ar sem receber nada — nem o arraste de uma ficha para o
+mapa. Uma faixa no topo do mapa lembra que a cena está fora do ar, e *Voltar
+para a cena no ar* desfaz a troca; ativar a cena também a desfaz.
+
 ### PV, PD e retratos do grupo
 
 As duas resistências do personagem são **PV** (Pontos de Vida, resistência

@@ -971,6 +971,15 @@ textarea {
 .preview-banner strong {
   color: var(--steel);
 }
+/* Montando cena fora do ar: bronze, a cor de "preparacao do mestre", para nao
+   se confundir com a previa pelos olhos de um jogador (aco). */
+.offair-banner {
+  background: rgba(217, 164, 65, 0.14);
+  border-color: var(--brass-dim);
+}
+.offair-banner strong {
+  color: var(--brass);
+}
 
 /* Peca fantasma de ficha ou imagem arrastada: ja encaixada na celula onde vai
    cair, com a arte e o que vai acontecer ao soltar. Sem eventos de ponteiro,

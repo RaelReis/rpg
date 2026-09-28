@@ -273,6 +273,13 @@ export function Stage(): JSX.Element {
 
   const tool = useStore((s) => s.tool);
   const rev = useStore((s) => s.rev);
+  // Cena fora do ar aberta para montar (so o mestre): o mapa passa a ser ela.
+  const mapSceneId = useStore((s) => s.mapSceneId);
+  const offAirName = useStore((s) =>
+    s.mapSceneId && s.mapSceneId !== s.table?.activeSceneId && !s.previewPlayerId
+      ? (s.table?.scenes.find((sc) => sc.id === s.mapSceneId)?.name ?? null)
+      : null,
+  );
   const pings = useStore((s) => s.pings);
 
   const wallDraft = useStore((s) => s.wallDraft);
@@ -282,7 +289,7 @@ export function Stage(): JSX.Element {
   const previewName = useStore(
     (s) => s.table?.players.find((p) => p.id === s.previewPlayerId)?.name ?? null,
   );
-  const scene = useMemo(() => activeScene(useStore.getState()), [rev]);
+  const scene = useMemo(() => activeScene(useStore.getState()), [rev, mapSceneId]);
 
   // -- dimensionamento ------------------------------------------------------
 
@@ -1424,6 +1431,17 @@ export function Stage(): JSX.Element {
           menu={contextMenu}
           onClose={() => setContextMenu(null)}
         />
+      )}
+
+      {offAirName && (
+        <div className="preview-banner offair-banner">
+          <span>
+            Montando <strong>{offAirName}</strong> — fora do ar: os jogadores nao recebem nada daqui
+          </span>
+          <button className="btn sm" onClick={() => useStore.getState().setMapScene(null)}>
+            Voltar para a cena no ar
+          </button>
+        </div>
       )}
 
       {previewPlayerId && (

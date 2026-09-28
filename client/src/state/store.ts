@@ -168,6 +168,11 @@ interface AppState {
    * Sem isso, preparar uma cena nova obrigava a ativa-la so para editar.
    */
   editingSceneId: string | null;
+  /**
+   * Cena fora do ar aberta no mapa do mestre para ser montada. Nulo = o mapa
+   * mostra a cena no ar. Ver `activeScene`.
+   */
+  mapSceneId: string | null;
   sideTab: SideTab;
   sideOpen: boolean;
   camera: Camera;
@@ -293,6 +298,8 @@ interface AppState {
   /** Resultado do retangulo de selecao: tokens e paredes de uma vez. */
   selectArea(tokenIds: string[], wallIds: string[]): void;
   setEditingScene(id: string | null): void;
+  /** Abre (ou fecha, com null) uma cena fora do ar no mapa do mestre. */
+  setMapScene(id: string | null): void;
   setFogBrush(radius: number): void;
   setWallDraft(points: Point[]): void;
   setWallKind(kind: WallKind): void;
@@ -375,6 +382,7 @@ export const useStore = create<AppState>((set, get) => ({
   selectedSheetId: null,
   selectedAssetId: null,
   editingSceneId: null,
+  mapSceneId: null,
   sideTab: 'chat',
   sideOpen: true,
   camera: { x: 0, y: 0, zoom: 1 },
@@ -473,6 +481,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (!s.table) return {};
       return {
         table: { ...s.table, scenes: s.table.scenes.filter((sc) => sc.id !== sceneId) },
+        mapSceneId: s.mapSceneId === sceneId ? null : s.mapSceneId,
         rev: s.rev + 1,
       };
     }),
@@ -485,6 +494,9 @@ export const useStore = create<AppState>((set, get) => ({
       const changed = s.table.activeSceneId !== sceneId;
       return {
         table: { ...s.table, activeSceneId: sceneId },
+        // A cena que estava sendo montada fora do ar entrou no ar: o mapa ja
+        // e ela, e a faixa de "editando fora do ar" deixa de valer.
+        mapSceneId: s.mapSceneId === sceneId ? null : s.mapSceneId,
         rev: s.rev + 1,
         undoStack: changed ? [] : s.undoStack,
         redoStack: changed ? [] : s.redoStack,
@@ -671,6 +683,22 @@ export const useStore = create<AppState>((set, get) => ({
   selectArea: (selectedTokenIds, selectedWallIds) =>
     set({ selectedTokenIds, selectedWallIds, selectedTileId: null }),
   setEditingScene: (editingSceneId) => set({ editingSceneId }),
+  // Trocar a cena do mapa e como trocar de cena: o historico e as selecoes sao
+  // da cena anterior, e desfazer ali agiria fora da vista.
+  setMapScene: (mapSceneId) =>
+    set((s) => ({
+      mapSceneId,
+      editingSceneId: mapSceneId ?? s.editingSceneId,
+      rev: s.rev + 1,
+      undoStack: [],
+      redoStack: [],
+      wallDraft: [],
+      selectedTokenIds: [],
+      selectedTileId: null,
+      selectedWallIds: [],
+      selectedTriggerId: null,
+      triggerDraft: [],
+    })),
   setFogBrush: (radius) => set({ fogBrush: Math.min(8, Math.max(0, Math.round(radius))) }),
   setFogShape: (fogShape) => set({ fogShape }),
   setFogSeal: (fogSeal) => set({ fogSeal }),
@@ -852,7 +880,25 @@ export const useStore = create<AppState>((set, get) => ({
 // Seletores
 // ---------------------------------------------------------------------------
 
+/**
+ * A cena do mapa: a que esta no ar, ou — so para o mestre — a cena fora do ar
+ * que ele abriu para montar (`mapSceneId`). Todas as acoes de mapa (parede,
+ * tile, token, efeito, gatilho, neblina) seguem esta cena, e o servidor so
+ * repassa aos jogadores o que e da cena no ar. Na previa "ver pelos olhos" vale
+ * a cena no ar, porque e ela que o jogador ve.
+ */
 export function activeScene(state: AppState = useStore.getState()): Scene | null {
+  const table = state.table;
+  if (!table) return null;
+  if (state.mapSceneId && state.session?.role === 'GM' && !state.previewPlayerId) {
+    const editing = table.scenes.find((s) => s.id === state.mapSceneId);
+    if (editing) return editing;
+  }
+  return table.scenes.find((s) => s.id === table.activeSceneId) ?? table.scenes[0] ?? null;
+}
+
+/** A cena no ar, independente do que o mestre abriu no mapa. */
+export function liveScene(state: AppState = useStore.getState()): Scene | null {
   const table = state.table;
   if (!table) return null;
   return table.scenes.find((s) => s.id === table.activeSceneId) ?? table.scenes[0] ?? null;
