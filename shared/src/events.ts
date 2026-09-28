@@ -227,7 +227,8 @@ export interface ClientToServerEvents {
   'scene:create': (payload: { name: string; backgroundAssetId?: string | null }, ack: Ack<Scene>) => void;
   'scene:update': (payload: { sceneId: string; patch: Partial<Scene> }, ack: Ack<null>) => void;
   'scene:delete': (payload: { sceneId: string }, ack: Ack<null>) => void;
-  'scene:activate': (payload: { sceneId: string }, ack: Ack<null>) => void;
+  /** `bringParty`: cria na cena o token de cada personagem de jogador que nao esta nela. */
+  'scene:activate': (payload: { sceneId: string; bringParty?: boolean }, ack: Ack<null>) => void;
 
   'token:create': (payload: { sceneId: string; token: Partial<Token> }, ack: Ack<Token>) => void;
   'token:update': (payload: { sceneId: string; tokenId: string; patch: Partial<Token> }, ack: Ack<null>) => void;

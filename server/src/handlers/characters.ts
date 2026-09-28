@@ -71,8 +71,8 @@ function freeSpot(scene: Scene, scale: number): { x: number; y: number } {
  * Devolve null sem erro quando nao da: uma ficha sem token continua util, e
  * falhar a criacao da ficha por causa do mapa seria punir a coisa errada.
  */
-export function spawnCharacterToken(room: Room, sheet: Sheet): Token | null {
-  const scene = room.activeScene();
+export function spawnCharacterToken(room: Room, sheet: Sheet, target?: Scene): Token | null {
+  const scene = target ?? room.activeScene();
   if (!scene) return null;
   if (scene.tokens.length >= LIMITS.tokens) return null;
 
@@ -91,6 +91,9 @@ export function spawnCharacterToken(room: Room, sheet: Sheet): Token | null {
     layer: 3,
     ownerPlayerId: sheet.ownerPlayerId,
     sheetId: sheet.id,
+    // NPC novo com a mesa assistindo nasce oculto: visivel, ele aparecia no
+    // centro do mapa dos jogadores antes de o mestre conseguir esconde-lo.
+    visibility: !sheet.ownerPlayerId && playersWatching(room) ? 'hidden' : 'visible',
     visionRadius: CHARACTER_VISION_RADIUS,
     // As barras que o modelo marca para aparecer no token ja vem ligadas.
     bars: tokenBarFields(room.state.sheetTemplate)
@@ -108,6 +111,28 @@ export function spawnCharacterToken(room: Room, sheet: Sheet): Token | null {
   if (sheet.ownerPlayerId && ensurePartyInTurns(room)) emitTurns(room);
 
   return token;
+}
+
+/** Ha jogador conectado olhando a mesa agora? */
+export function playersWatching(room: Room): boolean {
+  return room.state.players.some((p) => p.role === 'PLAYER' && p.connected);
+}
+
+/**
+ * Leva o grupo para a cena: cria o token de cada personagem de jogador que
+ * ainda nao esta nela e aponta as vezes da ordem para os tokens desta cena.
+ *
+ * Ativar outra cena deixava os jogadores num mapa sem peca nenhuma, e a ordem
+ * de turnos seguia apontando para os tokens da cena anterior — o anel da vez
+ * nao aparecia em lugar nenhum.
+ */
+export function bringPartyTo(room: Room, scene: Scene): void {
+  for (const sheet of room.state.sheets) {
+    const owner = room.player(sheet.ownerPlayerId);
+    if (owner?.role !== 'PLAYER') continue;
+    if (scene.tokens.some((t) => t.sheetId === sheet.id)) continue;
+    spawnCharacterToken(room, sheet, scene);
+  }
 }
 
 /** A arte do token do personagem passa a ser a imagem de corpo da ficha. */

@@ -339,6 +339,17 @@ ficha para o mapa**: se o personagem já está na cena, ele vai até o ponto; se
 não, nasce ali. Uma prévia encaixada na grade mostra onde e o que vai
 acontecer antes de soltar.
 
+**NPC criado com jogadores conectados nasce oculto** — a ficha nova ou o token
+enviado pelo mestre sem visibilidade escolhida. Visível, ele aparecia no mapa de
+todos antes de o mestre conseguir escondê-lo; um aviso lembra de revelá-lo
+quando for a hora. Alucinações e tokens exclusivos do mestre seguem a própria
+escolha.
+
+**Ativar uma cena** abre uma confirmação com *Levar o grupo para esta cena*,
+marcada: os personagens dos jogadores que ainda não estão nela entram em volta do
+centro do mapa, e a ordem de turnos passa a apontar para eles. Desmarque para
+uma cena sem o grupo, como um sonho ou um flashback.
+
 ### PV, PD e retratos do grupo
 
 As duas resistências do personagem são **PV** (Pontos de Vida, resistência

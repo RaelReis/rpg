@@ -31,9 +31,10 @@ import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
 import { stateForViewer } from './filter.js';
 import type { Ctx } from './handlers/context.js';
 import { updateHandout } from './handlers/handouts.js';
-import { deleteTile, deleteToken, moveToken, updateToken } from './handlers/map.js';
+import { createTokenHandler, deleteTile, deleteToken, moveToken, updateToken } from './handlers/map.js';
+import { activateScene } from './handlers/scene.js';
 import { addTurnEntries, ensurePartyInTurns, kickPlayer } from './handlers/play.js';
-import { deleteSheet } from './handlers/sheets.js';
+import { createSheet, deleteSheet } from './handlers/sheets.js';
 import { handleJoin } from './handlers/session.js';
 import { Room, rooms } from './room.js';
 
@@ -468,5 +469,63 @@ describe('reproducoes do relatorio de QA', () => {
 
     deleteToken(ctxOf(room, gm), { sceneId: 'scn-ativa', tokenId: 'tok-alice' }, vi.fn());
     expect(vezes()).not.toContain('tok-alice');
+  });
+});
+
+describe('grupo na cena nova e NPC que nasce oculto', () => {
+  it('Q-009: ativar levando o grupo cria os tokens e aponta as vezes para eles', () => {
+    const room = table();
+    ensurePartyInTurns(room);
+    room.state.scenes.push(createScene({ id: 'scn-porao' }));
+    const gm = connect(room, 'mestre');
+
+    activateScene(ctxOf(room, gm), { sceneId: 'scn-porao', bringParty: true }, vi.fn());
+
+    const porao = room.scene('scn-porao')!;
+    const alice = porao.tokens.find((t) => t.sheetId === 'sht-alice');
+    expect(alice?.ownerPlayerId).toBe('alice');
+    expect(porao.tokens.find((t) => t.sheetId === 'sht-bruno')).toBeDefined();
+    // Dois tokens, em celulas diferentes.
+    expect(new Set(porao.tokens.map((t) => `${t.x},${t.y}`)).size).toBe(2);
+    expect(room.state.turns.entries.find((e) => e.sheetId === 'sht-alice')?.tokenId).toBe(alice?.id);
+  });
+
+  it('Q-009: sem levar o grupo, a cena abre sem os personagens', () => {
+    const room = table();
+    room.state.scenes.push(createScene({ id: 'scn-sonho' }));
+    const gm = connect(room, 'mestre');
+
+    activateScene(ctxOf(room, gm), { sceneId: 'scn-sonho' }, vi.fn());
+
+    expect(room.scene('scn-sonho')!.tokens).toEqual([]);
+  });
+
+  it('Q-020: NPC criado com a mesa assistindo nasce oculto, e o mestre e avisado', async () => {
+    const room = table();
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+
+    const ack = vi.fn();
+    createTokenHandler(ctxOf(room, gm), { sceneId: 'scn-ativa', token: { name: 'SEGREDO-monstro', x: 70, y: 0 } }, ack);
+    expect(ack.mock.calls[0][0].data.visibility).toBe('hidden');
+    expect(JSON.stringify(gm.received)).toContain('entrou oculto');
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+
+    await createSheet(ctxOf(room, gm), { name: 'SEGREDO-capanga' }, vi.fn());
+    const capanga = room.activeScene()!.tokens.find((t) => t.name === 'SEGREDO-capanga');
+    expect(capanga?.visibility).toBe('hidden');
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+  });
+
+  it('Q-020: sem jogador conectado, ou com visibilidade pedida, nasce como pedido', () => {
+    const room = table();
+    const gm = connect(room, 'mestre');
+    const ack = vi.fn();
+    createTokenHandler(ctxOf(room, gm), { sceneId: 'scn-ativa', token: { name: 'Aliado', visibility: 'visible' } }, ack);
+    expect(ack.mock.calls[0][0].data.visibility).toBe('visible');
+
+    for (const p of room.state.players) if (p.role === 'PLAYER') p.connected = false;
+    createTokenHandler(ctxOf(room, gm), { sceneId: 'scn-ativa', token: { name: 'Preparo' } }, ack);
+    expect(ack.mock.calls[1][0].data.visibility).toBe('visible');
   });
 });

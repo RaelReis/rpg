@@ -20,7 +20,7 @@ import {
   type SheetTemplate,
 } from '@rpg/shared';
 
-import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, socketsOf, syncAssets } from '../broadcast.js';
+import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, notify, socketsOf, syncAssets } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import { assetIdsOfSheet, sheetForViewer } from '../filter.js';
@@ -116,7 +116,10 @@ export async function createSheet(
   ctx.room.state.sheets.push(sheet);
   ctx.room.touchSheet(sheet.id);
   emitSheet(ctx.room, sheet);
-  spawnCharacterToken(ctx.room, sheet);
+  const token = spawnCharacterToken(ctx.room, sheet);
+  if (token?.visibility === 'hidden') {
+    notify(ctx.socket, 'info', `${sheet.name} entrou oculto: ha jogadores na mesa. Revele o token quando for a hora.`);
+  }
   ok(ack, sheet);
 }
 

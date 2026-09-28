@@ -16,6 +16,7 @@ import {
   socketsOf,
 } from '../broadcast.js';
 import { clampNumber, fail, ok, ownedAsset, safeString, type Ctx } from './context.js';
+import { bringPartyTo } from './characters.js';
 import { INTRO_CARD_MS, presentCardTo } from './immersion.js';
 
 /** Cenas (mapas), configuracao de grid e ajustes gerais da mesa. */
@@ -166,12 +167,31 @@ export function deleteScene(ctx: Ctx, payload: { sceneId: string }, ack: Ack<nul
  * Trocar de cena reescreve por completo o que os jogadores enxergam, entao
  * o caminho barato de delta nao serve: todos recebem o estado cheio de novo.
  */
-export function activateScene(ctx: Ctx, payload: { sceneId: string }, ack: Ack<null>): void {
+export function activateScene(
+  ctx: Ctx,
+  payload: { sceneId: string; bringParty?: boolean },
+  ack: Ack<null>,
+): void {
   const scene = ctx.room.scene(payload?.sceneId);
   if (!scene) return fail(ack, 'Cena nao encontrada.');
 
   ctx.room.state.activeSceneId = scene.id;
   ctx.room.touch('table');
+
+  // O mestre escolhe na confirmacao: o padrao e levar o grupo; uma cena de
+  // sonho ou flashback vai sem ele.
+  if (payload.bringParty === true) bringPartyTo(ctx.room, scene);
+
+  // A vez de cada personagem passa a apontar para o token dele nesta cena,
+  // quando ele existe: e nele que o anel da vez aparece.
+  for (const entry of ctx.room.state.turns.entries) {
+    if (!entry.sheetId) continue;
+    const here = scene.tokens.find((t) => t.sheetId === entry.sheetId);
+    if (here && entry.tokenId !== here.id) {
+      entry.tokenId = here.id;
+      ctx.room.touch('table');
+    }
+  }
 
   sendFullStateToAll(ctx.room);
   for (const socket of socketsOf(ctx.room)) socket.emit('scene:activated', { sceneId: scene.id });

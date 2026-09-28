@@ -214,6 +214,8 @@ interface AppState {
   notices: Notice[];
   pings: ActivePing[];
   templateEditorOpen: boolean;
+  /** Cena esperando a confirmacao de ativacao (com a escolha de levar o grupo). */
+  sceneActivationId: string | null;
   sheetModalId: string | null;
   /** Material aberto na tela, por escolha propria ou apresentado pelo mestre. */
   openHandoutId: string | null;
@@ -307,6 +309,7 @@ interface AppState {
   addPing(ping: MapPing): void;
   prunePings(): void;
   openTemplateEditor(open: boolean): void;
+  askSceneActivation(sceneId: string | null): void;
   openSheetModal(sheetId: string | null): void;
   openHandout(handoutId: string | null): void;
   showScreenMessage(message: ScreenMessage): void;
@@ -382,6 +385,7 @@ export const useStore = create<AppState>((set, get) => ({
   notices: [],
   pings: [],
   templateEditorOpen: false,
+  sceneActivationId: null,
   sheetModalId: null,
   openHandoutId: null,
   unreadChat: 0,
@@ -743,6 +747,7 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
   openTemplateEditor: (templateEditorOpen) => set({ templateEditorOpen }),
+  askSceneActivation: (sceneActivationId) => set({ sceneActivationId }),
   openSheetModal: (sheetModalId) => set({ sheetModalId }),
   openHandout: (openHandoutId) => set({ openHandoutId }),
 
@@ -866,11 +871,6 @@ export function editingScene(state: AppState = useStore.getState()): Scene | nul
  * preparando a mesa sozinho, antes de qualquer jogador entrar, o freio so
  * atrapalharia sem proteger ninguem.
  */
-export function confirmSceneActivation(table: TableState | null, sceneName: string): boolean {
-  const someoneWatching = table?.players.some((p) => p.role === 'PLAYER' && p.connected) ?? false;
-  if (!someoneWatching) return true;
-  return window.confirm(`Ativar "${sceneName}" para todos os jogadores conectados agora?`);
-}
 
 export function isGm(state: AppState = useStore.getState()): boolean {
   return state.session?.role === 'GM';

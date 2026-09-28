@@ -112,10 +112,17 @@ async function main() {
   );
 
   console.log('\n== 4. Tokens e visibilidade ==');
+  // Visibilidade explicita: com jogador conectado, NPC sem visibilidade pedida
+  // nasce oculto (conferido logo abaixo).
   const visible = await rpc(gm, 'token:create', {
     sceneId,
-    token: { name: 'Guarda', x: 300, y: 300, layer: 3 },
+    token: { name: 'Guarda', x: 300, y: 300, layer: 3, visibility: 'visible' },
   });
+  const newcomer = await rpc(gm, 'token:create', {
+    sceneId,
+    token: { name: 'Recem-chegado', x: 500, y: 300, layer: 3 },
+  });
+  check('NPC criado com jogador conectado nasce oculto', newcomer.visibility === 'hidden', newcomer.visibility);
   const secret = await rpc(gm, 'token:create', {
     sceneId,
     token: { name: 'Assassino oculto', x: 400, y: 300, layer: 3, gmOnly: true },
@@ -130,6 +137,10 @@ async function main() {
   check(
     'token comum chega ao jogador',
     playerTokensAfterCreate.some((t) => t.id === visible.id),
+  );
+  check(
+    'NPC que nasceu oculto NAO chega ao jogador',
+    !playerTokensAfterCreate.some((t) => t.id === newcomer.id),
   );
   check(
     'token exclusivo do mestre NAO chega ao jogador',

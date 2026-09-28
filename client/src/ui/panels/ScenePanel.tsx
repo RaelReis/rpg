@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { LAYER_NAMES, type GridType, type Layer, type Scene } from '@rpg/shared';
 
 import { act } from '../../net/socket';
-import { confirmSceneActivation, editingScene, findAsset, useStore } from '../../state/store';
+import { editingScene, findAsset, useStore } from '../../state/store';
+import { requestSceneActivation } from '../SceneActivation';
 import {
   ColorField,
   Dropzone,
@@ -100,7 +101,7 @@ export function ScenePanel(): JSX.Element {
                     <button
                       className="btn ghost sm"
                       onClick={() => {
-                        if (confirmSceneActivation(table, s.name)) void act('scene:activate', { sceneId: s.id });
+                        requestSceneActivation(s.id);
                       }}
                       title="Ativar para todos os jogadores"
                     >
@@ -150,7 +151,7 @@ export function ScenePanel(): JSX.Element {
                 <button
                   className="btn sm"
                   onClick={() => {
-                    if (confirmSceneActivation(table, scene.name)) void act('scene:activate', { sceneId: scene.id });
+                    requestSceneActivation(scene.id);
                   }}
                   title="Ativar esta cena para todos os jogadores"
                 >

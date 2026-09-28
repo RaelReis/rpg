@@ -32,12 +32,14 @@ import {
   emitTokenRemoved,
   emitTokenUpsert,
   emitWalls,
+  notify,
   refreshVision,
   socketsOf,
 } from '../broadcast.js';
 import { tokenForViewer, visionFor } from '../filter.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
 import { removeTokens } from './cascade.js';
+import { playersWatching } from './characters.js';
 import { checkTriggers } from './triggers.js';
 
 /** Tokens, tiles, efeitos, paredes e neblina. */
@@ -132,7 +134,16 @@ export function createTokenHandler(
     // Sem forma declarada, quem decide e o padrao do modelo (arte inteira):
     // repetir um literal aqui fazia o padrao valer so para o caminho da ficha.
     shape: TOKEN_SHAPES.includes(t.shape as never) ? t.shape : undefined,
-    visibility: VISIBILITIES.includes(t.visibility as never) ? t.visibility : 'visible',
+    // Sem visibilidade pedida, o NPC criado com a mesa assistindo nasce oculto:
+    // visivel, ele aparecia no mapa dos jogadores antes de o mestre esconde-lo.
+    // Alucinacao e token exclusivo do mestre nao entram na regra: a lista
+    // `visibleTo` e o `gmOnly` ja sao a escolha de quem ve, e somar o
+    // oculto a eles faria o token continuar escondido depois de revelado.
+    visibility: VISIBILITIES.includes(t.visibility as never)
+      ? t.visibility
+      : !t.ownerPlayerId && t.visibleTo == null && !t.gmOnly && playersWatching(ctx.room)
+        ? 'hidden'
+        : 'visible',
     opacity: clampNumber(t.opacity, 0.05, 1, 1),
     gmOnly: Boolean(t.gmOnly),
     ownerPlayerId: t.ownerPlayerId ?? null,
@@ -157,6 +168,9 @@ export function createTokenHandler(
   emitTokenUpsert(ctx.room, scene, token);
   applyExploration(ctx, scene);
   refreshVision(ctx.room, scene);
+  if (token.visibility === 'hidden' && t.visibility === undefined) {
+    notify(ctx.socket, 'info', `${token.name} entrou oculto: ha jogadores na mesa. Revele no inspetor quando for a hora.`);
+  }
   ok(ack, token);
 }
 
