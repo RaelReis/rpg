@@ -143,7 +143,7 @@ function Slot({
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic,image/heif"
         hidden
         onChange={(e) => void send(e.target.files)}
       />

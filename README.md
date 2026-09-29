@@ -827,18 +827,28 @@ cena. Quem ainda não enviou retrato aparece com a inicial na própria cor.
 
 ## Uploads
 
-| Categoria | Limite | Quem envia |
-| --- | --- | --- |
-| Mapa | 20 MB | mestre |
-| Tile | 10 MB | mestre |
-| Token | 5 MB | todos |
-| Retrato | 5 MB | todos |
-| Efeito | 5 MB | mestre |
-| Cartela | 10 MB | mestre |
-| Pista (quadro) | 5 MB | todos |
-| Item | 2 MB | todos |
+| Categoria | Limite | Lado máximo | Quem envia |
+| --- | --- | --- | --- |
+| Mapa | 20 MB | 8192 px | mestre |
+| Tile | 10 MB | 4096 px | mestre |
+| Token / corpo inteiro | 5 MB | 2048 px | todos |
+| Retrato | 5 MB | 1024 px | todos |
+| Efeito | 5 MB | 2048 px | mestre |
+| Cartela | 10 MB | 4096 px | mestre |
+| Pista (quadro) | 5 MB | 1600 px | todos |
+| Item | 2 MB | 1600 px | todos |
 
-Formatos: PNG, JPEG, WebP, GIF, AVIF; até 8192 px por lado.
+Formatos: PNG, JPEG, WebP, GIF, AVIF.
+
+**Imagem grande é reduzida no navegador antes de subir.** Acima do limite ou do
+lado máximo, ela é redimensionada e recodificada — JPEG continua JPEG; PNG,
+WebP e AVIF viram WebP, que mantém a transparência do personagem recortado.
+Imagem dentro das regras sobe intacta. Assim a foto de celular (de 5 a 10 MB)
+entra sem que o jogador precise reduzi-la em outro programa. Duas exceções:
+GIF animado continua preso ao limite, porque a redução perderia a animação; e
+foto HEIC do iPhone é convertida quando o navegador sabe lê-la (Safari sabe) —
+nos outros, a mensagem pede para exportar como JPEG. O servidor continua
+conferindo limite, formato e dimensão.
 
 O arquivo **nunca é confiado pelo nome**: o formato real é detectado
 decodificando os bytes, e a extensão gravada vem dessa detecção — um `.png` que

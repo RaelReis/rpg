@@ -239,7 +239,7 @@ export function ClueBoardView(): JSX.Element | null {
               ref={fileRef}
               type="file"
               hidden
-              accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic,image/heif"
               onChange={(e) => void addImage(e.target.files)}
             />
             <select

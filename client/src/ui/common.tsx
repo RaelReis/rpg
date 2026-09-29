@@ -329,13 +329,17 @@ export function Dropzone({
       >
         {busy ? 'Enviando...' : (label ?? 'Arraste uma imagem ou clique para escolher')}
         <span className="hint" style={{ display: 'block', marginTop: 4 }}>
-          PNG, JPEG, WebP, GIF ou AVIF — ate {formatBytes(uploadLimitFor(kind))}
+          {/* O limite deixou de ser um teto para quem envia: acima dele a imagem
+              e reduzida antes de subir (ver `shrink.ts`). So o GIF animado,
+              que perderia a animacao, continua preso a ele. */}
+          PNG, JPEG, WebP, AVIF ou GIF (animado ate {formatBytes(uploadLimitFor(kind))}) — imagens
+          grandes sao reduzidas antes de enviar
         </span>
       </button>
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic,image/heif"
         multiple={multiple}
         hidden
         onChange={(e) => void send(e.target.files)}

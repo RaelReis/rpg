@@ -142,7 +142,7 @@ function SheetHeader({
           <button className="btn sm" onClick={() => inputRef.current?.click()}>Trocar retrato</button>
           <button className="btn sm" onClick={() => bodyRef.current?.click()}>Trocar corpo inteiro</button>
         </div>}
-        <input ref={bodyRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden onChange={async e => {
+        <input ref={bodyRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic,image/heif" hidden onChange={async e => {
           const file = e.target.files?.[0]; if (!file) return;
           try { const asset = await uploadAsset(file, 'token'); await act('sheet:update', { sheetId: sheet.id, bodyAssetId: asset.id }); }
           catch (err) { notify('error', (err as Error).message); }

@@ -1,5 +1,7 @@
 import { UPLOAD_LIMITS, type Asset, type AssetKind, type Session } from '@rpg/shared';
 
+import { useStore } from '../state/store';
+import { shrinkForUpload } from './shrink';
 import { storedSession } from './socket';
 
 async function request(url: string, init: RequestInit = {}): Promise<Response> {
@@ -84,12 +86,18 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Envia uma imagem. O tamanho e conferido aqui apenas para dar erro imediato:
- * quem realmente valida (tipo, dimensoes e limite por categoria) e o servidor.
+ * Envia uma imagem, reduzida antes se passar do limite ou do lado maximo do
+ * tipo (ver `shrink.ts`). O tamanho e conferido aqui apenas para dar erro
+ * imediato: quem realmente valida (tipo, dimensoes e limite por categoria) e o
+ * servidor.
  */
-export async function uploadAsset(file: File, kind: AssetKind): Promise<Asset> {
+export async function uploadAsset(original: File, kind: AssetKind): Promise<Asset> {
   const session = storedSession();
   if (!session) throw new Error('Sessao ausente.');
+
+  const file = await shrinkForUpload(original, kind, () =>
+    useStore.getState().notify('info', `Reduzindo "${original.name}" para enviar...`),
+  );
 
   const limit = uploadLimitFor(kind);
   if (file.size > limit) {
