@@ -27,7 +27,7 @@ vi.mock('./db.js', () => ({
   withRetry: (fn: () => unknown) => fn(),
 }));
 
-import { bindIo, type TypedServer, type TypedSocket } from './broadcast.js';
+import { bindIo, refreshVision, sendFullState, type TypedServer, type TypedSocket } from './broadcast.js';
 import { stateForViewer } from './filter.js';
 import type { Ctx } from './handlers/context.js';
 import { createBoardItem, updateBoardItem } from './handlers/board.js';
@@ -38,6 +38,7 @@ import {
   createTokenHandler,
   createWallHandler,
   deleteTile,
+  deleteWall,
   deleteToken,
   moveToken,
   paintFog,
@@ -401,6 +402,33 @@ describe('vazamentos: achados do relatorio de QA', () => {
     expect(legacy.visibility).toBe('hidden');
     expect(legacy.lightRadius).toBe(0);
     expect(secretsIn(JSON.stringify(stateForViewer(room, alice.socket.data.viewer)))).toEqual([]);
+  });
+
+  // As linhas de porta e janela atravessavam a neblina: todas as nao secretas
+  // iam ao jogador e eram desenhadas por cima do escuro, entregando a planta.
+  it('janela nunca chega ao jogador; porta so depois de vista', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.walls.push(createWall({ id: 'SEGREDO-janela', x1: 70, y1: 0, x2: 70, y2: 70, window: true }));
+    scene.walls.push(createWall({ id: 'porta-longe', x1: 700, y1: 0, x2: 700, y2: 70, door: true }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    sendFullState(room, alice.socket);
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+    expect(JSON.stringify(alice.received)).not.toContain('porta-longe');
+
+    // A Alice chega perto: a porta entra; a janela, nunca.
+    scene.tokens.find((t) => t.id === 'tok-alice')!.x = 560;
+    refreshVision(room, scene);
+    expect(JSON.stringify(alice.received)).toContain('porta-longe');
+    expect(secretsIn(JSON.stringify(alice.received))).toEqual([]);
+
+    // Porta criada e apagada no escuro: nem o id chega.
+    const ack = vi.fn();
+    createWallHandler(ctxOf(room, gm), { sceneId: scene.id, wall: { x1: 1400, y1: 1260, x2: 1470, y2: 1260, door: true } }, ack);
+    const darkId = ack.mock.calls[0][0].data.id as string;
+    deleteWall(ctxOf(room, gm), { sceneId: scene.id, wallId: darkId }, vi.fn());
+    expect(JSON.stringify(alice.received)).not.toContain(darkId);
   });
 
   // Porta trancada: o jogador descobre tentando. A tranca chegando no

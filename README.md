@@ -131,8 +131,9 @@ não deveria saber de algo, aquilo não entra no payload dele:
 
 - tokens e efeitos marcados como *Só o mestre*;
 - tokens dentro da neblina (quando a visão estrita está ligada);
-- as **paredes** da cena — elas descrevem a planta do mapa e apareceriam
-  inteiras no inspecionador de rede do navegador;
+- as **paredes e janelas** da cena — elas descrevem a planta do mapa e
+  apareceriam inteiras no inspecionador de rede do navegador; das **portas**,
+  só as que o jogador já viu (na visão ou na área explorada), e nunca a tranca;
 - **tiles que bloqueiam a visão**, pelo mesmo motivo das paredes, e os demais
   tiles e efeitos de mapa fora do que o jogador viu (com a visão estrita): o
   cenário chega quando entra na visão ou na área explorada, e o efeito acima da
@@ -350,8 +351,11 @@ fecha — o jogador não fecha nem a porta que foi trancada aberta. No mapa do
 mestre ela ganha um cadeado; o jogador **descobre tentando**: o servidor nunca
 lhe manda a tranca, e o clique numa porta trancada mostra o aviso *Trancada*
 sobre ela. Assim ninguém sabe de longe quais portas vale a pena forçar.
-Janelas e portas são desenhadas para os jogadores; paredes comuns e secretas,
-não.
+Para os jogadores, **só as portas que eles já viram** são desenhadas — as da
+visão atual ou da área explorada. Paredes comuns, janelas e paredes secretas
+não aparecem: a janela já está na arte do mapa, e as linhas atravessavam a
+neblina, entregando a planta de salas que ninguém visitou. O efeito da janela
+(deixar ver, não deixar passar) continua valendo no cálculo da visão.
 
 **Toda ficha nova ganha o próprio token** na cena ativa, ligado a ela, com o
 dono, as barras do modelo e visão 1. Na aba *Fichas*, o mestre **arrasta uma

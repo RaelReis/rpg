@@ -6,6 +6,7 @@ import {
   canPlayerSeeToken,
   cellsInRect,
   hexRadius,
+  isDoorSeen,
   isDoorWithinSight,
   isHallucination,
   isHex,
@@ -1521,8 +1522,11 @@ function drawWalls(input: RenderInput): void {
 
   ctx.save();
   for (const wall of scene.walls) {
-    // O jogador so ve portas e janelas; paredes comuns sao informacao do mestre.
-    if (role !== 'GM' && ((!wall.door && !wall.window) || wall.hidden)) continue;
+    // O jogador so ve portas, e so as que ja viu. Paredes comuns e janelas sao
+    // ferramenta de montagem do mestre — a janela ja esta na arte do mapa, e a
+    // linha azul atravessava a neblina entregando a planta. Vale tambem sem a
+    // visao no servidor, quando o cliente recebe todas as paredes.
+    if (role !== 'GM' && (!wall.door || wall.hidden || !isDoorSeen(scene, input.vision, wall))) continue;
 
     ctx.beginPath();
     ctx.moveTo(wall.x1, wall.y1);

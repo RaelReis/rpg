@@ -24,6 +24,7 @@ import {
   visionFor,
   type Viewer,
   wallForPlayer,
+  wallShownTo,
 } from './filter.js';
 import type { Room } from './room.js';
 
@@ -43,6 +44,8 @@ export interface SocketData {
    * cenario que ja viu; o conjunto muda com a visao e da o delta a enviar.
    */
   visibleTiles: Set<string>;
+  /** Paredes (na pratica, portas) que este socket recebeu; mesma logica dos tiles. */
+  visibleWalls: Set<string>;
   currentSceneId: string | null;
   /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
   knownAssets: Set<string>;
@@ -133,6 +136,7 @@ export function stateWithVisibilityCache(room: Room, socket: TypedSocket) {
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
   socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
   socket.data.visibleTiles = new Set(scene?.tiles.map((t) => t.id) ?? []);
+  socket.data.visibleWalls = new Set(scene?.walls.map((w) => w.id) ?? []);
   socket.data.knownAssets = new Set(state.assets.map((a) => a.id));
   return state;
 }
@@ -160,6 +164,7 @@ export function pushScene(room: Room, scene: Scene): void {
     if (viewer.role !== 'GM') {
       socket.data.visibleEffects = new Set(filtered.effects.map((e) => e.id));
       socket.data.visibleTiles = new Set(filtered.tiles.map((t) => t.id));
+      socket.data.visibleWalls = new Set(filtered.walls.map((w) => w.id));
     }
     syncAssets(room, socket, assetIdsOfScene(filtered));
     socket.emit('scene:patch', { sceneId: scene.id, patch: filtered });
@@ -222,6 +227,14 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
       if (effects.upsert.length || effects.remove.length) {
         syncAssets(room, socket, effects.upsert.map((e) => e.assetId));
         socket.emit('effects:patch', { sceneId: scene.id, ...effects });
+      }
+      // A porta chega quando o jogador a ve pela primeira vez e fica enquanto
+      // ela estiver na area explorada.
+      const walls = diffShown(scene.walls, (socket.data.visibleWalls ??= new Set()), (w) =>
+        wallShownTo(room, scene, w, viewer, vision),
+      );
+      if (walls.upsert.length || walls.remove.length) {
+        socket.emit('walls:patch', { sceneId: scene.id, upsert: walls.upsert.map(wallForPlayer), remove: walls.remove });
       }
     }
 
@@ -383,14 +396,16 @@ export function emitWalls(room: Room, scene: Scene, upsert: Wall[], remove: stri
     }
     if (scene.id !== room.state.activeSceneId) continue;
 
-    // Sem strictVision o cliente calcula a propria visao e precisa das paredes.
-    // Portas e janelas sao coisas que o jogador enxerga no mapa; paredes
-    // comuns, nao.
-    const drawable = (w: Wall) => (w.door || w.window) && !w.hidden;
-    const allowed = (strict ? upsert.filter(drawable) : upsert.filter((w) => !w.hidden)).map(wallForPlayer);
-    const hide = strict
-      ? [...remove, ...upsert.filter((w) => !drawable(w)).map((w) => w.id)]
-      : [...remove, ...upsert.filter((w) => w.hidden).map((w) => w.id)];
+    // Mesma regra do estado inicial (`wallShownTo`); a remocao so vai a quem
+    // tinha a parede, para nao anunciar o id de uma porta que ele nunca viu.
+    const vision = strict ? visionFor(scene, socket.data.viewer) : undefined;
+    const known = (socket.data.visibleWalls ??= new Set());
+    const shown = upsert.filter((w) => wallShownTo(room, scene, w, socket.data.viewer, vision));
+    const shownIds = new Set(shown.map((w) => w.id));
+    const hide = [...remove, ...upsert.filter((w) => !shownIds.has(w.id)).map((w) => w.id)].filter((id) => known.has(id));
+    for (const id of hide) known.delete(id);
+    for (const w of shown) known.add(w.id);
+    const allowed = shown.map(wallForPlayer);
 
     if (allowed.length || hide.length) {
       socket.emit('walls:patch', { sceneId: scene.id, upsert: allowed, remove: hide });

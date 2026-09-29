@@ -6,6 +6,7 @@ import {
   boardForViewer,
   filterTemplateForRole,
   isEffectSeen,
+  isDoorSeen,
   isTileSeen,
   perceives,
   reduceScreenEffect,
@@ -51,6 +52,20 @@ export function visionFor(scene: Scene, viewer: Viewer): VisionResult {
 }
 
 /** Ids dos tokens que este observador enxerga na cena. */
+/**
+ * A parede chega a este jogador? Parede secreta nunca. Com a visao no servidor,
+ * so a porta que ele ja viu (`isDoorSeen`): paredes comuns e janelas ficam no
+ * servidor, que ja calcula a visao com elas — a janela chegava ao jogador so
+ * para ser desenhada por cima da neblina. Sem a visao no servidor, o cliente
+ * calcula a propria visao e precisa de todas.
+ */
+export function wallShownTo(room: Room, scene: Scene, wall: Wall, viewer: Viewer, vision?: VisionResult): boolean {
+  if (viewer.role === 'GM') return true;
+  if (wall.hidden) return false;
+  if (!room.state.settings.strictVision) return true;
+  return wall.door && isDoorSeen(scene, vision ?? visionFor(scene, viewer), wall);
+}
+
 /** A parede como o jogador a recebe: a tranca so aparece quando ele tenta abrir. */
 export function wallForPlayer(wall: Wall): Wall {
   return wall.locked ? { ...wall, locked: false } : wall;
@@ -89,9 +104,7 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
   // mapa e apareceriam inteiras no inspecionador de rede do navegador. O que
   // o jogador recebe sao portas visiveis (para poder interagir) e o resultado
   // ja calculado da visao.
-  const walls = (
-    strict ? scene.walls.filter((w) => (w.door || w.window) && !w.hidden) : scene.walls.filter((w) => !w.hidden)
-  ).map(wallForPlayer);
+  const walls = scene.walls.filter((w) => wallShownTo(room, scene, w, viewer, vision)).map(wallForPlayer);
 
   // Com strictVision, as listas cruas de neblina (onde o mestre pintou, o que
   // o grupo ja explorou) nao saem do servidor; vao apenas as celulas

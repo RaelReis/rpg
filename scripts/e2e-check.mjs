@@ -1166,7 +1166,9 @@ async function main() {
   const windowWalls = waitFor(alice, 'walls:patch', (p) => p.upsert?.some((w) => w.id === glass.id));
   await rpc(gm2, 'wall:update', { sceneId: scene2, wallId: glass.id, patch: { window: true } });
   check('janela deixa ver o outro lado', !!(await windowVision));
-  check('o jogador recebe a janela para desenhar', !!(await windowWalls));
+  // A janela fica no servidor: a arte do mapa ja a mostra, e a linha dela
+  // atravessava a neblina entregando a planta.
+  check('a janela nao chega ao jogador', !(await windowWalls));
 
   let windowCrossRefused = false;
   try {

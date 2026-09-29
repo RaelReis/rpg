@@ -392,6 +392,29 @@ export function isDoorWithinSight(
   vision: VisionResult,
   wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
 ): boolean {
+  return doorTouches(scene, vision, wall, (key) => vision.visible.has(key));
+}
+
+/**
+ * O jogador ja viu esta porta — agora ou antes (area explorada)? E o que decide
+ * se ela chega a ele e se aparece no mapa. Antes todas as portas e janelas iam
+ * para o jogador e eram desenhadas por cima da neblina: as linhas atravessavam
+ * o escuro e entregavam a planta de salas que ninguem tinha visitado.
+ */
+export function isDoorSeen(
+  scene: Scene,
+  vision: VisionResult,
+  wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
+): boolean {
+  return doorTouches(scene, vision, wall, (key) => vision.visible.has(key) || vision.explored.has(key));
+}
+
+function doorTouches(
+  scene: Scene,
+  vision: VisionResult,
+  wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
+  known: (cellKey: string) => boolean,
+): boolean {
   if (vision.gm || vision.unrestricted || scene.fog.mode === 'off') return true;
 
   const dx = wall.x2 - wall.x1;
@@ -407,7 +430,7 @@ export function isDoorWithinSight(
     const mx = wall.x1 + dx * t;
     const my = wall.y1 + dy * t;
     for (const side of [1, -1]) {
-      if (isPointVisible(scene, vision, { x: mx + nx * reach * side, y: my + ny * reach * side })) return true;
+      if (known(cellKey(cellAt(scene.grid, { x: mx + nx * reach * side, y: my + ny * reach * side })))) return true;
     }
   }
   return false;
