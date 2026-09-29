@@ -165,7 +165,14 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     width: partial.width ?? 2100,
     height: partial.height ?? 1400,
     grid: { ...DEFAULT_GRID, ...(partial.grid ?? {}) },
-    fog: { ...DEFAULT_FOG, ...(partial.fog ?? {}) },
+    // As listas sao copiadas: o espalhamento sozinho deixava toda cena nova
+    // apontando para os mesmos arrays do DEFAULT_FOG, e o que se explorava numa
+    // entrava em todas as outras criadas na mesma execucao — ate em outra mesa —,
+    // ate o servidor recarregar a cena do banco.
+    fog: (() => {
+      const fog = { ...DEFAULT_FOG, ...(partial.fog ?? {}) };
+      return { ...fog, explored: [...fog.explored], revealed: [...fog.revealed], hidden: [...fog.hidden] };
+    })(),
     // Pela fabrica, para paredes gravadas antes de um campo novo (`locked`)
     // chegarem completas.
     walls: (partial.walls ?? []).map((w) => createWall(w)),

@@ -473,3 +473,17 @@ describe('isTileSeen e isEffectSeen', () => {
     expect(isEffectSeen(scene(), vision, effect(0.5 * SIZE, 4))).toBe(true);
   });
 });
+
+describe('neblina de cena nova', () => {
+  // Cenas criadas na mesma execucao dividiam os arrays do DEFAULT_FOG: o que
+  // uma explorava aparecia como lembrado em todas as outras, ate em outra mesa.
+  it('cada cena tem as proprias listas', () => {
+    const a = createScene({});
+    const b = createScene({});
+    a.fog.explored.push('1,1');
+    a.fog.revealed.push('2,2');
+    a.fog.hidden.push('3,3');
+    expect(b.fog).toMatchObject({ explored: [], revealed: [], hidden: [] });
+    expect(createScene({}).fog.explored).toEqual([]);
+  });
+});
