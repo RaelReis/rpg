@@ -106,6 +106,13 @@ export function validateBackup(raw: unknown): asserts raw is Partial<TableBackup
       for (const key of ['explored', 'revealed', 'hidden']) {
         if (list(fog[key], 200000, `neblina.${key}`).some(v => typeof v !== 'string' || !/^-?\d+,-?\d+$/.test(v))) invalid(`neblina.${key}`);
       }
+      if (fog.exploredBy !== undefined) {
+        const byPlayer = object(fog.exploredBy, 'neblina.exploredBy');
+        if (Object.keys(byPlayer).length > 60) invalid('neblina.exploredBy');
+        for (const cells of Object.values(byPlayer)) {
+          if (list(cells, 200000, 'neblina.exploredBy').some(v => typeof v !== 'string' || !/^-?\d+,-?\d+$/.test(v))) invalid('neblina.exploredBy');
+        }
+      }
       delete fog.computedVisible; delete fog.computedExplored;
     }
     if (scene.weather !== undefined) {

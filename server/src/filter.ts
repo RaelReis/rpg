@@ -6,6 +6,7 @@ import {
   boardForViewer,
   filterTemplateForRole,
   isEffectSeen,
+  exploredCellsOf,
   isDoorSeen,
   isTileSeen,
   perceives,
@@ -26,6 +27,7 @@ import {
   type Token,
   type TurnEntry,
   type TurnState,
+  type SharedSight,
   type VisionResult,
   type Wall,
 } from '@rpg/shared';
@@ -47,11 +49,10 @@ export interface Viewer {
   role: Role;
 }
 
-export function visionFor(scene: Scene, viewer: Viewer): VisionResult {
-  return computeVision(scene, { role: viewer.role, playerId: viewer.playerId });
+export function visionFor(scene: Scene, viewer: Viewer, shared?: SharedSight): VisionResult {
+  return computeVision(scene, { role: viewer.role, playerId: viewer.playerId, shared });
 }
 
-/** Ids dos tokens que este observador enxerga na cena. */
 /**
  * A parede chega a este jogador? Parede secreta nunca. Com a visao no servidor,
  * so a porta que ele ja viu (`isDoorSeen`): paredes comuns e janelas ficam no
@@ -71,6 +72,7 @@ export function wallForPlayer(wall: Wall): Wall {
   return wall.locked ? { ...wall, locked: false } : wall;
 }
 
+/** Ids dos tokens que este observador enxerga na cena. */
 export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionResult): Set<string> {
   const v = vision ?? visionFor(scene, viewer);
   const out = new Set<string>();
@@ -111,13 +113,16 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
   // calculadas para ESTE jogador. Com a neblina desligada nao existem celulas
   // calculadas, e mandar listas vazias seria pedir para o cliente interpretar
   // "vazio" como "nao ve nada" — a cena inteira ficaria preta.
+  // A exploracao dos outros jogadores nunca sai: sem strictVision o jogador
+  // recebe a propria somada a base comum; com ela, so o resultado calculado.
   const fog = !strict
-    ? scene.fog
+    ? { ...scene.fog, explored: exploredCellsOf(scene, viewer.playerId), exploredBy: {} }
     : scene.fog.mode === 'off'
-      ? { ...scene.fog, explored: [], revealed: [], hidden: [] }
+      ? { ...scene.fog, explored: [], exploredBy: {}, revealed: [], hidden: [] }
       : {
           ...scene.fog,
           explored: [],
+          exploredBy: {},
           revealed: [],
           hidden: [],
           computedVisible: [...vision.visible],

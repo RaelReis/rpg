@@ -144,6 +144,11 @@ describe('audit regressions', () => {
     expect(() => validateBackup({ ...backup, scenes: [{ ...room.state.scenes[0], tokens: [{ id: 'bad', visionRadius: 1e9 }] }] })).toThrow();
     expect(() => validateBackup({ ...backup, scenes: [{ ...room.state.scenes[0], backgroundAssetId: 'foreign' }] })).toThrow();
     expect(() => validateBackup({ ...backup, sheets: [{ ...room.state.sheets[0], values: { items: [null] } }] })).toThrow();
+    // Exploracao por jogador: celulas validas passam, lixo nao.
+    const explored = (exploredBy: unknown) => ({ ...backup, scenes: [{ ...room.state.scenes[0], fog: { ...room.state.scenes[0].fog, exploredBy } }] });
+    expect(() => validateBackup(explored({ ply_a: ['12,-3', '0,0'] }))).not.toThrow();
+    expect(() => validateBackup(explored({ ply_a: ['x'] }))).toThrow();
+    expect(() => validateBackup(explored(['1,1']))).toThrow();
   });
   it('does not permit binding a secret image to a public character', () => {
     const room = fixture();

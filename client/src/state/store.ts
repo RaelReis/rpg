@@ -593,6 +593,7 @@ export const useStore = create<AppState>((set, get) => ({
         // Reset das listas cruas, feito pelo mestre: substitui, nao acumula.
         if (patch.reset) {
           if (patch.reset.explored) scene.fog.explored = patch.reset.explored;
+          if (patch.reset.exploredBy) scene.fog.exploredBy = patch.reset.exploredBy;
           if (patch.reset.revealed) scene.fog.revealed = patch.reset.revealed;
           if (patch.reset.hidden) scene.fog.hidden = patch.reset.hidden;
           return;
@@ -610,6 +611,15 @@ export const useStore = create<AppState>((set, get) => ({
         };
 
         scene.fog.explored = apply(scene.fog.explored, patch.explored);
+        // Exploracao por jogador: so o mestre recebe, para a previa "ver pelos
+        // olhos" mostrar a memoria daquele jogador, e nao a do grupo.
+        if (patch.exploredBy) {
+          const next = { ...(scene.fog.exploredBy ?? {}) };
+          for (const [playerId, delta] of Object.entries(patch.exploredBy)) {
+            next[playerId] = apply(next[playerId] ?? [], delta);
+          }
+          scene.fog.exploredBy = next;
+        }
         scene.fog.revealed = apply(scene.fog.revealed, patch.revealed);
         scene.fog.hidden = apply(scene.fog.hidden, patch.hidden);
       });

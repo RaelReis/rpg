@@ -411,8 +411,14 @@ export interface CreatedTable {
  * explorado, essa lista sozinha domina o custo do flush.
  */
 function sceneForStorage(scene: Scene): Record<string, unknown> {
-  const { explored, ...fog } = scene.fog;
-  return { ...scene, fog: { ...fog, exploredRuns: encodeExploredCells(explored) } };
+  const { explored, exploredBy, ...fog } = scene.fog;
+  // A exploracao por jogador usa o mesmo codec: com quatro jogadores, sao
+  // quatro listas do tamanho da antiga, e o custo do flush crescia junto.
+  const exploredByRuns: Record<string, unknown> = {};
+  for (const [playerId, cells] of Object.entries(exploredBy)) {
+    if (cells.length) exploredByRuns[playerId] = encodeExploredCells(cells);
+  }
+  return { ...scene, fog: { ...fog, exploredRuns: encodeExploredCells(explored), exploredByRuns } };
 }
 
 /** Desfaz `sceneForStorage`, aceitando tambem cenas gravadas antes dele. */
@@ -421,15 +427,20 @@ function sceneFromStorage(raw: string): Partial<Scene> {
   const fog = parsed.fog as Record<string, unknown> | undefined;
   if (!fog) return parsed as Partial<Scene>;
 
+  const { exploredRuns, exploredByRuns, ...rest } = fog;
+  const decoded: Record<string, unknown> = { ...rest };
   // Cenas anteriores ao codec ainda trazem `explored` como lista de chaves.
-  if (fog.exploredRuns) {
-    const { exploredRuns, ...rest } = fog;
-    return {
-      ...parsed,
-      fog: { ...rest, explored: decodeExploredCells(exploredRuns as never) },
-    } as Partial<Scene>;
+  if (exploredRuns) decoded.explored = decodeExploredCells(exploredRuns as never);
+  // Cenas anteriores a exploracao individual nao tem `exploredByRuns`: tudo o
+  // que o grupo explorou fica na base comum, e ninguem perde o que ja mapeou.
+  if (exploredByRuns && typeof exploredByRuns === 'object') {
+    const exploredBy: Record<string, string[]> = {};
+    for (const [playerId, runs] of Object.entries(exploredByRuns as Record<string, unknown>)) {
+      exploredBy[playerId] = decodeExploredCells(runs as never);
+    }
+    decoded.exploredBy = exploredBy;
   }
-  return parsed as Partial<Scene>;
+  return { ...parsed, fog: decoded } as unknown as Partial<Scene>;
 }
 
 class RoomManager {

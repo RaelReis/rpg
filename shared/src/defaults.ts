@@ -148,6 +148,7 @@ export const DEFAULT_WEATHER: WeatherConfig = { kind: 'none', intensity: 0.5, an
 export const DEFAULT_FOG: FogConfig = {
   mode: 'off',
   explored: [],
+  exploredBy: {},
   revealed: [],
   hidden: [],
   rememberExplored: true,
@@ -171,7 +172,17 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     // ate o servidor recarregar a cena do banco.
     fog: (() => {
       const fog = { ...DEFAULT_FOG, ...(partial.fog ?? {}) };
-      return { ...fog, explored: [...fog.explored], revealed: [...fog.revealed], hidden: [...fog.hidden] };
+      const exploredBy: Record<string, string[]> = {};
+      for (const [playerId, cells] of Object.entries(fog.exploredBy ?? {})) {
+        if (Array.isArray(cells)) exploredBy[playerId] = [...cells];
+      }
+      return {
+        ...fog,
+        explored: [...fog.explored],
+        exploredBy,
+        revealed: [...fog.revealed],
+        hidden: [...fog.hidden],
+      };
     })(),
     // Pela fabrica, para paredes gravadas antes de um campo novo (`locked`)
     // chegarem completas.

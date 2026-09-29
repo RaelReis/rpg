@@ -7,6 +7,8 @@ import {
   canPlayerSeeToken,
   collectBlockers,
   computeVision,
+  newlyExploredCells,
+  partySightCells,
   dragStepAllowed,
   hasLineOfSight,
   isDoorWithinSight,
@@ -485,5 +487,72 @@ describe('neblina de cena nova', () => {
     a.fog.hidden.push('3,3');
     expect(b.fog).toMatchObject({ explored: [], revealed: [], hidden: [] });
     expect(createScene({}).fog.explored).toEqual([]);
+  });
+});
+
+describe('exploracao e luz por jogador', () => {
+  // Duas salas separadas por uma parede em x=700. Alice na da esquerda, Bruno
+  // na da direita, cada um com visao 2; uma tocha sem dono no fundo da sala
+  // do Bruno, longe dele.
+  function rooms(): Scene {
+    return createScene({
+      width: 2100,
+      height: 1400,
+      globalLight: 0,
+      fog: { mode: 'vision' } as never,
+      walls: [createWall({ x1: 700, y1: 0, x2: 700, y2: 1400 })],
+      tokens: [
+        createToken({ id: 'alice', ownerPlayerId: 'ply_a', x: 140, y: 140, visionRadius: 2 }),
+        createToken({ id: 'bruno', ownerPlayerId: 'ply_b', x: 1400, y: 140, visionRadius: 2 }),
+        createToken({ id: 'tocha', x: 1540, y: 1120, lightRadius: 2 }),
+      ],
+    });
+  }
+  const torchCell = cellKey({ a: 22, b: 16 });
+  const aliceCell = cellKey({ a: 2, b: 2 });
+
+  it('o que a Alice explora nao entra na memoria do Bruno', () => {
+    const s = rooms();
+    const fresh = newlyExploredCells(s);
+    expect(fresh.get('ply_a')).toContain(aliceCell);
+    expect(fresh.get('ply_b')).not.toContain(aliceCell);
+    for (const [playerId, cells] of fresh) s.fog.exploredBy[playerId] = cells;
+
+    // A Alice sai de perto; o Bruno nunca esteve la.
+    s.tokens[0].x = 560;
+    const alice = computeVision(s, { role: 'PLAYER', playerId: 'ply_a' });
+    const bruno = computeVision(s, { role: 'PLAYER', playerId: 'ply_b' });
+    expect(alice.explored.has(aliceCell)).toBe(true);
+    expect(bruno.explored.has(aliceCell)).toBe(false);
+  });
+
+  it('a exploracao gravada antes vale para todos, como base comum', () => {
+    const s = rooms();
+    s.fog.explored = ['9,9'];
+    for (const playerId of ['ply_a', 'ply_b']) {
+      expect(computeVision(s, { role: 'PLAYER', playerId }).explored.has('9,9')).toBe(true);
+    }
+  });
+
+  it('luz alheia so aparece para quem tem linha de visao ate ela', () => {
+    const s = rooms();
+    // Bruno, na mesma sala, ve a area da tocha mesmo fora do proprio raio.
+    expect(computeVision(s, { role: 'PLAYER', playerId: 'ply_b' }).visible.has(torchCell)).toBe(true);
+    // Alice, atras da parede, nao — antes a luz aparecia para todos.
+    expect(computeVision(s, { role: 'PLAYER', playerId: 'ply_a' }).visible.has(torchCell)).toBe(false);
+  });
+
+  it('a propria luz ilumina para o dono', () => {
+    const s = rooms();
+    s.tokens[0].visionRadius = 0;
+    s.tokens[0].lightRadius = 3;
+    expect(computeVision(s, { role: 'PLAYER', playerId: 'ply_a' }).visible.has(aliceCell)).toBe(true);
+  });
+
+  it('a visao do grupo e a uniao do que cada um ve', () => {
+    const s = rooms();
+    const party = partySightCells(s);
+    expect(party.has(aliceCell)).toBe(true);
+    expect(party.has(torchCell)).toBe(true);
   });
 });

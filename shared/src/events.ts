@@ -135,10 +135,15 @@ export interface CellSet {
 export interface FogPatch {
   sceneId: string;
   explored?: CellSet;
+  /**
+   * Exploracao individual, por jogador. So o mestre recebe; o jogador sem
+   * `strictVision` recebe a propria ja somada em `explored`.
+   */
+  exploredBy?: Record<string, CellSet>;
   revealed?: CellSet;
   hidden?: CellSet;
   /** Substituicao total das listas cruas (reset do mestre). */
-  reset?: { explored?: string[]; revealed?: string[]; hidden?: string[] };
+  reset?: { explored?: string[]; exploredBy?: Record<string, string[]>; revealed?: string[]; hidden?: string[] };
   /**
    * Visao ja calculada pelo servidor para ESTE jogador (`strictVision`).
    *

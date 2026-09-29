@@ -388,7 +388,12 @@ export async function kickPlayer(ctx: Ctx, payload: { playerId: string }, ack: A
   }
 
   // Tokens dele sem ficha (um familiar, um aliado) ficam no mapa, sem dono.
+  // A area que so ele explorou sai junto: nao ha mais quem a lembre.
   for (const scene of ctx.room.state.scenes) {
+    if (scene.fog.exploredBy[target.id]) {
+      delete scene.fog.exploredBy[target.id];
+      ctx.room.touchScene(scene.id);
+    }
     for (const token of scene.tokens) {
       if (token.ownerPlayerId !== target.id) continue;
       token.ownerPlayerId = null;

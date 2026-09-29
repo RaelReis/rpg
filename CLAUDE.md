@@ -108,6 +108,12 @@ quando o corte era do meu próprio recorte de screenshot.
   envie paredes ao jogador tem de passar por ela e por `wallShownTo`: com a
   visão no servidor, o jogador só recebe a porta que já viu (`isDoorSeen`), e
   nunca janela ou parede comum.
+- **Visão e exploração são por jogador.** `playerSightCells` junta o que os
+  tokens do jogador veem com a luz alheia que eles têm linha de visão para
+  enxergar; `fog.exploredBy[playerId]` guarda o que cada um explorou, e
+  `fog.explored` virou a base comum (mesas antigas, backup importado). A lista
+  de outro jogador nunca sai do servidor: `sceneForViewer` e `emitFogPatch`
+  entregam só a do próprio, somada à base.
 - **Colisão mede o corpo do token**, não só o centro: trajeto do centro e dos
   quatro cantos, e o corpo não pode parar em cima da parede. Sem isso, tokens de
   tamanho par atravessavam qualquer parede, porque o snap encaixa o centro deles

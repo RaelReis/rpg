@@ -359,7 +359,7 @@ export function ScenePanel(): JSX.Element {
 
             <Toggle
               label="Lembrar areas exploradas"
-              hint="O que ja foi visto continua no mapa, em penumbra, sem mostrar tokens."
+              hint="O que ja foi visto continua no mapa, em penumbra, sem mostrar tokens. Cada jogador lembra so do que o personagem dele viu."
               checked={scene.fog.rememberExplored}
               onChange={(v) => patch({ fog: { ...scene.fog, rememberExplored: v } })}
             />
@@ -397,6 +397,7 @@ export function ScenePanel(): JSX.Element {
               <button
                 className="btn sm"
                 onClick={() => void act('fog:reset', { sceneId: scene.id, scope: 'explored' })}
+                title="Apaga o que todos os jogadores exploraram nesta cena"
               >
                 Reencobrir explorado
               </button>

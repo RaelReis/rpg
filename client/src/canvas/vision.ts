@@ -1,8 +1,7 @@
 import {
   collectBlockers,
   computeVision,
-  isHallucination,
-  tokenVisionCells,
+  partySightCells,
   type Role,
   type Scene,
   type VisionResult,
@@ -119,23 +118,11 @@ export function partyVision(scene: Scene): Set<string> {
   return result;
 }
 
+/**
+ * O que o grupo enxerga agora, para o olho do mestre. Mesma regra do servidor
+ * (`partySightCells`): antes ela somava toda luz do mapa, e o mestre via como
+ * "do grupo" uma sala que nenhum jogador tinha linha de visao para enxergar.
+ */
 function computePartyVision(scene: Scene): Set<string> {
-  const out = new Set<string>();
-  if (scene.fog.mode === 'off') return out;
-
-  const blockers = collectBlockers(scene);
-  for (const token of scene.tokens) {
-    if (token.layer !== 3) continue;
-    if (isHallucination(token)) continue;
-    const isEye = token.ownerPlayerId !== null && token.visionRadius > 0;
-    const isLight = token.lightRadius > 0;
-    if (!isEye && !isLight) continue;
-
-    const radius = Math.max(isEye ? token.visionRadius : 0, token.lightRadius);
-    for (const cell of tokenVisionCells(scene, token, radius, blockers)) out.add(cell);
-  }
-
-  for (const cell of scene.fog.revealed) out.add(cell);
-  for (const cell of scene.fog.hidden) out.delete(cell);
-  return out;
+  return partySightCells(scene);
 }

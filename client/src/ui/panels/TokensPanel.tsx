@@ -341,8 +341,9 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
         />
       </div>
       <span className="hint">
-        A visao serve ao dono do token. A luz revela para todos os jogadores — e a tocha na mao de
-        alguem iluminando a sala inteira.
+        A visao serve ao dono do token. A luz ilumina para todos, mas cada jogador so ve a area
+        iluminada ate onde o personagem dele tem linha de visao — a tocha da sala ao lado nao
+        aparece para quem esta do outro lado da parede.
       </span>
 
       <div className="divider" />

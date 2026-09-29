@@ -10,6 +10,7 @@ import type {
   Token,
   Wall,
 } from '@rpg/shared';
+import { sharedSight, type SharedSight } from '@rpg/shared';
 
 import {
   assetIdsOfScene,
@@ -179,6 +180,8 @@ export function pushScene(room: Room, scene: Scene): void {
  */
 export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<string>): void {
   const strict = room.state.settings.strictVision;
+  // Paredes e luzes sao as mesmas para todos os jogadores desta passagem.
+  let shared: SharedSight | undefined;
 
   for (const socket of socketsOf(room)) {
     const viewer = socket.data.viewer;
@@ -186,7 +189,7 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
     if (scene.id !== room.state.activeSceneId) continue;
     if (onlyPlayerIds && !onlyPlayerIds.has(viewer.playerId)) continue;
 
-    const vision = visionFor(scene, viewer);
+    const vision = visionFor(scene, viewer, (shared ??= sharedSight(scene)));
     const nowVisible = visibleTokenIds(scene, viewer, vision);
     const before = socket.data.visibleTokens ?? new Set<string>();
 

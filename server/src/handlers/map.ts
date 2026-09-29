@@ -363,8 +363,12 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
       const last = lastDragVision.get(token.id) ?? 0;
       if (now - last >= DRAG_VISION_INTERVAL_MS) {
         lastDragVision.set(token.id, now);
-        applyExploration(ctx, scene);
-        refreshVision(ctx.room, scene, new Set([owner]));
+        // So quem arrasta explora durante o arraste; os outros sao
+        // recalculados ao soltar. Por jogador, a exploracao custa o mesmo que
+        // a visao, e fazer a mesa inteira a cada 100 ms multiplicava o custo.
+        const only = new Set([owner]);
+        applyExploration(ctx, scene, only);
+        refreshVision(ctx.room, scene, only);
       }
     }
     return ok(ack, null);
@@ -420,15 +424,19 @@ export function deleteToken(ctx: Ctx, payload: { sceneId: string; tokenId: strin
 // Neblina
 // ---------------------------------------------------------------------------
 
-/** Acumula em `fog.explored` o que os tokens de jogador acabaram de descobrir. */
-function applyExploration(ctx: Ctx, scene: Scene): void {
-  const fresh = newlyExploredCells(scene);
-  if (fresh.length === 0) return;
+/** Acumula em `fog.exploredBy` o que cada jogador acabou de descobrir. */
+function applyExploration(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>): void {
+  const fresh = newlyExploredCells(scene, onlyPlayerIds);
+  if (fresh.size === 0) return;
 
-  scene.fog.explored.push(...fresh);
+  const exploredBy: Record<string, FogSetDelta> = {};
+  for (const [playerId, cells] of fresh) {
+    (scene.fog.exploredBy[playerId] ??= []).push(...cells);
+    exploredBy[playerId] = { add: cells };
+  }
   ctx.room.touchScene(scene.id);
 
-  emitFogPatch(ctx, scene, { explored: { add: fresh } });
+  emitFogPatch(ctx, scene, { exploredBy });
 }
 
 export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): void {
@@ -453,6 +461,16 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
     return changed;
   };
 
+  /** Tira as celulas pintadas da exploracao de cada jogador. */
+  const forgetExplored = (): Record<string, FogSetDelta> => {
+    const out: Record<string, FogSetDelta> = {};
+    for (const [playerId, list] of Object.entries(scene.fog.exploredBy)) {
+      const removed = apply(list, false);
+      if (removed.length) out[playerId] = { remove: removed };
+    }
+    return out;
+  };
+
   let patch: FogDelta = {};
 
   switch (payload.action) {
@@ -463,13 +481,13 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
       break;
     }
     case 'hide': {
-      // Cobrir de volta, sem selar: apaga o revelado e o explorado, e a area
-      // volta a ser descobrivel por quem andar ate la. E o que se espera do
-      // gesto de "fechar o mapa" — selar seria uma decisao bem mais forte,
-      // e por isso mora em `block`.
+      // Cobrir de volta, sem selar: apaga o revelado e o explorado — de todos
+      // os jogadores —, e a area volta a ser descobrivel por quem andar ate la.
+      // E o que se espera do gesto de "fechar o mapa"; selar seria uma decisao
+      // bem mais forte, e por isso mora em `block`.
       const unrevealed = apply(scene.fog.revealed, false);
       const unexplored = apply(scene.fog.explored, false);
-      patch = { revealed: { remove: unrevealed }, explored: { remove: unexplored } };
+      patch = { revealed: { remove: unrevealed }, explored: { remove: unexplored }, exploredBy: forgetExplored() };
       break;
     }
     case 'block': {
@@ -480,6 +498,7 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
         hidden: { add: added },
         revealed: { remove: unrevealed },
         explored: { remove: unexplored },
+        exploredBy: forgetExplored(),
       };
       break;
     }
@@ -500,7 +519,12 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
 }
 
 type FogSetDelta = { add?: string[]; remove?: string[] };
-type FogDelta = { explored?: FogSetDelta; revealed?: FogSetDelta; hidden?: FogSetDelta };
+type FogDelta = {
+  explored?: FogSetDelta;
+  exploredBy?: Record<string, FogSetDelta>;
+  revealed?: FogSetDelta;
+  hidden?: FogSetDelta;
+};
 
 /**
  * Entrega as listas cruas de neblina a quem tem direito a elas.
@@ -516,19 +540,52 @@ function emitFogPatch(ctx: Ctx, scene: Scene, patch: FogDelta | { reset: FogSetL
   const strict = ctx.room.state.settings.strictVision;
   for (const socket of socketsOf(ctx.room)) {
     const gm = socket.data.viewer.role === 'GM';
-    if (!gm && (strict || scene.id !== ctx.room.state.activeSceneId)) continue;
-    socket.emit('fog:patch', { sceneId: scene.id, ...patch });
+    if (gm) {
+      socket.emit('fog:patch', { sceneId: scene.id, ...patch });
+      continue;
+    }
+    if (strict || scene.id !== ctx.room.state.activeSceneId) continue;
+    const own = forPlayer(patch, socket.data.viewer.playerId);
+    if (own) socket.emit('fog:patch', { sceneId: scene.id, ...own });
   }
 }
 
-type FogSetLists = { explored: string[]; revealed: string[]; hidden: string[] };
+/**
+ * A parte de um patch de neblina que cabe a este jogador: a exploracao dele
+ * entra somada a base comum, e a dos outros nao sai do servidor.
+ */
+function forPlayer(
+  patch: FogDelta | { reset: FogSetLists },
+  playerId: string,
+): FogDelta | { reset: Omit<FogSetLists, 'exploredBy'> } | null {
+  if ('reset' in patch) {
+    const { exploredBy, ...lists } = patch.reset;
+    return { reset: { ...lists, explored: [...lists.explored, ...(exploredBy[playerId] ?? [])] } };
+  }
+  const { exploredBy, ...rest } = patch;
+  const mine = exploredBy?.[playerId];
+  const explored =
+    rest.explored || mine
+      ? {
+          add: [...(rest.explored?.add ?? []), ...(mine?.add ?? [])],
+          remove: [...(rest.explored?.remove ?? []), ...(mine?.remove ?? [])],
+        }
+      : undefined;
+  const out: FogDelta = { ...rest, ...(explored ? { explored } : {}) };
+  return out.explored || out.revealed || out.hidden ? out : null;
+}
+
+type FogSetLists = { explored: string[]; exploredBy: Record<string, string[]>; revealed: string[]; hidden: string[] };
 
 export function resetFog(ctx: Ctx, payload: FogResetPayload, ack: Ack<null>): void {
   const scene = ctx.room.scene(payload?.sceneId);
   if (!scene) return fail(ack, 'Cena nao encontrada.');
 
   const scope = payload.scope;
-  if (scope === 'explored' || scope === 'all') scene.fog.explored = [];
+  if (scope === 'explored' || scope === 'all') {
+    scene.fog.explored = [];
+    scene.fog.exploredBy = {};
+  }
   if (scope === 'revealed' || scope === 'all') scene.fog.revealed = [];
   if (scope === 'hidden' || scope === 'all') scene.fog.hidden = [];
 
@@ -536,6 +593,7 @@ export function resetFog(ctx: Ctx, payload: FogResetPayload, ack: Ack<null>): vo
   emitFogPatch(ctx, scene, {
     reset: {
       explored: scene.fog.explored,
+      exploredBy: scene.fog.exploredBy,
       revealed: scene.fog.revealed,
       hidden: scene.fog.hidden,
     },

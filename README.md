@@ -199,9 +199,22 @@ selando. No mapa do mestre, as áreas seladas ficam com um tom vermelho, para el
 ver o que trancou sem trocar de perspectiva.
 
 No modo por visão, cada token precisa de um **dono** e de um **raio de visão**
-para enxergar. `Luz emitida` é diferente: revela para todos os jogadores — é a
-tocha na mão de alguém iluminando a sala inteira. A **luz do ambiente** da cena
-vai de dia claro (visão limitada só por paredes) a escuridão total.
+para enxergar. `Luz emitida` é diferente: ilumina a área para todos, **mas cada
+jogador só vê a parte iluminada até onde o personagem dele tem linha de visão**,
+a qualquer distância — a tocha no fundo do salão aparece para quem está no
+salão, e não para quem está do outro lado da parede. O dono de um token com luz
+vê o que a própria luz ilumina. A **luz do ambiente** da cena vai de dia claro
+(visão limitada só por paredes) a escuridão total.
+
+**Cada jogador lembra do que o próprio personagem viu.** A área explorada é
+guardada por jogador: a sala que a Alice olhou não aparece em penumbra para o
+Bruno, que nunca passou por lá — e o cenário e as portas dessa sala também não
+chegam a ele. O que as mesas já tinham explorado antes desta regra continua
+valendo para todos, como base comum; *Reencobrir explorado* apaga a de todos, e
+uma pessoa removida da mesa leva a dela junto. Num backup importado, a
+exploração de cada um vira base comum, porque os jogadores de lá não existem na
+mesa nova. Em *Mostrar até onde o grupo enxerga* e em *Ver pelos olhos*, o
+mestre vê a mesma regra.
 
 O alcance de visão e de luz é **circular**, medido por distância euclidiana —
 um facho de 6 células chega a 6 células em qualquer direção. A medição de

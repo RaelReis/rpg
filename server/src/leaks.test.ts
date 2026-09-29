@@ -404,6 +404,31 @@ describe('vazamentos: achados do relatorio de QA', () => {
     expect(secretsIn(JSON.stringify(stateForViewer(room, alice.socket.data.viewer)))).toEqual([]);
   });
 
+  // A area explorada era uma lista so por cena: a sala que a Alice olhou
+  // chegava lembrada ao Bruno, que nunca tinha passado por la.
+  for (const strictVision of [true, false]) {
+    it(`a exploracao da Alice nao chega ao Bruno (visao no servidor: ${strictVision})`, () => {
+      const room = table();
+      room.state.settings.strictVision = strictVision;
+      const scene = room.activeScene()!;
+      const gm = connect(room, 'mestre');
+      const bruno = connect(room, 'bruno');
+      // A Alice anda por uma sala longe do Bruno; o mestre a move.
+      moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 0, y: 700 }, vi.fn());
+      const aliceCells = scene.fog.exploredBy.alice ?? [];
+      expect(aliceCells.length).toBeGreaterThan(0);
+      expect(scene.fog.exploredBy.bruno ?? []).not.toContain(aliceCells[0]);
+
+      const sent = JSON.stringify([bruno.received, stateForViewer(room, bruno.socket.data.viewer)]);
+      for (const cell of aliceCells.filter((c) => !(scene.fog.exploredBy.bruno ?? []).includes(c))) {
+        expect(sent).not.toContain(`"${cell}"`);
+      }
+      expect(sent).not.toContain('exploredBy":{"');
+      // O mestre recebe por jogador, para a previa pelos olhos de cada um.
+      expect(JSON.stringify(gm.received)).toContain('"exploredBy":{"alice"');
+    });
+  }
+
   // As linhas de porta e janela atravessavam a neblina: todas as nao secretas
   // iam ao jogador e eram desenhadas por cima do escuro, entregando a planta.
   it('janela nunca chega ao jogador; porta so depois de vista', () => {

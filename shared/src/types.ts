@@ -74,8 +74,19 @@ export type FogMode = 'off' | 'manual' | 'vision';
 
 export interface FogConfig {
   mode: FogMode;
-  /** Celulas ja exploradas por algum token de jogador (ficam em penumbra). */
+  /**
+   * Area explorada comum a todos os jogadores (fica em penumbra). E o que as
+   * mesas gravadas antes da exploracao individual ja tinham descoberto, e o
+   * que um backup importado traz; jogo novo grava em `exploredBy`.
+   */
   explored: string[];
+  /**
+   * Area que CADA jogador explorou, por id de jogador. Era uma lista so por
+   * cena: a sala que a Alice olhou aparecia lembrada para o Bruno, que nunca
+   * tinha passado por la. Nunca sai inteira para um jogador: ele recebe so a
+   * propria, somada a base comum (ver `sceneForViewer`).
+   */
+  exploredBy: Record<string, string[]>;
   /** Celulas reveladas a mao pelo mestre (sempre visiveis). */
   revealed: string[];
   /** Celulas forcadas a escuro pelo mestre; vencem qualquer revelacao. */
