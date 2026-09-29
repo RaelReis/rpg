@@ -564,6 +564,7 @@ export function ScenePanel(): JSX.Element {
                   <span className="name">
                     {wall.door ? 'Porta' : wall.window ? 'Janela' : 'Parede'} {index + 1}
                     {wall.hidden && <span className="sub"> · secreta</span>}
+                    {wall.door && wall.locked && <span className="sub"> · trancada</span>}
                   </span>
 
                   {wall.door && (
@@ -579,6 +580,21 @@ export function ScenePanel(): JSX.Element {
                       }}
                     >
                       {wall.open ? 'Fechar' : 'Abrir'}
+                    </button>
+                  )}
+
+                  {wall.door && (
+                    <button
+                      className={`btn ghost sm${wall.locked ? ' active' : ''}`}
+                      title={wall.locked ? 'Destrancar: os jogadores voltam a abrir' : 'Trancar: so voce abre e fecha'}
+                      aria-label={wall.locked ? 'Destrancar porta' : 'Trancar porta'}
+                      aria-pressed={wall.locked}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch: { locked: !wall.locked } });
+                      }}
+                    >
+                      <Icon name={wall.locked ? 'lockDoor' : 'unlockDoor'} size="sm" />
                     </button>
                   )}
 

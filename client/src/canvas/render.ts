@@ -1547,6 +1547,8 @@ function drawWalls(input: RenderInput): void {
     ctx.stroke();
     ctx.setLineDash([]);
 
+    if (role === 'GM' && wall.door && wall.locked) drawPadlock(ctx, (wall.x1 + wall.x2) / 2, (wall.y1 + wall.y2) / 2, camera.zoom);
+
     if (input.selectedWallIds.has(wall.id)) {
       // Halo claro por baixo: a parede fica obvia sem perder a cor que diz
       // o tipo dela (porta, secreta, comum).
@@ -1562,6 +1564,34 @@ function drawWalls(input: RenderInput): void {
       ctx.restore();
     }
   }
+  ctx.restore();
+}
+
+/**
+ * Cadeado desenhado a mao no meio da porta trancada, em tamanho de tela fixo.
+ * So o mestre ve: o jogador descobre a tranca tentando abrir.
+ */
+function drawPadlock(ctx: CanvasRenderingContext2D, x: number, y: number, zoom: number): void {
+  const s = 1 / zoom;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(12, 14, 19, 0.85)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#d9a441';
+  ctx.fillStyle = '#d9a441';
+  ctx.lineWidth = 1.8;
+  // Alca e corpo.
+  ctx.beginPath();
+  ctx.arc(0, -2, 3.6, Math.PI, 0);
+  ctx.moveTo(-3.6, -2);
+  ctx.lineTo(-3.6, 0);
+  ctx.moveTo(3.6, -2);
+  ctx.lineTo(3.6, 0);
+  ctx.stroke();
+  ctx.fillRect(-5.5, 0, 11, 7);
   ctx.restore();
 }
 

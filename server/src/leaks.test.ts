@@ -42,6 +42,7 @@ import {
   moveToken,
   paintFog,
   updateToken,
+  updateWall,
 } from './handlers/map.js';
 import { createTriggerHandler } from './handlers/triggers.js';
 import { activateScene } from './handlers/scene.js';
@@ -400,6 +401,20 @@ describe('vazamentos: achados do relatorio de QA', () => {
     expect(legacy.visibility).toBe('hidden');
     expect(legacy.lightRadius).toBe(0);
     expect(secretsIn(JSON.stringify(stateForViewer(room, alice.socket.data.viewer)))).toEqual([]);
+  });
+
+  // Porta trancada: o jogador descobre tentando. A tranca chegando no
+  // walls:patch diria de longe quais portas valem a pena forcar.
+  it('trancar uma porta nao manda a tranca ao jogador', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.walls.push(createWall({ id: 'porta', x1: 70, y1: 0, x2: 70, y2: 70, door: true }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    updateWall(ctxOf(room, gm), { sceneId: scene.id, wallId: 'porta', patch: { locked: true } }, vi.fn());
+    expect(scene.walls[0].locked).toBe(true);
+    expect(JSON.stringify(gm.received)).toContain('"locked":true');
+    expect(JSON.stringify(alice.received)).not.toContain('"locked":true');
   });
 
   // Q-032. O cartao de material indisponivel escondia titulo, imagem e id, mas

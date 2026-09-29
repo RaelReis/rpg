@@ -23,6 +23,7 @@ import {
   visibleTokenIds,
   visionFor,
   type Viewer,
+  wallForPlayer,
 } from './filter.js';
 import type { Room } from './room.js';
 
@@ -386,7 +387,7 @@ export function emitWalls(room: Room, scene: Scene, upsert: Wall[], remove: stri
     // Portas e janelas sao coisas que o jogador enxerga no mapa; paredes
     // comuns, nao.
     const drawable = (w: Wall) => (w.door || w.window) && !w.hidden;
-    const allowed = strict ? upsert.filter(drawable) : upsert.filter((w) => !w.hidden);
+    const allowed = (strict ? upsert.filter(drawable) : upsert.filter((w) => !w.hidden)).map(wallForPlayer);
     const hide = strict
       ? [...remove, ...upsert.filter((w) => !drawable(w)).map((w) => w.id)]
       : [...remove, ...upsert.filter((w) => w.hidden).map((w) => w.id)];

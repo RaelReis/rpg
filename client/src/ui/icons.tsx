@@ -166,6 +166,8 @@ export const ICONS = {
   area: SquareDashed,
   sealed: Lock,
   unsealed: LockOpen,
+  lockDoor: Lock,
+  unlockDoor: LockOpen,
   partyVision: Eye,
   undo: Undo2,
   redo: Redo2,

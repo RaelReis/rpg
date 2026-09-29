@@ -62,6 +62,12 @@ export interface Wall {
   window: boolean;
   /** Bloqueia visao mas nao e desenhada para o jogador. */
   hidden: boolean;
+  /**
+   * Porta trancada: o jogador nao abre nem fecha, so o mestre. Nunca chega ao
+   * jogador como `true` (ver `wallForPlayer`): ele descobre tentando, como na
+   * mesa fisica, em vez de ver de longe quais portas vale a pena forcar.
+   */
+  locked: boolean;
 }
 
 export type FogMode = 'off' | 'manual' | 'vision';

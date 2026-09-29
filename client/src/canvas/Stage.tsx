@@ -229,6 +229,15 @@ export function Stage(): JSX.Element {
   const blockedHintTimerRef = useRef<number | null>(null);
   const flashWallRef = useRef<{ id: string; until: number } | null>(null);
 
+  /** Aviso curto sobre uma porta: o mesmo lugar e o mesmo tempo do bloqueio. */
+  const showDoorHint = useCallback((door: Wall, text: string) => {
+    flashWallRef.current = { id: door.id, until: performance.now() + 1600 };
+    const mid = { x: (door.x1 + door.x2) / 2, y: (door.y1 + door.y2) / 2 };
+    setBlockedHint({ text, at: worldToScreen(cameraRef.current, viewportRef.current, mid.x, mid.y) });
+    if (blockedHintTimerRef.current !== null) window.clearTimeout(blockedHintTimerRef.current);
+    blockedHintTimerRef.current = window.setTimeout(() => setBlockedHint(null), 1800);
+  }, []);
+
   const showBlockedHint = useCallback((tokenId: string) => {
     if (blockedHintShownRef.current) return;
     const scene = activeScene(useStore.getState());
@@ -920,7 +929,15 @@ export function Stage(): JSX.Element {
       if (gesture.doorId && !gesture.moved && gesture.button === 0) {
         const door = currentScene.walls.find((w) => w.id === gesture.doorId);
         if (door) {
-          void act('wall:update', { sceneId: currentScene.id, wallId: door.id, patch: { open: !door.open } });
+          // O jogador nao sabe que a porta esta trancada ate tentar (o servidor
+          // nao manda a tranca a ele): a recusa vira o aviso sobre a porta, em
+          // vez de uma notificacao de erro no canto da tela.
+          rpc('wall:update', { sceneId: currentScene.id, wallId: door.id, patch: { open: !door.open } }).catch(
+            (err: Error & { code?: string }) => {
+              if (err.code === 'DOOR_LOCKED') showDoorHint(door, 'Trancada');
+              else state.notify('error', err.message);
+            },
+          );
         }
       }
 
@@ -1140,7 +1157,7 @@ export function Stage(): JSX.Element {
       setMeasureText(null);
       gestureRef.current = emptyGesture();
     },
-    [flushFog, toLocalScreen, toWorld],
+    [flushFog, showDoorHint, toLocalScreen, toWorld],
   );
 
   const onWheel = useCallback(
@@ -1806,6 +1823,24 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
         >
           <Icon name={wall.open ? 'doorClosed' : 'door'} size="sm" />
           {wall.open ? 'Fechar porta' : 'Abrir porta'}
+        </button>
+      )}
+      {wall.door && (
+        <button
+          role="menuitem"
+          onClick={() => {
+            const patch = { locked: !wall.locked };
+            void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch });
+            useStore.getState().pushUndo({
+              label: wall.locked ? 'destrancar porta' : 'trancar porta',
+              undo: () => void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch: { locked: wall.locked } }),
+              redo: () => void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch }),
+            });
+            onClose();
+          }}
+        >
+          <Icon name={wall.locked ? 'unlockDoor' : 'lockDoor'} size="sm" />
+          {wall.locked ? 'Destrancar porta' : 'Trancar porta'}
         </button>
       )}
       {(['wall', 'door', 'window', 'secret'] as WallKind[])

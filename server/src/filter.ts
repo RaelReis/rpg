@@ -26,6 +26,7 @@ import {
   type TurnEntry,
   type TurnState,
   type VisionResult,
+  type Wall,
 } from '@rpg/shared';
 
 import type { Room } from './room.js';
@@ -50,6 +51,11 @@ export function visionFor(scene: Scene, viewer: Viewer): VisionResult {
 }
 
 /** Ids dos tokens que este observador enxerga na cena. */
+/** A parede como o jogador a recebe: a tranca so aparece quando ele tenta abrir. */
+export function wallForPlayer(wall: Wall): Wall {
+  return wall.locked ? { ...wall, locked: false } : wall;
+}
+
 export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionResult): Set<string> {
   const v = vision ?? visionFor(scene, viewer);
   const out = new Set<string>();
@@ -83,9 +89,9 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
   // mapa e apareceriam inteiras no inspecionador de rede do navegador. O que
   // o jogador recebe sao portas visiveis (para poder interagir) e o resultado
   // ja calculado da visao.
-  const walls = strict
-    ? scene.walls.filter((w) => (w.door || w.window) && !w.hidden)
-    : scene.walls.filter((w) => !w.hidden);
+  const walls = (
+    strict ? scene.walls.filter((w) => (w.door || w.window) && !w.hidden) : scene.walls.filter((w) => !w.hidden)
+  ).map(wallForPlayer);
 
   // Com strictVision, as listas cruas de neblina (onde o mestre pintou, o que
   // o grupo ja explorou) nao saem do servidor; vao apenas as celulas

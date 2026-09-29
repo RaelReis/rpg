@@ -102,6 +102,10 @@ quando o corte era do meu próprio recorte de screenshot.
   duas chegarem.
 - **Parede sai por clique.** Cada clique grava o trecho na hora; duplo clique ou
   `Esc` só encerram a sequência. Não existe tecla de confirmação.
+- **Porta trancada nunca chega ao jogador como trancada.** `wallForPlayer`
+  (`server/src/filter.ts`) zera `locked` no estado inicial e no `walls:patch`;
+  o jogador descobre pela recusa `DOOR_LOCKED` ao clicar. Caminho novo que
+  envie paredes ao jogador tem de passar por ela.
 - **Colisão mede o corpo do token**, não só o centro: trajeto do centro e dos
   quatro cantos, e o corpo não pode parar em cima da parede. Sem isso, tokens de
   tamanho par atravessavam qualquer parede, porque o snap encaixa o centro deles

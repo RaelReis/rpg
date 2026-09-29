@@ -166,7 +166,9 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     height: partial.height ?? 1400,
     grid: { ...DEFAULT_GRID, ...(partial.grid ?? {}) },
     fog: { ...DEFAULT_FOG, ...(partial.fog ?? {}) },
-    walls: partial.walls ?? [],
+    // Pela fabrica, para paredes gravadas antes de um campo novo (`locked`)
+    // chegarem completas.
+    walls: (partial.walls ?? []).map((w) => createWall(w)),
     tiles: partial.tiles ?? [],
     // Passar pelas fabricas completa campos criados depois que a cena foi
     // gravada (ou exportada): um token antigo chegaria sem `visibleTo`. As
@@ -334,6 +336,8 @@ export function createWall(partial: Partial<Wall> = {}): Wall {
     open: partial.open ?? false,
     window: partial.door ? false : (partial.window ?? false),
     hidden: partial.hidden ?? false,
+    // So porta tranca: parede e janela nao abrem de qualquer jeito.
+    locked: partial.door ? (partial.locked ?? false) : false,
   };
 }
 

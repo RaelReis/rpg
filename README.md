@@ -343,6 +343,13 @@ porta que o jogador enxerga — a de uma célula vizinha iluminada —, e não p
 uma porta no escuro do outro lado do mapa; o servidor confere a mesma regra.
 Arrastar a partir do vão da porta continua movendo o token que está ali. Quando
 o arraste para numa porta fechada, ela pisca e um aviso diz como abri-la.
+
+**Porta trancada**: pelo botão direito na porta (*Trancar porta*) ou pelo
+cadeado na lista de paredes da aba *Cena*. Trancada, só o mestre a abre ou
+fecha — o jogador não fecha nem a porta que foi trancada aberta. No mapa do
+mestre ela ganha um cadeado; o jogador **descobre tentando**: o servidor nunca
+lhe manda a tranca, e o clique numa porta trancada mostra o aviso *Trancada*
+sobre ela. Assim ninguém sabe de longe quais portas vale a pena forçar.
 Janelas e portas são desenhadas para os jogadores; paredes comuns e secretas,
 não.
 

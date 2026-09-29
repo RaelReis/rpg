@@ -808,6 +808,7 @@ export function createWallHandler(ctx: Ctx, payload: { sceneId: string; wall: Pa
     open: Boolean(w.open),
     window: Boolean(w.window),
     hidden: Boolean(w.hidden),
+    locked: Boolean(w.locked),
   });
 
   scene.walls.push(wall);
@@ -843,6 +844,9 @@ export function updateWall(
     if (!isDoorWithinSight(scene, visionFor(scene, ctx.viewer), wall)) {
       return fail(ack, 'Voce nao enxerga esta porta.');
     }
+    // Trancada vale nos dois sentidos: o jogador tambem nao fecha a porta que
+    // o mestre deixou aberta e trancou (uma grade emperrada, por exemplo).
+    if (wall.locked) return fail(ack, 'A porta esta trancada.', 'DOOR_LOCKED');
     wall.open = Boolean(p.open);
   } else {
     if (p.x1 !== undefined) wall.x1 = clampNumber(p.x1, -30000, 30000, wall.x1);
@@ -853,16 +857,19 @@ export function updateWall(
     if (p.door !== undefined) {
       wall.door = Boolean(p.door);
       if (wall.door) wall.window = false;
+      else wall.locked = false;
     }
     if (p.window !== undefined) {
       wall.window = Boolean(p.window);
       if (wall.window) {
         wall.door = false;
         wall.open = false;
+        wall.locked = false;
       }
     }
     if (p.open !== undefined) wall.open = wall.door && Boolean(p.open);
     if (p.hidden !== undefined) wall.hidden = Boolean(p.hidden);
+    if (p.locked !== undefined) wall.locked = wall.door && Boolean(p.locked);
   }
 
   ctx.room.touchScene(scene.id);

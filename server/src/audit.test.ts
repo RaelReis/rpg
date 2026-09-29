@@ -182,6 +182,27 @@ describe('portas abertas pelo jogador', () => {
     expect(room.activeScene()!.walls.find((w) => w.id === 'perto')!.open).toBe(true);
   });
 
+  it('porta trancada: o jogador nao abre, o mestre abre, e a tranca nao chega ao jogador', () => {
+    const { room, ctx, open } = doorsFixture();
+    const door = room.activeScene()!.walls.find((w) => w.id === 'perto')!;
+    door.locked = true;
+    expect(open('perto')).toMatchObject({ ok: false, code: 'DOOR_LOCKED' });
+    expect(door.open).toBe(false);
+    expect(stateForViewer(room, ctx.viewer).scenes[0].walls.find((w) => w.id === 'perto')!.locked).toBe(false);
+
+    const gm = { room, viewer: { role: 'GM', playerId: 'gm' }, socket: {} } as Ctx;
+    const ack = vi.fn();
+    updateWall(gm, { sceneId: room.activeScene()!.id, wallId: 'perto', patch: { open: true } }, ack);
+    expect(ack.mock.calls[0][0].ok).toBe(true);
+    expect(door.open).toBe(true);
+  });
+
+  it('so porta tranca, e parede antiga chega destrancada', () => {
+    expect(createWall({ window: true, locked: true }).locked).toBe(false);
+    const old = createScene({ walls: [{ id: 'w', x1: 0, y1: 0, x2: 1, y2: 1, door: true, open: false, window: false, hidden: false } as never] });
+    expect(old.walls[0].locked).toBe(false);
+  });
+
   it('recusa a porta no escuro do outro lado do mapa', () => {
     const { room, open } = doorsFixture();
     expect(open('longe')).toMatchObject({ ok: false, error: 'Voce nao enxerga esta porta.' });
