@@ -58,7 +58,13 @@ export interface SocketData {
   currentSceneId: string | null;
   /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
   knownAssets: Set<string>;
-  fogSignature?: string;
+  /**
+   * A neblina calculada que este socket tem na tela (`strictVision`). E dela
+   * que sai a diferenca de `fog:patch`: o explorado so manda as celulas novas.
+   * Antes ficava aqui o JSON das duas listas inteiras, montado a cada revisao
+   * de visao so para comparar com o anterior.
+   */
+  fogSent?: { sceneId: string; visible: Set<string>; explored: Set<string> };
   /**
    * Visao do ultimo calculo completo deste socket (`refreshVision`). E com ela
    * que `emitTokenMove` decide, a cada passo de arraste, se o jogador enxerga o
@@ -147,7 +153,7 @@ export function stateWithVisibilityCache(room: Room, socket: TypedSocket) {
   const state = stateForViewer(room, socket.data.viewer);
   const scene = state.scenes.find((s) => s.id === state.activeSceneId) ?? state.scenes[0] ?? null;
 
-  socket.data.fogSignature = scene ? JSON.stringify([scene.id, scene.fog.computedVisible, scene.fog.computedExplored]) : undefined;
+  socket.data.fogSent = scene ? fogSentOf(scene) : undefined;
   socket.data.currentSceneId = scene?.id ?? null;
   socket.data.sight = undefined;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
@@ -175,7 +181,7 @@ export function pushScene(room: Room, scene: Scene): void {
     if (viewer.role !== 'GM' && scene.id !== room.state.activeSceneId) continue;
 
     const filtered = sceneForViewer(room, scene, viewer);
-    socket.data.fogSignature = JSON.stringify([filtered.id, filtered.fog.computedVisible, filtered.fog.computedExplored]);
+    socket.data.fogSent = fogSentOf(filtered);
     socket.data.currentSceneId = filtered.id;
     socket.data.sight = undefined;
     socket.data.visibleTokens = new Set(filtered.tokens.map((t) => t.id));
@@ -262,15 +268,44 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
     }
 
     if (strict) {
-      const signature = JSON.stringify([scene.id, [...vision.visible], [...vision.explored]]);
-      if (socket.data.fogSignature === signature) continue;
-      socket.data.fogSignature = signature;
-      socket.emit('fog:patch', {
-        sceneId: scene.id,
-        computed: { visible: [...vision.visible], explored: [...vision.explored] },
-      });
+      const sent = socket.data.fogSent?.sceneId === scene.id ? socket.data.fogSent : undefined;
+      socket.data.fogSent = { sceneId: scene.id, visible: vision.visible, explored: vision.explored };
+
+      // Sem base (cena sem neblina calculada no ultimo envio) ou com o
+      // explorado menor que o da tela — o mestre cobriu ou zerou —, a lista
+      // vai inteira. No caso comum ela so cresceu, e vao as celulas novas.
+      if (!sent || !isSubset(sent.explored, vision.explored)) {
+        socket.emit('fog:patch', {
+          sceneId: scene.id,
+          computed: { visible: [...vision.visible], explored: [...vision.explored] },
+        });
+        continue;
+      }
+      const exploredAdd: string[] = [];
+      if (vision.explored.size !== sent.explored.size) {
+        for (const key of vision.explored) if (!sent.explored.has(key)) exploredAdd.push(key);
+      }
+      if (exploredAdd.length === 0 && sameCells(sent.visible, vision.visible)) continue;
+      socket.emit('fog:patch', { sceneId: scene.id, computed: { visible: [...vision.visible], exploredAdd } });
     }
   }
+}
+
+/** A neblina calculada que acabou de ir numa cena ja filtrada, ou nada se ela nao levou. */
+function fogSentOf(scene: Scene): SocketData['fogSent'] {
+  const { computedVisible, computedExplored } = scene.fog;
+  if (!computedVisible || !computedExplored) return undefined;
+  return { sceneId: scene.id, visible: new Set(computedVisible), explored: new Set(computedExplored) };
+}
+
+function isSubset(part: Set<string>, whole: Set<string>): boolean {
+  if (part.size > whole.size) return false;
+  for (const key of part) if (!whole.has(key)) return false;
+  return true;
+}
+
+function sameCells(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && isSubset(a, b);
 }
 
 /**

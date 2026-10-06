@@ -12,6 +12,7 @@ import {
   DEFAULT_TURNS,
   type Player,
   type Sheet,
+  type FogPatch,
   type TableState,
 } from '@rpg/shared';
 
@@ -866,5 +867,125 @@ describe('P09: arraste para dentro da neblina', () => {
     drag(room, gm, 'tok-bruno', 1680, 700);
     expect(moves(alice)).toHaveLength(1);
     expect(alice.received.at(-1)).toEqual(['tokens:patch', { sceneId: 'scn-ativa', remove: ['tok-bruno'] }]);
+  });
+});
+
+describe('P12: fog:patch manda o explorado como diferenca', () => {
+  const fogPatches = (sock: FakeSocket) =>
+    sock.received.filter(([ev]) => ev === 'fog:patch').map(([, p]) => (p as FogPatch).computed!);
+
+  /** O que o cliente faz com cada patch (`applyFogPatch`), a partir do estado completo. */
+  function clientExplored(sock: FakeSocket, initial: string[]): Set<string> {
+    const explored = new Set(initial);
+    for (const computed of fogPatches(sock)) {
+      if (computed.explored) {
+        explored.clear();
+        for (const c of computed.explored) explored.add(c);
+      }
+      for (const c of computed.exploredAdd ?? []) explored.add(c);
+    }
+    return explored;
+  }
+
+  /**
+   * A mesa de teste poe os tokens direto na cena; na mesa de verdade eles
+   * nascem por `createTokenHandler`, que ja grava o que enxergam de saida.
+   */
+  function settle(room: Room, gm: FakeSocket): void {
+    for (const token of room.activeScene()!.tokens) {
+      moveToken(ctxOf(room, gm), { sceneId: 'scn-ativa', tokenId: token.id, x: token.x, y: token.y }, vi.fn());
+    }
+  }
+
+  const lastState = (sock: FakeSocket) => sock.received.filter(([ev]) => ev === 'table:state').at(-1)![1] as TableState;
+
+  const serverExplored = (room: Room, sock: FakeSocket) =>
+    new Set(stateForViewer(room, sock.socket.data.viewer).scenes[0].fog.computedExplored);
+
+  // As duas listas iam inteiras a cada revisao de visao: ~36 KB por patch com
+  // 4800 celulas exploradas, dez vezes por segundo durante o arraste.
+  it('andar manda so as celulas novas, e o cliente chega ao mesmo explorado do servidor', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    settle(room, gm);
+    sendFullState(room, alice.socket);
+    const initial = lastState(alice).scenes[0].fog.computedExplored!;
+    expect(initial.length).toBeGreaterThan(0);
+    alice.received.length = 0;
+
+    for (const x of [70, 140, 210, 280]) {
+      moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x, y: 0 }, vi.fn());
+    }
+    const patches = fogPatches(alice);
+    expect(patches).toHaveLength(4);
+    for (const computed of patches) {
+      expect(computed.explored).toBeUndefined();
+      expect(computed.visible.length).toBeGreaterThan(0);
+      // Um passo de uma celula descobre uma faixa, nao o mapa.
+      expect(computed.exploredAdd!.length).toBeGreaterThan(0);
+      expect(computed.exploredAdd!.length).toBeLessThan(computed.visible.length);
+      for (const cell of computed.exploredAdd!) expect(initial).not.toContain(cell);
+    }
+    expect(clientExplored(alice, initial)).toEqual(serverExplored(room, alice));
+
+    // Voltar por onde ja passou: a visao muda, e nao ha celula nova.
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 210, y: 0 }, vi.fn());
+    expect(fogPatches(alice).at(-1)).toMatchObject({ exploredAdd: [] });
+
+    // Nada mudou para a Alice: o Bruno andou longe dela, nenhum patch.
+    const before = fogPatches(alice).length;
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-bruno', x: 1400, y: 700 }, vi.fn());
+    expect(fogPatches(alice)).toHaveLength(before);
+  });
+
+  it('quando o explorado encolhe, a lista vai inteira; estado completo e reconexao tambem', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    settle(room, gm);
+    sendFullState(room, alice.socket);
+    const initial = lastState(alice).scenes[0].fog.computedExplored!;
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 280, y: 0 }, vi.fn());
+
+    // O mestre cobre de volta uma celula que ela ja tinha explorado e nao ve mais.
+    expect(serverExplored(room, alice)).toContain('0,0');
+    paintFog(ctxOf(room, gm), { sceneId: scene.id, cells: ['0,0'], action: 'hide' }, vi.fn());
+    const shrunk = fogPatches(alice).at(-1)!;
+    expect(shrunk.exploredAdd).toBeUndefined();
+    expect(shrunk.explored).not.toContain('0,0');
+    expect(clientExplored(alice, initial)).toEqual(serverExplored(room, alice));
+
+    // Reconexao: o estado completo leva tudo, e a diferenca recomeca dali.
+    alice.received.length = 0;
+    sendFullState(room, alice.socket);
+    const again = lastState(alice).scenes[0].fog.computedExplored!;
+    expect(new Set(again)).toEqual(serverExplored(room, alice));
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 350, y: 0 }, vi.fn());
+    expect(fogPatches(alice).at(-1)!.explored).toBeUndefined();
+    expect(clientExplored(alice, again)).toEqual(serverExplored(room, alice));
+  });
+
+  it('a diferenca de um jogador nao leva celula explorada so por outro', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    const bruno = connect(room, 'bruno');
+    settle(room, gm);
+    sendFullState(room, alice.socket);
+    sendFullState(room, bruno.socket);
+    alice.received.length = 0;
+    bruno.received.length = 0;
+
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-alice', x: 0, y: 700 }, vi.fn());
+    moveToken(ctxOf(room, gm), { sceneId: scene.id, tokenId: 'tok-bruno', x: 1470, y: 0 }, vi.fn());
+    const onlyAlice = scene.fog.exploredBy.alice.filter((c) => !scene.fog.exploredBy.bruno.includes(c));
+    expect(onlyAlice.length).toBeGreaterThan(0);
+    const sentToBruno = fogPatches(bruno).flatMap((c) => [...(c.explored ?? []), ...(c.exploredAdd ?? []), ...c.visible]);
+    expect(sentToBruno.length).toBeGreaterThan(0);
+    for (const cell of onlyAlice) expect(sentToBruno).not.toContain(cell);
   });
 });

@@ -586,7 +586,14 @@ export const useStore = create<AppState>((set, get) => ({
         // vazias no cliente, exatamente como o estado completo as entrega.
         if (patch.computed) {
           scene.fog.computedVisible = patch.computed.visible;
-          scene.fog.computedExplored = patch.computed.explored;
+          // O explorado chega como diferenca; a lista inteira so vem quando
+          // ele encolheu. Sem celula nova a lista fica a mesma, e o cache de
+          // visao do renderizador (que compara a referencia) nao e refeito.
+          if (patch.computed.explored) {
+            scene.fog.computedExplored = patch.computed.explored;
+          } else if (patch.computed.exploredAdd?.length) {
+            scene.fog.computedExplored = [...(scene.fog.computedExplored ?? []), ...patch.computed.exploredAdd];
+          }
           return;
         }
 
