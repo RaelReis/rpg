@@ -188,7 +188,8 @@ function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
    * vez que saia da linha de visao. NPC continua dependendo do token visivel —
    * o PV do monstro atras da parede nao e assunto do grupo.
    */
-  if (room.player(sheet.ownerPlayerId)?.role === 'PLAYER') {
+  const ofPlayer = room.player(sheet.ownerPlayerId)?.role === 'PLAYER';
+  if (ofPlayer) {
     for (const field of room.state.sheetTemplate.fields) {
       if (field.vital && publicFields.has(field.id)) fieldIds.add(field.id);
     }
@@ -203,7 +204,22 @@ function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
   for (const id of fieldIds) {
     if (sheet.values[id] !== undefined) values[id] = sheet.values[id];
   }
-  return { ...sheet, values, portraitAssetId: null };
+  // Campo a campo, e nao `...sheet`: o espalhamento levava junto o nome da
+  // ficha, a arte de corpo, o dono e as datas. Com o token disfarcado de
+  // "Vulto", o "Lorde Vampiro" da ficha ia no payload assim que o jogador via
+  // o token. Do colega seguem nome e dono, que os retratos do grupo mostram;
+  // do NPC, so o id e as barras.
+  return {
+    id: sheet.id,
+    name: ofPlayer ? sheet.name : '',
+    ownerPlayerId: ofPlayer ? sheet.ownerPlayerId : null,
+    portraitAssetId: null,
+    bodyAssetId: null,
+    values,
+    sharedWithParty: false,
+    createdAt: 0,
+    updatedAt: 0,
+  };
 }
 
 /**

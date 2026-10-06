@@ -673,6 +673,43 @@ describe('fase 3: retratos do grupo e nome da ficha', () => {
     expect(secretsIn(JSON.stringify(state.sheets))).toEqual([]);
   });
 
+  // P08. O Q-017 so cobria o NPC fora da visao. Com o token A VISTA, a ficha
+  // reduzida saia com `...sheet`: o nome verdadeiro por tras do token
+  // disfarcado, a arte de corpo e as datas iam no payload.
+  it('P08: ficha reduzida de NPC a vista leva so as barras, sem nome, arte nem datas', () => {
+    const room = table();
+    const npc = sheetOf('sht-npc', null);
+    npc.name = 'SEGREDO-Lorde Vampiro';
+    npc.bodyAssetId = 'SEGREDO-corpo';
+    npc.portraitAssetId = 'SEGREDO-retrato';
+    npc.createdAt = 1234567890123;
+    npc.updatedAt = 1234567890456;
+    room.state.sheets.push(npc);
+    room.state.assets.push({ id: 'SEGREDO-corpo' } as never, { id: 'SEGREDO-retrato' } as never);
+    // Token disfarcado, ao lado da Alice.
+    room.activeScene()!.tokens.push(
+      createToken({ id: 'tok-vulto', name: 'Vulto', sheetId: 'sht-npc', x: 70, y: 0, bars: [{ fieldId: 'hp', color: '#f00' }] }),
+    );
+    const alice = connect(room, 'alice');
+    sendFullState(room, alice.socket);
+
+    const sent = traffic(room, alice);
+    expect(secretsIn(sent)).toEqual([]);
+    expect(sent).not.toContain('1234567890');
+
+    const reduced = stateForViewer(room, alice.socket.data.viewer).sheets.find((s) => s.id === 'sht-npc');
+    // A barra do token continua com valor: e para isso que a ficha reduzida existe.
+    expect(Object.keys(reduced?.values ?? {})).toEqual(['hp']);
+    expect(reduced).toMatchObject({ name: '', ownerPlayerId: null, bodyAssetId: null, portraitAssetId: null });
+  });
+
+  it('P08: a ficha reduzida do colega mantem nome e dono, que os retratos do grupo usam', () => {
+    const room = table();
+    room.sheet('sht-bruno')!.name = 'Bruno, o Bravo';
+    const bruno = stateForViewer(room, { playerId: 'alice', role: 'PLAYER' }).sheets.find((s) => s.id === 'sht-bruno');
+    expect(bruno).toMatchObject({ name: 'Bruno, o Bravo', ownerPlayerId: 'bruno', bodyAssetId: null });
+  });
+
   it('Q-019: renomear a ficha renomeia o token e a vez; token renomeado a parte fica', () => {
     const room = table();
     ensurePartyInTurns(room);
