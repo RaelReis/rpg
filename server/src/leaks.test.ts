@@ -769,3 +769,28 @@ describe('2.2: montar cena fora do ar', () => {
     expect(JSON.stringify(gm.received)).toContain('SEGREDO-chefe');
   });
 });
+
+describe('neblina de mapa grande', () => {
+  // P02. `list.push(...set)` passa cada celula como argumento: acima de ~120
+  // mil o motor estoura a pilha, e a lista ja tinha sido esvaziada na linha de
+  // cima. O mestre recebia erro e tudo o que estava revelado voltava a cobrir.
+  it('P02: pintar numa lista com mais de 120 mil celulas nao apaga a lista', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    const big = Array.from({ length: 200_000 }, (_, i) => `${i % 500},${Math.floor(i / 500)}`);
+    scene.fog.revealed = [...big];
+    scene.fog.exploredBy.alice = [...big];
+    const gm = connect(room, 'mestre');
+
+    const ack = vi.fn();
+    paintFog(ctxOf(room, gm), { sceneId: scene.id, cells: ['900,900'], action: 'reveal' }, ack);
+    expect(ack.mock.calls[0][0]).toMatchObject({ ok: true });
+    expect(scene.fog.revealed).toHaveLength(200_001);
+
+    // Cobrir passa tambem pela exploracao de cada jogador.
+    paintFog(ctxOf(room, gm), { sceneId: scene.id, cells: ['0,0', '900,900'], action: 'hide' }, ack);
+    expect(ack.mock.calls[1][0]).toMatchObject({ ok: true });
+    expect(scene.fog.revealed).toHaveLength(199_999);
+    expect(scene.fog.exploredBy.alice).toHaveLength(199_999);
+  });
+});

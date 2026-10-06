@@ -431,7 +431,9 @@ function applyExploration(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>): 
 
   const exploredBy: Record<string, FogSetDelta> = {};
   for (const [playerId, cells] of fresh) {
-    (scene.fog.exploredBy[playerId] ??= []).push(...cells);
+    // Mesmo cuidado de `paintFog`: sem espalhar a lista em argumentos.
+    const list = (scene.fog.exploredBy[playerId] ??= []);
+    for (const c of cells) list.push(c);
     exploredBy[playerId] = { add: cells };
   }
   ctx.room.touchScene(scene.id);
@@ -456,8 +458,11 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
         else set.delete(c);
       }
     }
+    // Laco, e nao `list.push(...set)`: o espalhamento passa cada celula como
+    // argumento e estoura a pilha acima de ~120 mil — depois de a lista ja ter
+    // sido esvaziada. A pintura devolvia erro e o revelado inteiro sumia.
     list.length = 0;
-    list.push(...set);
+    for (const c of set) list.push(c);
     return changed;
   };
 
