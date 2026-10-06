@@ -151,8 +151,15 @@ export interface FogPatch {
    * cliente gravava toda substituicao tambem como visao calculada: um reset
    * de listas cruas faria o cliente tratar o pincel do mestre como "o que o
    * jogador ve", ignorando a linha de visao dos tokens.
+   *
+   * `visible` vem sempre inteiro: e pequeno e muda a cada passo. O explorado
+   * so cresce enquanto o jogador anda, entao vai como diferenca
+   * (`exploredAdd`, as celulas novas); a lista inteira (`explored`) so vem
+   * quando ele encolheu — o mestre cobriu ou zerou a area. Mandar as duas
+   * listas inteiras a cada passo do arraste dava ~36 KB por patch, dez vezes
+   * por segundo. O estado completo e a cena reenviada seguem com tudo.
    */
-  computed?: { visible: string[]; explored: string[] };
+  computed?: { visible: string[]; explored?: string[]; exploredAdd?: string[] };
 }
 
 export interface TokensPatch {

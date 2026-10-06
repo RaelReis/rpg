@@ -10,6 +10,7 @@ import {
   normalizeConditions,
   newlyExploredCells,
   sanitizeVisibleTo,
+  sharedSight,
   snapTokenPosition,
   type Ack,
   type FogPaintPayload,
@@ -18,6 +19,7 @@ import {
   type LegacyVisibility,
   type MapEffect,
   type Scene,
+  type SharedSight,
   type Tile,
   type Token,
   type TokenMovePayload,
@@ -168,8 +170,7 @@ export function createTokenHandler(
   scene.tokens.push(token);
   ctx.room.touchScene(scene.id);
   emitTokenUpsert(ctx.room, scene, token);
-  applyExploration(ctx, scene);
-  refreshVision(ctx.room, scene);
+  exploreAndRefresh(ctx, scene);
   if (token.visibility === 'hidden' && t.visibility === undefined) {
     notify(ctx.socket, 'info', `${token.name} entrou oculto: ha jogadores na mesa. Revele no inspetor quando for a hora.`);
   }
@@ -256,10 +257,7 @@ export function updateToken(
 
   ctx.room.touchScene(scene.id);
   emitTokenUpsert(ctx.room, scene, token);
-  if (visionAffected) {
-    applyExploration(ctx, scene);
-    refreshVision(ctx.room, scene);
-  }
+  if (visionAffected) exploreAndRefresh(ctx, scene);
   // A vez do token na ordem segue a visibilidade dele (ver `turnsForViewer`):
   // esconder ou revelar o token esconde ou revela a miniatura para a mesa.
   if (gm && (p.visibleTo !== undefined || p.visibility !== undefined || p.gmOnly !== undefined)) {
@@ -366,9 +364,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
         // So quem arrasta explora durante o arraste; os outros sao
         // recalculados ao soltar. Por jogador, a exploracao custa o mesmo que
         // a visao, e fazer a mesa inteira a cada 100 ms multiplicava o custo.
-        const only = new Set([owner]);
-        applyExploration(ctx, scene, only);
-        refreshVision(ctx.room, scene, only);
+        exploreAndRefresh(ctx, scene, new Set([owner]));
       }
     }
     return ok(ack, null);
@@ -376,8 +372,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
 
   lastDragVision.delete(token.id);
   ctx.room.touchScene(scene.id);
-  applyExploration(ctx, scene);
-  refreshVision(ctx.room, scene);
+  exploreAndRefresh(ctx, scene);
   ok(ack, null);
 }
 
@@ -424,14 +419,28 @@ export function deleteToken(ctx: Ctx, payload: { sceneId: string; tokenId: strin
 // Neblina
 // ---------------------------------------------------------------------------
 
+/**
+ * Exploracao e revisao de visao do mesmo movimento, com a linha de visao de
+ * cada jogador calculada uma vez so. As duas etapas refaziam o mesmo calculo,
+ * e com luz global (raio de 40 celulas) soltar um token custava o dobro.
+ * Entre uma e outra so muda `fog.exploredBy`, que nao entra na linha de visao.
+ */
+function exploreAndRefresh(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>): void {
+  const shared = sharedSight(scene);
+  applyExploration(ctx, scene, onlyPlayerIds, shared);
+  refreshVision(ctx.room, scene, onlyPlayerIds, shared);
+}
+
 /** Acumula em `fog.exploredBy` o que cada jogador acabou de descobrir. */
-function applyExploration(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>): void {
-  const fresh = newlyExploredCells(scene, onlyPlayerIds);
+function applyExploration(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>, shared?: SharedSight): void {
+  const fresh = newlyExploredCells(scene, onlyPlayerIds, shared);
   if (fresh.size === 0) return;
 
   const exploredBy: Record<string, FogSetDelta> = {};
   for (const [playerId, cells] of fresh) {
-    (scene.fog.exploredBy[playerId] ??= []).push(...cells);
+    // Mesmo cuidado de `paintFog`: sem espalhar a lista em argumentos.
+    const list = (scene.fog.exploredBy[playerId] ??= []);
+    for (const c of cells) list.push(c);
     exploredBy[playerId] = { add: cells };
   }
   ctx.room.touchScene(scene.id);
@@ -456,8 +465,11 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
         else set.delete(c);
       }
     }
+    // Laco, e nao `list.push(...set)`: o espalhamento passa cada celula como
+    // argumento e estoura a pilha acima de ~120 mil — depois de a lista ja ter
+    // sido esvaziada. A pintura devolvia erro e o revelado inteiro sumia.
     list.length = 0;
-    list.push(...set);
+    for (const c of set) list.push(c);
     return changed;
   };
 
