@@ -794,3 +794,77 @@ describe('neblina de mapa grande', () => {
     expect(scene.fog.exploredBy.alice).toHaveLength(199_999);
   });
 });
+
+describe('P09: arraste para dentro da neblina', () => {
+  const moves = (sock: FakeSocket) =>
+    sock.received.filter(([ev]) => ev === 'token:moved').map(([, p]) => p as { tokenId: string; x: number; y: number });
+  const drag = (room: Room, gm: FakeSocket, tokenId: string, x: number, y: number) =>
+    moveToken(ctxOf(room, gm), { sceneId: 'scn-ativa', tokenId, x, y, dragging: true }, vi.fn());
+
+  // Quem via o token no inicio do arraste recebia todas as posicoes ate o
+  // soltar, mesmo com o token ja no escuro: a visibilidade so era revista ao
+  // soltar, e `token:moved` ia para quem tinha o token na memoria do socket.
+  it('o NPC arrastado para o escuro para de mandar posicao e sai do mapa do jogador', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.tokens.push(createToken({ id: 'tok-npc', name: 'Guarda', x: 70, y: 0 }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    sendFullState(room, alice.socket);
+    alice.received.length = 0;
+
+    // Dentro da visao: o arraste normal continua chegando.
+    drag(room, gm, 'tok-npc', 140, 0);
+    expect(moves(alice)).toEqual([expect.objectContaining({ tokenId: 'tok-npc', x: 140, y: 0 })]);
+
+    for (const far of [700, 1400, 2100]) drag(room, gm, 'tok-npc', far, far);
+    expect(moves(alice)).toHaveLength(1);
+    expect(JSON.stringify(alice.received)).not.toMatch(/700|1400|2100/);
+    expect(alice.received.at(-1)).toEqual(['tokens:patch', { sceneId: 'scn-ativa', remove: ['tok-npc'] }]);
+    // O mestre acompanha tudo.
+    expect(moves(gm)).toHaveLength(4);
+
+    // Voltou para a vista ainda no arraste: reaparece, ja na posicao nova.
+    drag(room, gm, 'tok-npc', 70, 70);
+    expect(alice.received.at(-1)).toMatchObject(['tokens:patch', { upsert: [{ id: 'tok-npc', x: 70, y: 70 }] }]);
+    drag(room, gm, 'tok-npc', 70, 0);
+    expect(moves(alice).at(-1)).toMatchObject({ tokenId: 'tok-npc', x: 70, y: 0 });
+  });
+
+  it('o token do proprio jogador sempre manda posicao, e o do colega no escuro nao', () => {
+    const room = table();
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    const bruno = connect(room, 'bruno');
+    sendFullState(room, alice.socket);
+    sendFullState(room, bruno.socket);
+    alice.received.length = 0;
+    bruno.received.length = 0;
+
+    drag(room, gm, 'tok-alice', 0, 1400);
+    expect(moves(alice)).toEqual([expect.objectContaining({ tokenId: 'tok-alice', y: 1400 })]);
+    expect(JSON.stringify(bruno.received)).not.toContain('tok-alice');
+  });
+
+  // A visao guardada no socket nao conhece a luz do token na posicao nova: sem
+  // olhar a tocha que ele carrega, o colega iluminado sumia no meio do arraste.
+  it('token com luz propria segue visivel a quem tem linha de visao, e some atras da parede', () => {
+    const room = table();
+    const scene = room.activeScene()!;
+    scene.tokens.find((t) => t.id === 'tok-bruno')!.lightRadius = 2;
+    // Parede ao sul do corredor: quem desce por ela sai da vista da Alice.
+    scene.walls.push(createWall({ x1: 140, y1: 140, x2: 2100, y2: 140 }));
+    const gm = connect(room, 'mestre');
+    const alice = connect(room, 'alice');
+    sendFullState(room, alice.socket);
+    expect(JSON.stringify(alice.received)).toContain('tok-bruno');
+    alice.received.length = 0;
+
+    drag(room, gm, 'tok-bruno', 1680, 0);
+    expect(moves(alice).at(-1)).toMatchObject({ tokenId: 'tok-bruno', x: 1680 });
+
+    drag(room, gm, 'tok-bruno', 1680, 700);
+    expect(moves(alice)).toHaveLength(1);
+    expect(alice.received.at(-1)).toEqual(['tokens:patch', { sceneId: 'scn-ativa', remove: ['tok-bruno'] }]);
+  });
+});

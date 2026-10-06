@@ -10,12 +10,20 @@ import type {
   Token,
   Wall,
 } from '@rpg/shared';
-import { sharedSight, type SharedSight } from '@rpg/shared';
+import {
+  collectBlockers,
+  sharedSight,
+  tokenShownByOwnLight,
+  type Segment,
+  type SharedSight,
+  type VisionResult,
+} from '@rpg/shared';
 
 import {
   assetIdsOfScene,
   effectShownTo,
   playersWithPortraits,
+  presentToken,
   sceneForViewer,
   stateForViewer,
   tileShownTo,
@@ -51,6 +59,13 @@ export interface SocketData {
   /** Imagens cujos dados este socket ja recebeu. Ver `syncAssets`. */
   knownAssets: Set<string>;
   fogSignature?: string;
+  /**
+   * Visao do ultimo calculo completo deste socket (`refreshVision`). E com ela
+   * que `emitTokenMove` decide, a cada passo de arraste, se o jogador enxerga o
+   * destino — sem refazer a visao por quadro. Estado completo e cena reenviada
+   * a apagam, e ela e refeita na primeira consulta.
+   */
+  sight?: { sceneId: string; vision: VisionResult };
 }
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -134,6 +149,7 @@ export function stateWithVisibilityCache(room: Room, socket: TypedSocket) {
 
   socket.data.fogSignature = scene ? JSON.stringify([scene.id, scene.fog.computedVisible, scene.fog.computedExplored]) : undefined;
   socket.data.currentSceneId = scene?.id ?? null;
+  socket.data.sight = undefined;
   socket.data.visibleTokens = new Set(scene?.tokens.map((t) => t.id) ?? []);
   socket.data.visibleEffects = new Set(scene?.effects.map((e) => e.id) ?? []);
   socket.data.visibleTiles = new Set(scene?.tiles.map((t) => t.id) ?? []);
@@ -161,6 +177,7 @@ export function pushScene(room: Room, scene: Scene): void {
     const filtered = sceneForViewer(room, scene, viewer);
     socket.data.fogSignature = JSON.stringify([filtered.id, filtered.fog.computedVisible, filtered.fog.computedExplored]);
     socket.data.currentSceneId = filtered.id;
+    socket.data.sight = undefined;
     socket.data.visibleTokens = new Set(filtered.tokens.map((t) => t.id));
     if (viewer.role !== 'GM') {
       socket.data.visibleEffects = new Set(filtered.effects.map((e) => e.id));
@@ -190,6 +207,7 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
     if (onlyPlayerIds && !onlyPlayerIds.has(viewer.playerId)) continue;
 
     const vision = visionFor(scene, viewer, (shared ??= sharedSight(scene)));
+    socket.data.sight = { sceneId: scene.id, vision };
     const nowVisible = visibleTokenIds(scene, viewer, vision);
     const before = socket.data.visibleTokens ?? new Set<string>();
 
@@ -254,11 +272,20 @@ export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<stri
 }
 
 /**
- * Movimento de token. Quem ja enxerga o token recebe so as coordenadas; a
- * revisao completa de visibilidade fica para `refreshVision`, chamada quando
- * o arraste termina (ou continuamente, apenas para o dono do token).
+ * Movimento de token. Quem enxerga o token no destino recebe so as
+ * coordenadas; a revisao completa de visibilidade fica para `refreshVision`,
+ * chamada quando o arraste termina (ou continuamente, apenas para o dono do
+ * token).
+ *
+ * O destino e conferido a cada passo, contra a visao guardada no socket. Antes
+ * bastava o jogador ter o token na memoria: o NPC arrastado para o escuro, ou
+ * o colega que saia da linha de visao, seguia mandando todas as posicoes ate o
+ * soltar. Agora quem deixa de ver recebe a remocao na hora, e quem volta a ver
+ * no meio do arraste recebe o token de novo, ja no lugar.
  */
 export function emitTokenMove(room: Room, scene: Scene, token: Token): void {
+  let blockers: Segment[] | undefined;
+
   for (const socket of socketsOf(room)) {
     const viewer = socket.data.viewer;
     if (viewer.role === 'GM') {
@@ -266,8 +293,29 @@ export function emitTokenMove(room: Room, scene: Scene, token: Token): void {
       continue;
     }
     if (scene.id !== room.state.activeSceneId) continue;
-    if (socket.data.visibleTokens?.has(token.id)) {
+    const known = socket.data.visibleTokens;
+    if (!known) continue;
+
+    if (socket.data.sight?.sceneId !== scene.id) {
+      socket.data.sight = { sceneId: scene.id, vision: visionFor(scene, viewer) };
+    }
+    const vision = socket.data.sight.vision;
+    // A visao guardada tem a luz deste token na posicao antiga; a tocha que
+    // ele carrega e conferida a parte, na posicao nova.
+    const presented =
+      tokenForViewer(room, scene, token, viewer, vision) ??
+      (tokenShownByOwnLight(scene, token, viewer.playerId, (blockers ??= collectBlockers(scene)))
+        ? presentToken(room, token)
+        : null);
+
+    if (presented && known.has(token.id)) {
       socket.emit('token:moved', { sceneId: scene.id, tokenId: token.id, x: token.x, y: token.y });
+    } else if (presented) {
+      known.add(token.id);
+      syncAssets(room, socket, [presented.assetId]);
+      socket.emit('tokens:patch', { sceneId: scene.id, upsert: [presented] });
+    } else if (known.delete(token.id)) {
+      socket.emit('tokens:patch', { sceneId: scene.id, remove: [token.id] });
     }
   }
 }

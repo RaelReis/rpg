@@ -16,6 +16,7 @@ import {
   isTileSeen,
   movementBlocked,
   segmentsIntersect,
+  tokenShownByOwnLight,
   visibleWalls,
 } from './vision.js';
 
@@ -554,5 +555,48 @@ describe('exploracao e luz por jogador', () => {
     const party = partySightCells(s);
     expect(party.has(aliceCell)).toBe(true);
     expect(party.has(torchCell)).toBe(true);
+  });
+});
+
+describe('tokenShownByOwnLight', () => {
+  // O arraste decide com a visao do ultimo calculo completo, que guarda a tocha
+  // na posicao antiga. A consulta tem de fechar essa diferenca sem mudar a
+  // regra: visao antiga OU luz propria = visao refeita, posicao a posicao.
+  it('visao guardada mais a luz propria da o mesmo que refazer a visao', () => {
+    const torch = createToken({ id: 'tocha', ownerPlayerId: 'bruno', x: 1900, y: 1900, lightRadius: 2 });
+    const s = scene({
+      tokens: [createToken({ id: 'olho', ownerPlayerId: 'alice', x: 0, y: 0, visionRadius: 2 }), torch],
+      walls: [createWall({ x1: 500, y1: -100, x2: 500, y2: 350 }), createWall({ x1: 200, y1: 600, x2: 900, y2: 600 })],
+    });
+    s.fog.hidden = ['7,1'];
+    const stale = computeVision(s, { role: 'PLAYER', playerId: 'alice' });
+
+    let seen = 0;
+    for (let a = 0; a < 12; a++) {
+      for (let b = 0; b < 12; b++) {
+        torch.x = a * SIZE;
+        torch.y = b * SIZE;
+        const fresh = computeVision(s, { role: 'PLAYER', playerId: 'alice' });
+        const expected = canPlayerSeeToken(s, torch, fresh, 'alice');
+        const got = canPlayerSeeToken(s, torch, stale, 'alice') || tokenShownByOwnLight(s, torch, 'alice');
+        expect(got, `celula ${a},${b}`).toBe(expected);
+        if (expected) seen++;
+      }
+    }
+    // O teste so vale se houver dos dois casos.
+    expect(seen).toBeGreaterThan(10);
+    expect(seen).toBeLessThan(140);
+  });
+
+  it('nao vale para token sem luz, oculto, do proprio jogador ou fora da neblina de visao', () => {
+    const torch = createToken({ id: 'tocha', ownerPlayerId: 'bruno', x: 800, y: 0, lightRadius: 2 });
+    const s = scene({ tokens: [createToken({ ownerPlayerId: 'alice', x: 0, y: 0, visionRadius: 2 }), torch] });
+    expect(tokenShownByOwnLight(s, torch, 'alice')).toBe(true);
+    expect(tokenShownByOwnLight(s, torch, 'bruno')).toBe(false);
+    expect(tokenShownByOwnLight(s, { ...torch, lightRadius: 0 }, 'alice')).toBe(false);
+    expect(tokenShownByOwnLight(s, { ...torch, visibility: 'hidden' }, 'alice')).toBe(false);
+    expect(tokenShownByOwnLight(s, { ...torch, visibleTo: ['bruno'] }, 'alice')).toBe(false);
+    s.fog.mode = 'manual';
+    expect(tokenShownByOwnLight(s, torch, 'alice')).toBe(false);
   });
 });

@@ -83,7 +83,7 @@ export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionRes
 }
 
 /** Aplica a semitransparencia de `dim` no que sai para o jogador. */
-function presentToken(room: Room, token: Token): Token {
+export function presentToken(room: Room, token: Token): Token {
   const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly).map(f => f.id));
   return { ...token, bars: token.bars.filter(b => publicFields.has(b.fieldId)),
     opacity: token.visibility === 'dim' ? Math.min(token.opacity, 0.45) : token.opacity };

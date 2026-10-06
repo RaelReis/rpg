@@ -559,6 +559,44 @@ export function canPlayerSeeToken(
 }
 
 /**
+ * A luz que o proprio token carrega o mostra a este jogador, onde ele esta
+ * agora?
+ *
+ * E a segunda parte de `playerSightCells` — luz alheia so conta com linha de
+ * visao de um olho do jogador —, restrita as celulas que o token ocupa. Serve
+ * ao arraste: a cada passo o servidor decide se manda a posicao usando a visao
+ * do ultimo calculo completo, e essa visao guarda a tocha na posicao ANTIGA.
+ * Sem esta consulta, o colega que carrega luz sumia no meio do arraste;
+ * refazer a visao inteira de cada jogador a cada quadro custaria caro demais.
+ */
+export function tokenShownByOwnLight(
+  scene: Scene,
+  token: Token,
+  playerId: string,
+  blockers: Segment[] = collectBlockers(scene),
+): boolean {
+  if (scene.fog.mode !== 'vision') return false;
+  if (!sightToken(token) || token.lightRadius <= 0 || token.ownerPlayerId === playerId) return false;
+  if (!perceives(token, playerId) || concealedFromPlayers(token)) return false;
+
+  const eyes = eyesOf(scene, playerId);
+  if (eyes.length === 0) return false;
+  const origins = eyes.map((eye) => tokenCenter(scene.grid, { x: eye.x, y: eye.y }, eye.scale));
+
+  const origin = tokenCenter(scene.grid, { x: token.x, y: token.y }, token.scale);
+  const limit = effectiveRadius(scene, token.lightRadius) * scene.grid.size;
+  const span = Math.max(0, Math.ceil(token.scale) - 1);
+  for (const cell of cellsWithinRadius(scene.grid, cellAt(scene.grid, origin), span)) {
+    if (scene.fog.hidden.includes(cellKey(cell))) continue;
+    const center = cellCenter(scene.grid, cell);
+    if (Math.hypot(center.x - origin.x, center.y - origin.y) > limit) continue;
+    if (!cellIsLit(origin, cell, scene, blockers)) continue;
+    if (origins.some((eye) => cellIsLit(eye, cell, scene, blockers))) return true;
+  }
+  return false;
+}
+
+/**
  * Celulas que cada jogador acabou de descobrir, para acumular em
  * `fog.exploredBy`. O servidor chama isto a cada movimento e so persiste o
  * delta, evitando reescrever o conjunto inteiro a cada passo. Cada jogador
