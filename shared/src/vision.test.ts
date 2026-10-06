@@ -9,6 +9,8 @@ import {
   computeVision,
   newlyExploredCells,
   partySightCells,
+  playerSightCells,
+  sharedSight,
   dragStepAllowed,
   hasLineOfSight,
   isDoorWithinSight,
@@ -598,5 +600,102 @@ describe('tokenShownByOwnLight', () => {
     expect(tokenShownByOwnLight(s, { ...torch, visibleTo: ['bruno'] }, 'alice')).toBe(false);
     s.fog.mode = 'manual';
     expect(tokenShownByOwnLight(s, torch, 'alice')).toBe(false);
+  });
+});
+
+describe('P10: visao guardada entre movimentos', () => {
+  /** Numeros repetiveis: o teste falha sempre no mesmo passo. */
+  function dice(seed: number): (n: number) => number {
+    let s = seed;
+    return (n) => Math.floor(((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32) * n);
+  }
+
+  function busyScene(globalLight: number): Scene {
+    return scene({
+      globalLight,
+      tokens: [
+        createToken({ id: 'alice-1', ownerPlayerId: 'alice', x: 200, y: 200, visionRadius: 4 }),
+        createToken({ id: 'alice-2', ownerPlayerId: 'alice', x: 900, y: 300, visionRadius: 2, lightRadius: 3 }),
+        createToken({ id: 'bruno-1', ownerPlayerId: 'bruno', x: 1200, y: 900, visionRadius: 3 }),
+        createToken({ id: 'tocha', x: 600, y: 800, lightRadius: 3 }),
+        createToken({ id: 'npc', x: 400, y: 400 }),
+      ],
+      walls: [
+        wallAt(500, 0, 700),
+        wallAt(1000, 200, 900, { id: 'porta', door: true }),
+        wallAt(300, 500, 1100, { window: true }),
+        createWall({ x1: 0, y1: 600, x2: 800, y2: 600 }),
+      ],
+      tiles: [createTile({ id: 'estante', x: 1300, y: 300, width: 100, height: 300, blocksVision: true })],
+    });
+  }
+
+  // O que se guarda e o resultado; a regra nao pode mudar. A cada alteracao da
+  // cena, o que sai com a memoria tem de ser igual, celula a celula e na mesma
+  // ordem, ao calculo feito do zero numa copia que nunca foi vista.
+  for (const globalLight of [0, 1]) {
+    it(`da o mesmo que calcular do zero, com luz global ${globalLight}`, () => {
+      const s = busyScene(globalLight);
+      const roll = dice(42 + globalLight);
+      const mutations: ((sc: Scene) => void)[] = [
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.x = roll(16) * SIZE; t.y = roll(12) * SIZE; },
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.lightRadius = roll(4); },
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.visionRadius = roll(5); },
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.scale = 1 + roll(2); },
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.layer = roll(4) === 0 ? 2 : 3; },
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.visibleTo = roll(3) === 0 ? ['alice'] : null; },
+        (sc) => { const t = sc.tokens[roll(sc.tokens.length)]; t.ownerPlayerId = [null, 'alice', 'bruno'][roll(3)]; },
+        (sc) => { const w = sc.walls.find((x) => x.id === 'porta')!; w.open = !w.open; },
+        (sc) => { const w = sc.walls[roll(sc.walls.length)]; w.x1 += SIZE; w.x2 += SIZE; },
+        (sc) => { sc.walls.push(wallAt(roll(16) * SIZE, 0, 400)); },
+        // Sem tirar as quatro primeiras: a porta e a janela ficam ate o fim.
+        (sc) => { if (sc.walls.length > 4) sc.walls.pop(); },
+        (sc) => { sc.tiles[0].y = roll(8) * SIZE; },
+        (sc) => { sc.tiles[0].blocksVision = !sc.tiles[0].blocksVision; },
+        (sc) => { sc.globalLight = roll(3) / 2; },
+        (sc) => { sc.grid.offsetX = roll(2) * 25; },
+        (sc) => { sc.tokens.reverse(); },
+        // Nada muda: e o caso em que a memoria responde.
+        () => {},
+        (sc) => { sc.fog.revealed.push(`${roll(16)},${roll(12)}`); },
+        (sc) => { sc.fog.hidden = [`${roll(16)},${roll(12)}`]; },
+      ];
+
+      for (let step = 0; step < 150; step++) {
+        mutations[roll(mutations.length)](s);
+        const scratch = structuredClone(s);
+        for (const playerId of ['alice', 'bruno', 'ninguem']) {
+          expect([...playerSightCells(s, playerId)], `passo ${step}, ${playerId}`).toEqual([
+            ...playerSightCells(scratch, playerId),
+          ]);
+          const opts = { role: 'PLAYER' as const, playerId };
+          const kept = computeVision(s, opts);
+          const fresh = computeVision(scratch, opts);
+          expect([...kept.visible]).toEqual([...fresh.visible]);
+          expect([...kept.explored]).toEqual([...fresh.explored]);
+        }
+        expect([...newlyExploredCells(s)]).toEqual([...newlyExploredCells(scratch)]);
+        expect([...partySightCells(s)]).toEqual([...partySightCells(scratch)]);
+      }
+    });
+  }
+
+  it('sem mudanca na cena, o segundo calculo devolve o mesmo conjunto; com mudanca, outro', () => {
+    const s = busyScene(0);
+    const first = playerSightCells(s, 'alice');
+    expect(playerSightCells(s, 'alice')).toBe(first);
+    // NPC sem luz andando nao muda a visao de ninguem.
+    s.tokens.find((t) => t.id === 'npc')!.x = 700;
+    expect(playerSightCells(s, 'alice')).toBe(first);
+    s.tokens.find((t) => t.id === 'alice-1')!.x = 300;
+    expect(playerSightCells(s, 'alice')).not.toBe(first);
+  });
+
+  it('exploracao e revisao do mesmo movimento dividem um calculo so', () => {
+    const s = busyScene(0);
+    const shared = sharedSight(s);
+    const explored = newlyExploredCells(s, undefined, shared);
+    expect(explored.get('alice')!.length).toBeGreaterThan(0);
+    expect(shared.sights.get('alice')).toBe(playerSightCells(s, 'alice', shared));
   });
 });

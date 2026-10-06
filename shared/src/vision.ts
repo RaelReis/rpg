@@ -278,18 +278,82 @@ export function sceneLightCells(scene: Scene, blockers = collectBlockers(scene))
 export interface SharedSight {
   blockers: Segment[];
   lights: Map<string, Set<string>>;
+  /**
+   * O que cada jogador ve, ja calculado nesta passagem. So vale enquanto a
+   * cena nao muda: quem divide um `SharedSight` entre duas chamadas garante
+   * que nada mexeu em token, parede ou luz no meio.
+   */
+  sights: Map<string, Set<string>>;
+  /** Grade, luz global e obstaculos em texto: a parte de `sightKey` comum a todos. */
+  key: string;
 }
 
 export function sharedSight(scene: Scene): SharedSight {
   const blockers = collectBlockers(scene);
-  return { blockers, lights: sceneLightCells(scene, blockers) };
+  // As luzes so sao calculadas se alguem precisar: com a visao de todos ainda
+  // guardada (`sightMemory`), nenhuma tocha e refeita.
+  let lights: Map<string, Set<string>> | undefined;
+  return {
+    blockers,
+    get lights() {
+      return (lights ??= sceneLightCells(scene, blockers));
+    },
+    sights: new Map(),
+    key: `${JSON.stringify(scene.grid)}|${scene.globalLight}|${blockers.map((b) => `${b.x1},${b.y1},${b.x2},${b.y2}`).join(';')}`,
+  };
 }
 
+/**
+ * A visao de cada jogador, guardada entre um movimento e outro enquanto nada
+ * do que ela depende mudar.
+ *
+ * Com luz global o raio vira 40 celulas, e cada token solto refazia a visao de
+ * todos os jogadores — inclusive quando quem andou foi um NPC, que nao muda a
+ * visao de ninguem. A regra nao muda: o que se guarda e o resultado de
+ * `playerSightCells`, com a lista de tudo o que entrou no calculo (`sightKey`).
+ * Se qualquer item diferir, o calculo e refeito. Por ser conferida pelo
+ * conteudo, e nao por aviso de quem alterou a cena, nao ha caminho que
+ * esqueca de invalidar.
+ */
+const sightMemory = new WeakMap<Scene, Map<string, { key: string; cells: Set<string> }>>();
+
+/**
+ * Tudo de que `playerSightCells` depende, alem do que ja esta em
+ * `SharedSight.key`: os olhos do jogador e as luzes alheias, na ordem em que
+ * entram no calculo. Mexeu no calculo, mexa aqui.
+ */
+function sightKey(scene: Scene, playerId: string, eyes: Token[], shared: SharedSight): string {
+  const parts = [shared.key];
+  for (const e of eyes) parts.push(`e${e.x},${e.y},${e.scale},${e.visionRadius},${e.lightRadius}`);
+  for (const t of scene.tokens) {
+    if (t.ownerPlayerId === playerId || !sightToken(t) || t.lightRadius <= 0) continue;
+    parts.push(`l${t.x},${t.y},${t.scale},${t.lightRadius}`);
+  }
+  return parts.join('|');
+}
+
+/**
+ * O conjunto devolvido pode ser o mesmo de uma chamada anterior (ver
+ * `SharedSight.sights` e `sightMemory`): quem recebe le, nao altera.
+ */
 export function playerSightCells(scene: Scene, playerId: string, shared: SharedSight = sharedSight(scene)): Set<string> {
+  const done = shared.sights.get(playerId);
+  if (done) return done;
+
+  const eyes = eyesOf(scene, playerId);
+  if (eyes.length === 0) return new Set();
+
+  const signature = sightKey(scene, playerId, eyes, shared);
+  let memory = sightMemory.get(scene);
+  if (!memory) sightMemory.set(scene, (memory = new Map()));
+  const kept = memory.get(playerId);
+  if (kept?.key === signature) {
+    shared.sights.set(playerId, kept.cells);
+    return kept.cells;
+  }
+
   const { blockers, lights } = shared;
   const out = new Set<string>();
-  const eyes = eyesOf(scene, playerId);
-  if (eyes.length === 0) return out;
 
   for (const eye of eyes) {
     for (const key of tokenVisionCells(scene, eye, Math.max(eye.visionRadius, eye.lightRadius), blockers)) {
@@ -308,6 +372,8 @@ export function playerSightCells(scene: Scene, playerId: string, shared: SharedS
       if (origins.some((origin) => cellIsLit(origin, cell, scene, blockers))) out.add(key);
     }
   }
+  memory.set(playerId, { key: signature, cells: out });
+  shared.sights.set(playerId, out);
   return out;
 }
 
@@ -603,11 +669,15 @@ export function tokenShownByOwnLight(
  * explora com os proprios olhos (`playerSightCells`): o que um descobre nao
  * entra na memoria do outro.
  */
-export function newlyExploredCells(scene: Scene, onlyPlayerIds?: Set<string>): Map<string, string[]> {
+export function newlyExploredCells(
+  scene: Scene,
+  onlyPlayerIds?: Set<string>,
+  shared?: SharedSight,
+): Map<string, string[]> {
   const out = new Map<string, string[]>();
   if (scene.fog.mode !== 'vision' || !scene.fog.rememberExplored) return out;
 
-  const shared = sharedSight(scene);
+  shared ??= sharedSight(scene);
   const hidden = new Set(scene.fog.hidden);
   for (const playerId of scenePlayersWithEyes(scene)) {
     if (onlyPlayerIds && !onlyPlayerIds.has(playerId)) continue;

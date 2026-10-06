@@ -194,11 +194,13 @@ export function pushScene(room: Room, scene: Scene): void {
  * entraram na neblina, tokens que sairam e o novo conjunto de celulas
  * iluminadas. E o caminho chamado depois de qualquer coisa que mexa na
  * visibilidade (movimento, paredes, luz, pintura de fog).
+ *
+ * `shared` vem de quem acabou de calcular a exploracao do mesmo movimento
+ * (`applyExploration`): a linha de visao de cada jogador era feita duas vezes
+ * por token solto, uma para explorar e outra aqui.
  */
-export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<string>): void {
+export function refreshVision(room: Room, scene: Scene, onlyPlayerIds?: Set<string>, shared?: SharedSight): void {
   const strict = room.state.settings.strictVision;
-  // Paredes e luzes sao as mesmas para todos os jogadores desta passagem.
-  let shared: SharedSight | undefined;
 
   for (const socket of socketsOf(room)) {
     const viewer = socket.data.viewer;
