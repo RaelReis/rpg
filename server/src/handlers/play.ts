@@ -497,6 +497,44 @@ export async function deleteAsset(ctx: Ctx, payload: { assetId: string }, ack: A
     ctx.room.touchSheet(sheet.id);
   }
   for (const handout of ctx.room.state.handouts) if (handout.assetId === assetId) handout.assetId = null;
+
+  /*
+   * Quadro de pistas, cartelas e a cartela na tela tambem guardam a imagem.
+   * Antes ficavam de fora e continuavam apontando para um arquivo que nao
+   * existe mais: o cartao aparecia vazio no quadro e a cartela subia sem fundo,
+   * com o id morto gravado no banco e levado para o backup.
+   *
+   * No quadro, cartao de imagem sem legenda nao tem mais o que mostrar e sai,
+   * com os fios presos nele (como em `deleteBoardItem`). Com legenda ele fica:
+   * o texto e do grupo, e apagar a imagem nao e motivo para perde-lo.
+   */
+  const board = ctx.room.state.board;
+  const gone = new Set<string>();
+  for (const item of board.items) {
+    if (item.assetId !== assetId) continue;
+    if (item.text.trim()) {
+      item.assetId = null;
+      item.updatedAt = Date.now();
+    } else {
+      gone.add(item.id);
+    }
+    ctx.room.touch('board');
+  }
+  if (gone.size > 0) {
+    board.items = board.items.filter((i) => !gone.has(i.id));
+    board.threads = board.threads.filter((t) => !gone.has(t.from) && !gone.has(t.to));
+  }
+
+  for (const card of ctx.room.state.sceneCards) {
+    if (card.assetId !== assetId) continue;
+    card.assetId = null;
+    card.updatedAt = Date.now();
+  }
+  // A cartela na tela e uma copia tirada na hora de apresentar: limpar so a
+  // cartela de origem deixaria a que esta no ar com a imagem apagada.
+  const presented = ctx.room.state.presentedCard;
+  if (presented?.assetId === assetId) presented.assetId = null;
+
   ctx.room.touch('table');
   for (const socket of socketsOf(ctx.room)) socket.emit('assets:patch', { remove: [assetId] });
   sendFullStateToAll(ctx.room);
