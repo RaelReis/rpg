@@ -102,10 +102,17 @@ export function updateScene(ctx: Ctx, payload: { sceneId: string; patch: Partial
     for (const key of ['name', 'backgroundAssetId', 'backgroundColor', 'width', 'height', 'order', 'weather'] as const) {
       if (p[key] !== undefined) Object.assign(patch, { [key]: scene[key] });
     }
+    // A cartela de abertura volta so para o mestre: o id e material de
+    // preparacao e o jogador nunca o recebe (`sceneForViewer` o zera). Ela
+    // ficava fora da lista acima, entao o mestre recebia `patch: {}` e o
+    // seletor do painel voltava ao valor anterior, como se nao tivesse salvado.
+    const gmPatch: Partial<Scene> =
+      p.introCardId !== undefined ? { ...patch, introCardId: scene.introCardId } : patch;
     for (const socket of socketsOf(ctx.room)) {
-      if (socket.data.viewer.role !== 'GM' && scene.id !== ctx.room.state.activeSceneId) continue;
+      const isGm = socket.data.viewer.role === 'GM';
+      if (!isGm && scene.id !== ctx.room.state.activeSceneId) continue;
       syncAssets(ctx.room, socket, [scene.backgroundAssetId]);
-      socket.emit('scene:patch', { sceneId: scene.id, patch });
+      socket.emit('scene:patch', { sceneId: scene.id, patch: isGm ? gmPatch : patch });
     }
   }
   ok(ack, null);
