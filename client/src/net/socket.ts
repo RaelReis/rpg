@@ -216,6 +216,40 @@ export async function resumeWithSession(session: Session): Promise<void> {
   await applySession(data.session, data.state);
 }
 
+/** Espera antes de cada nova tentativa do cookie; acabou a lista, desiste. */
+const IMAGE_ACCESS_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+
+/** So o pedido mais recente insiste: entrar ou reconectar aposenta o anterior. */
+let imageAccessRun = 0;
+
+/**
+ * Pede o cookie das imagens sem deixar a falha dele derrubar a entrada.
+ *
+ * A falha (o prazo de 5 s numa rede lenta) era propagada depois de o servidor
+ * ja ter aceitado a sessao: o estado novo era descartado e, na entrada, tentar
+ * de novo dava "Ja tem alguem chamado X na mesa agora", porque o socket ja
+ * estava ligado ao jogador recem-criado. Agora quem chama segue com a mesa, e
+ * o cookie e tentado de novo por fora; as imagens que voltarem 401 nesse
+ * intervalo o cache do canvas ja repete sozinho (`canvas/images.ts`).
+ */
+async function ensureImageAccess(token: string): Promise<void> {
+  const run = ++imageAccessRun;
+  try {
+    await grantImageAccess(token);
+  } catch {
+    void (async () => {
+      for (const delay of IMAGE_ACCESS_RETRY_DELAYS_MS) {
+        await wait(delay);
+        if (run !== imageAccessRun || storedSession()?.token !== token) return;
+        try {
+          await grantImageAccess(token);
+          return;
+        } catch { /* segue para a proxima espera */ }
+      }
+    })();
+  }
+}
+
 async function applySession(session: Session, state: TableState): Promise<void> {
   storeSession(session);
 
@@ -223,7 +257,7 @@ async function applySession(session: Session, state: TableState): Promise<void> 
   // imagens assim que o estado chegava, antes do cookie existir: elas
   // voltavam 401 e, para quem entrava pela primeira vez, a mesa abria sem
   // arte. Custa uma ida ao servidor na entrada.
-  await grantImageAccess(session.token);
+  await ensureImageAccess(session.token);
 
   if (storedSession()?.token !== session.token) return;
   const store = useStore.getState();
@@ -290,7 +324,7 @@ async function resumeAfterReconnect(s: ClientSocket, session: Session): Promise<
     try {
       const data = await rpc<{ session: Session; state: TableState }>('session:resume', { token: session.token });
       // O cookie pode ter expirado ou sido limpo enquanto a conexao caia.
-      await grantImageAccess(data.session.token);
+      await ensureImageAccess(data.session.token);
       if (stale()) return;
       storeSession(data.session);
       store().setSession(data.session);

@@ -89,3 +89,53 @@ it('para de insistir se a conexao cai de novo: o proximo connect recomeca', asyn
   reconnect(); await vi.advanceTimersByTimeAsync(0);
   expect(useStore.getState().table?.name).toBe('nova');
 });
+
+/** `grantImageAccess` falso: falha nas primeiras `failures` chamadas. */
+function flakyGrant(failures: number) {
+  const calls: string[] = [];
+  fake.grant = (token) => { calls.push(token); return calls.length <= failures ? Promise.reject(new Error('lento')) : Promise.resolve(); };
+  return calls;
+}
+
+it('entra na mesa mesmo com o cookie das imagens falhando, e tenta o cookie de novo', async () => {
+  const calls = flakyGrant(1);
+  const net = await import('./socket'); const { useStore } = await import('../state/store');
+  fake.response = { ok: true, data: { session: a, state: table('nova') } };
+  await net.joinTable({ code: 'AAA-123', name: 'P' } as never);
+  expect(net.storedSession()).toEqual(a);
+  expect(useStore.getState().session).toEqual(a);
+  expect(useStore.getState().table?.name).toBe('nova');
+  expect(calls).toEqual(['token-a']);
+
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(calls).toEqual(['token-a', 'token-a']);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(calls.length).toBe(2);
+});
+
+it('aplica o estado da reconexao mesmo com o cookie falhando, sem repetir o resume', async () => {
+  const { useStore, reconnect } = await seated();
+  const calls = flakyGrant(1);
+  fake.response = { ok: true, data: { session: a, state: table('nova') } };
+  reconnect(); await vi.advanceTimersByTimeAsync(0);
+  expect(useStore.getState().table?.name).toBe('nova');
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(fake.emits).toEqual(['session:resume']);
+  expect(calls.length).toBe(2);
+});
+
+it('desiste do cookie depois do limite e para ao sair da mesa', async () => {
+  const calls = flakyGrant(Infinity);
+  const net = await import('./socket');
+  fake.response = { ok: true, data: { session: a, state: table('nova') } };
+  await net.joinTable({ code: 'AAA-123', name: 'P' } as never);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(calls.length).toBe(2);
+  net.leaveTable();
+  await vi.advanceTimersByTimeAsync(10 * 60_000);
+  expect(calls.length).toBe(2);
+
+  await net.joinTable({ code: 'AAA-123', name: 'P' } as never);
+  await vi.advanceTimersByTimeAsync(10 * 60_000);
+  expect(calls.length).toBe(2 + 6);
+});
