@@ -27,7 +27,7 @@ import { rooms } from './room.js';
 const COOKIE = 'rpg_img';
 
 /** Alem disto o cookie so cresce; abas antigas cedem lugar as recentes. */
-
+const MAX_TOKENS = 24;
 
 const MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -55,10 +55,13 @@ function readTokens(req: express.Request): string[] {
     if (eq < 0 || (name !== COOKIE && !name.startsWith(`${COOKIE}_`))) continue;
     tokens.push(...(safeDecode(part.slice(eq + 1).trim()) ?? '').split(',').filter(Boolean));
   }
-  return tokens.slice(0, 24);
+  // Os ULTIMOS, nao os primeiros: o navegador manda os cookies mais antigos
+  // na frente (RFC 6265), entao `slice(0, 24)` guardava as sessoes velhas e
+  // jogava fora justamente a que a pessoa acabou de abrir.
+  return tokens.slice(-MAX_TOKENS);
 }
 
-function writeCookie(res: express.Response, tokens: string[], name: string): void {
+function writeCookie(req: express.Request, res: express.Response, tokens: string[], name: string): void {
   const value = encodeURIComponent(tokens.join(','));
   const attrs = [
     `${name}=${value}`,
@@ -69,7 +72,13 @@ function writeCookie(res: express.Response, tokens: string[], name: string): voi
     'SameSite=Lax',
     `Max-Age=${tokens.length ? MAX_AGE_SECONDS : 0}`,
   ];
-  if (process.env.NODE_ENV === 'production') attrs.push('Secure');
+  // `Secure` acompanha o pedido, nao o NODE_ENV. Marcado em toda producao, o
+  // `npm start` na rede local (http://192.168.x.x) entregava um cookie que o
+  // navegador descarta em origem insegura, e os jogadores ficavam sem nenhuma
+  // imagem — so o mestre via, porque o Chrome abre excecao para localhost.
+  // `req.secure` respeita o `trust proxy`, entao atras do tunnel (https na
+  // borda, X-Forwarded-Proto) o cookie continua saindo com `Secure`.
+  if (req.secure) attrs.push('Secure');
   res.setHeader('Set-Cookie', attrs.join('; '));
 }
 
@@ -88,14 +97,14 @@ export function registerImageAccessRoutes(app: express.Express): void {
     }
 
     // O token novo vai para a frente; os antigos seguem validos ate o teto.
-    writeCookie(res, [token], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
+    writeCookie(req, res, [token], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
     res.json({ ok: true });
   }));
 
   app.delete('/api/session/image-access', (req, res) => {
     const token = String(req.header('x-session-token') ?? '');
     if (!token || token.length > 256) return res.sendStatus(400);
-    writeCookie(res, [], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
+    writeCookie(req, res, [], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
     res.json({ ok: true });
   });
 }
