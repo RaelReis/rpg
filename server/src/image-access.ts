@@ -5,8 +5,10 @@ import path from 'node:path';
 
 import express from 'express';
 
+import type { Player } from '@rpg/shared';
+
 import { UPLOAD_DIR } from './env.js';
-import { rooms } from './room.js';
+import { rooms, type Room } from './room.js';
 
 /**
  * Autorizacao das imagens servidas em `/uploads`.
@@ -27,7 +29,7 @@ import { rooms } from './room.js';
 const COOKIE = 'rpg_img';
 
 /** Alem disto o cookie so cresce; abas antigas cedem lugar as recentes. */
-
+const MAX_TOKENS = 24;
 
 const MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -55,10 +57,13 @@ function readTokens(req: express.Request): string[] {
     if (eq < 0 || (name !== COOKIE && !name.startsWith(`${COOKIE}_`))) continue;
     tokens.push(...(safeDecode(part.slice(eq + 1).trim()) ?? '').split(',').filter(Boolean));
   }
-  return tokens.slice(0, 24);
+  // Os ULTIMOS, nao os primeiros: o navegador manda os cookies mais antigos
+  // na frente (RFC 6265), entao `slice(0, 24)` guardava as sessoes velhas e
+  // jogava fora justamente a que a pessoa acabou de abrir.
+  return tokens.slice(-MAX_TOKENS);
 }
 
-function writeCookie(res: express.Response, tokens: string[], name: string): void {
+function writeCookie(req: express.Request, res: express.Response, tokens: string[], name: string): void {
   const value = encodeURIComponent(tokens.join(','));
   const attrs = [
     `${name}=${value}`,
@@ -69,7 +74,13 @@ function writeCookie(res: express.Response, tokens: string[], name: string): voi
     'SameSite=Lax',
     `Max-Age=${tokens.length ? MAX_AGE_SECONDS : 0}`,
   ];
-  if (process.env.NODE_ENV === 'production') attrs.push('Secure');
+  // `Secure` acompanha o pedido, nao o NODE_ENV. Marcado em toda producao, o
+  // `npm start` na rede local (http://192.168.x.x) entregava um cookie que o
+  // navegador descarta em origem insegura, e os jogadores ficavam sem nenhuma
+  // imagem — so o mestre via, porque o Chrome abre excecao para localhost.
+  // `req.secure` respeita o `trust proxy`, entao atras do tunnel (https na
+  // borda, X-Forwarded-Proto) o cookie continua saindo com `Secure`.
+  if (req.secure) attrs.push('Secure');
   res.setHeader('Set-Cookie', attrs.join('; '));
 }
 
@@ -88,16 +99,96 @@ export function registerImageAccessRoutes(app: express.Express): void {
     }
 
     // O token novo vai para a frente; os antigos seguem validos ate o teto.
-    writeCookie(res, [token], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
+    writeCookie(req, res, [token], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
     res.json({ ok: true });
   }));
 
   app.delete('/api/session/image-access', (req, res) => {
     const token = String(req.header('x-session-token') ?? '');
     if (!token || token.length > 256) return res.sendStatus(400);
-    writeCookie(res, [], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
+    writeCookie(req, res, [], `${COOKIE}_${hashToken(token).slice(0, 16)}`);
     res.json({ ok: true });
   });
+}
+
+/**
+ * Por quanto tempo o conjunto de imagens de um jogador e reaproveitado.
+ *
+ * E tambem o teto do atraso de uma revogacao: quem deixa de poder ver uma
+ * imagem (pista descompartilhada, token que sumiu na neblina) ainda consegue
+ * baixa-la por ate este tempo. Dois segundos cobrem a rajada de pedidos de uma
+ * cena abrindo, que e o que o cache existe para absorver, e ficam abaixo do
+ * que alguem levaria para aproveitar a janela. Expulsao nao passa por aqui:
+ * `rooms.resolveSession` e `room.player` barram na hora.
+ */
+export const IMAGE_ACCESS_CACHE_MS = 2000;
+
+/** Uma entrada por jogador por mesa; o teto so existe para o mapa nao crescer sem fim. */
+const IMAGE_ACCESS_CACHE_MAX = 1024;
+
+interface AccessEntry {
+  room: Room;
+  role: Player['role'];
+  at: number;
+  urls: string[];
+}
+
+/**
+ * Conjunto de imagens permitidas, por jogador, por poucos segundos.
+ *
+ * `guardUploads` recalculava `stateForViewer` inteiro — visao incluida — a
+ * cada imagem pedida: 30 imagens numa cena com luz global eram 30 calculos de
+ * ~21 ms, com o servidor parado para todo mundo enquanto isso. E como as
+ * imagens saem com `no-cache`, toda revalidacao do navegador repetia a conta.
+ *
+ * A chave leva mesa e jogador, e a entrada guarda a `Room` e o papel de quando
+ * foi calculada: o conjunto de um jogador nunca responde por outro, nem pelo
+ * mesmo jogador depois de mudar de papel ou de a mesa ser recarregada.
+ */
+const accessCache = new Map<string, AccessEntry>();
+
+/** So para os testes conferirem o teto. */
+export function imageAccessCacheSize(): number {
+  return accessCache.size;
+}
+
+function computeAllowedUrls(room: Room, player: Player): string[] {
+  const allowed = new Set(stateForViewer(room, { playerId: player.id, role: player.role }).assets.map(a => a.id));
+  const urls: string[] = [];
+  for (const a of room.state.assets) {
+    if (!allowed.has(a.id) && a.uploadedBy !== player.id) continue;
+    urls.push(a.url);
+    if (a.thumbUrl) urls.push(a.thumbUrl);
+  }
+  return urls;
+}
+
+function cachedAllowedUrls(key: string, room: Room, player: Player): string[] | null {
+  const entry = accessCache.get(key);
+  if (!entry) return null;
+  const age = Date.now() - entry.at;
+  // `age < 0` e relogio que andou para tras: sem este lado da conta a entrada
+  // valeria ate o relogio alcancar de novo o instante em que foi gravada.
+  if (entry.room !== room || entry.role !== player.role || age < 0 || age >= IMAGE_ACCESS_CACHE_MS) {
+    accessCache.delete(key);
+    return null;
+  }
+  return entry.urls;
+}
+
+function rememberAllowedUrls(key: string, room: Room, player: Player, urls: string[]): void {
+  // Mesma politica do cache de sessao: varre o vencido antes de crescer.
+  if (!accessCache.has(key) && accessCache.size >= IMAGE_ACCESS_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, entry] of accessCache) {
+      const age = now - entry.at;
+      if (age < 0 || age >= IMAGE_ACCESS_CACHE_MS) accessCache.delete(k);
+    }
+    if (accessCache.size >= IMAGE_ACCESS_CACHE_MAX) accessCache.clear();
+  }
+  // `at` e o instante do calculo e nao e renovado no uso: pedir imagens sem
+  // parar nao pode esticar o acesso alem da janela.
+  accessCache.set(key, { room, role: player.role, at: Date.now(), urls });
 }
 
 /**
@@ -126,11 +217,20 @@ export function guardUploads(): express.RequestHandler {
 
       const player = resolved.room.player(resolved.playerId);
       if (!player) continue;
-      const allowed = new Set(stateForViewer(resolved.room, { playerId: player.id, role: player.role }).assets.map(a => a.id));
-      const owns = resolved.room.state.assets.filter(a => allowed.has(a.id) || a.uploadedBy === player.id).some(
-        (a) => a.url.endsWith(`/${rel}`) || a.thumbUrl?.endsWith(`/${rel}`),
-      );
-      if (owns) return next();
+      const key = `${resolved.room.state.id}
+${player.id}`;
+      const owns = (urls: string[]) => urls.some((url) => url.endsWith(`/${rel}`));
+
+      const cached = cachedAllowedUrls(key, resolved.room, player);
+      if (cached && owns(cached)) return next();
+
+      // O cache so e ouvido quando diz sim. Um "nao" guardado recusaria por
+      // dois segundos a imagem que o jogador acabou de enviar ou de receber
+      // (o retrato da entrada, a pista recem-compartilhada). Recalcular aqui
+      // custa o mesmo de antes e so acontece para arquivo que ele nao via.
+      const fresh = computeAllowedUrls(resolved.room, player);
+      rememberAllowedUrls(key, resolved.room, player, fresh);
+      if (owns(fresh)) return next();
     }
 
     // Existe mas nao e desta mesa: 404 em vez de 403, para nao confirmar a
