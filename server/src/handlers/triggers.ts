@@ -14,7 +14,7 @@ import {
   type TriggerTarget,
 } from '@rpg/shared';
 
-import { emitTokenUpsert, refreshVision, socketsOf } from '../broadcast.js';
+import { emitTokenUpsert, emitTurns, refreshVision, socketsOf } from '../broadcast.js';
 import { handoutForViewer } from '../filter.js';
 import type { Room } from '../room.js';
 import { fail, isGm, ok, type Ctx } from './context.js';
@@ -264,6 +264,10 @@ function runAction(
       room.touchScene(scene.id);
       emitTokenUpsert(room, scene, token);
       refreshVision(room, scene);
+      // A vez do token na ordem segue a visibilidade dele (ver `turnsForViewer`),
+      // como em `updateToken`. Sem reenviar, o NPC revelado aparecia no mapa e
+      // a miniatura dele so entrava na faixa no proximo evento de turno.
+      emitTurns(room);
       return;
     }
   }
