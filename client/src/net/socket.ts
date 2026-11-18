@@ -216,6 +216,40 @@ export async function resumeWithSession(session: Session): Promise<void> {
   await applySession(data.session, data.state);
 }
 
+/** Espera antes de cada nova tentativa do cookie; acabou a lista, desiste. */
+const IMAGE_ACCESS_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+
+/** So o pedido mais recente insiste: entrar ou reconectar aposenta o anterior. */
+let imageAccessRun = 0;
+
+/**
+ * Pede o cookie das imagens sem deixar a falha dele derrubar a entrada.
+ *
+ * A falha (o prazo de 5 s numa rede lenta) era propagada depois de o servidor
+ * ja ter aceitado a sessao: o estado novo era descartado e, na entrada, tentar
+ * de novo dava "Ja tem alguem chamado X na mesa agora", porque o socket ja
+ * estava ligado ao jogador recem-criado. Agora quem chama segue com a mesa, e
+ * o cookie e tentado de novo por fora; as imagens que voltarem 401 nesse
+ * intervalo o cache do canvas ja repete sozinho (`canvas/images.ts`).
+ */
+async function ensureImageAccess(token: string): Promise<void> {
+  const run = ++imageAccessRun;
+  try {
+    await grantImageAccess(token);
+  } catch {
+    void (async () => {
+      for (const delay of IMAGE_ACCESS_RETRY_DELAYS_MS) {
+        await wait(delay);
+        if (run !== imageAccessRun || storedSession()?.token !== token) return;
+        try {
+          await grantImageAccess(token);
+          return;
+        } catch { /* segue para a proxima espera */ }
+      }
+    })();
+  }
+}
+
 async function applySession(session: Session, state: TableState): Promise<void> {
   storeSession(session);
 
@@ -223,13 +257,15 @@ async function applySession(session: Session, state: TableState): Promise<void> 
   // imagens assim que o estado chegava, antes do cookie existir: elas
   // voltavam 401 e, para quem entrava pela primeira vez, a mesa abria sem
   // arte. Custa uma ida ao servidor na entrada.
-  await grantImageAccess(session.token);
+  await ensureImageAccess(session.token);
 
   if (storedSession()?.token !== session.token) return;
   const store = useStore.getState();
   store.setSession(session);
   store.setTable(state);
-  store.setSideTab(session.role === 'GM' ? 'scene' : 'sheet');
+  // Escolhe a aba sem abrir o painel: no celular ele cobre o mapa, e abrir
+  // aqui desfazia o painel fechado de saida (ver `sideOpen` no store).
+  useStore.setState({ sideTab: session.role === 'GM' ? 'scene' : 'sheet' });
 }
 
 export function leaveTable(): void {
@@ -259,6 +295,62 @@ function once(s: ClientSocket, event: 'connect', timeoutMs: number): Promise<voi
   });
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Espera antes de cada nova tentativa de retomar; acabou a lista, desiste. */
+const RESUME_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
+
+/** So a retomada mais recente vale: cada `connect` aposenta a anterior. */
+let resumeRun = 0;
+
+/**
+ * Reapresenta a sessao depois de uma reconexao, insistindo se falhar.
+ *
+ * Uma falha aqui so virava aviso: a mesa antiga ficava na tela sobre um socket
+ * sem sessao, e toda acao respondia "Sessao nao encontrada. Recarregue a
+ * pagina." Agora a falha passageira (ack perdido, servidor ainda subindo,
+ * outra entrada em andamento) e repetida com espera, e `SESSION_INVALID` —
+ * removido pelo mestre enquanto estava fora, personagem retomado em outro
+ * aparelho — devolve a pessoa a tela de entrada, como `connectAndResume` faz.
+ */
+async function resumeAfterReconnect(s: ClientSocket, session: Session): Promise<void> {
+  const run = ++resumeRun;
+  const store = () => useStore.getState();
+  const stale = () => run !== resumeRun || storedSession()?.token !== session.token;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const data = await rpc<{ session: Session; state: TableState }>('session:resume', { token: session.token });
+      // O cookie pode ter expirado ou sido limpo enquanto a conexao caia.
+      await ensureImageAccess(data.session.token);
+      if (stale()) return;
+      storeSession(data.session);
+      store().setSession(data.session);
+      store().setTable(data.state);
+      store().notify('info', 'Reconectado a mesa.');
+      return;
+    } catch (err) {
+      if (stale()) return;
+      if ((err as { code?: string }).code === 'SESSION_INVALID') {
+        store().notify('error', (err as Error).message);
+        leaveTable();
+        return;
+      }
+      // Caiu de novo no meio: o proximo `connect` recomeca do zero.
+      if (!s.connected) return;
+      const delay = RESUME_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        store().notify('error', 'Nao foi possivel retomar a sessao. Recarregue a pagina.');
+        return;
+      }
+      await wait(delay);
+      if (stale() || !s.connected) return;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Eventos do servidor -> estado
 // ---------------------------------------------------------------------------
@@ -272,19 +364,7 @@ function registerListeners(s: ClientSocket): void {
     // Reconexao: o socket e novo para o servidor, entao reapresentamos a
     // sessao. O estado completo volta em seguida, ja atualizado.
     const session = storedSession();
-    if (session && store().table) {
-      rpc<{ session: Session; state: TableState }>('session:resume', { token: session.token })
-        .then(async (data) => {
-          // O cookie pode ter expirado ou sido limpo enquanto a conexao caia.
-          await grantImageAccess(data.session.token);
-          if (storedSession()?.token !== session.token) return;
-          storeSession(data.session);
-          store().setSession(data.session);
-          store().setTable(data.state);
-          store().notify('info', 'Reconectado a mesa.');
-        })
-        .catch(() => store().notify('error', 'Nao foi possivel retomar a sessao.'));
-    }
+    if (session && store().table) void resumeAfterReconnect(s, session);
   });
 
   s.on('disconnect', (reason) => {
@@ -356,6 +436,20 @@ function registerListeners(s: ClientSocket): void {
   s.on('handout:presented', ({ handoutId }) => {
     const state = store();
     const handout = state.table?.handouts.find((h) => h.id === handoutId);
+    // O mestre nao recebe a propria apresentacao em janela: ela abria sobre o
+    // painel dele e travava os cliques seguintes (retirar o acesso, por
+    // exemplo) ate ser fechada. Para ele basta saber a quem chegou.
+    if (state.session?.role === 'GM') {
+      if (!handout) return;
+      const names = handout.sharedWithAll
+        ? 'todos'
+        : (state.table?.players ?? [])
+            .filter((p) => handout.sharedWith.includes(p.id))
+            .map((p) => p.name)
+            .join(', ');
+      state.notify('info', `Apresentado a ${names}: ${handout.title}`);
+      return;
+    }
     state.openHandout(handoutId);
     if (handout) state.notify('info', `O mestre apresentou: ${handout.title}`);
   });

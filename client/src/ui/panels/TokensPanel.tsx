@@ -10,10 +10,11 @@ import {
   type TokenShape,
   type Tile,
   type Token,
+  type TokenVisibility,
 } from '@rpg/shared';
 
 import { act } from '../../net/socket';
-import { activeScene, findAsset, useStore } from '../../state/store';
+import { activeScene, findAsset, mapViewCenter, useStore } from '../../state/store';
 import {
   ColorField,
   Dropzone,
@@ -131,7 +132,6 @@ export function TokensPanel(): JSX.Element {
                           {token.name}
                           {owner && <span className="sub"> · {owner.name}</span>}
                         </span>
-                        {token.gmOnly && <span className="tag gm">MJ</span>}
                         {token.visibleTo && <HallucinationTag ids={token.visibleTo} />}
                         {token.visibility === 'hidden' && <span className="tag">oculto</span>}
                         {token.visionRadius > 0 && (
@@ -229,26 +229,22 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
           options={[1, 2, 3, 4].map((l) => ({ value: String(l), label: `${l} — ${LAYER_NAMES[l as Layer]}` }))}
           onChange={(v) => patch({ layer: Number(v) as Layer })}
         />
-        <SelectField
-          label="Visibilidade"
-          value={token.visibility}
-          options={[
-            { value: 'visible', label: 'Visivel' },
-            { value: 'dim', label: 'Semitransparente' },
-            { value: 'hidden', label: 'Oculto dos jogadores' },
-          ]}
-          onChange={(v) => patch({ visibility: v })}
+        <WhoSeesField
+          visibility={token.visibility}
+          visibleTo={token.visibleTo}
+          allowDim
+          onChange={patch}
         />
       </div>
 
-      <Toggle
-        label="Exclusivo do mestre"
-        hint="Nem chega ao navegador dos jogadores, independentemente da neblina."
-        checked={token.gmOnly}
-        onChange={(v) => patch({ gmOnly: v })}
-      />
+      {token.visibility === 'hidden' && token.visibleTo === null && token.lightRadius > 0 && (
+        <span className="hint">
+          A luz dele continua iluminando para os jogadores: e uma tocha que se ve sem saber quem a
+          carrega. Para esconder a luz tambem, zere a luz emitida.
+        </span>
+      )}
 
-      <VisibleToField value={token.visibleTo} onChange={(visibleTo) => patch({ visibleTo })} />
+      <WhoSeesPlayers visibleTo={token.visibleTo} onChange={(visibleTo) => patch({ visibleTo })} />
 
       <div className="grid-2">
         <NumberField
@@ -345,8 +341,9 @@ function TokenInspector({ token, sceneId }: { token: Token; sceneId: string }): 
         />
       </div>
       <span className="hint">
-        A visao serve ao dono do token. A luz revela para todos os jogadores — e a tocha na mao de
-        alguem iluminando a sala inteira.
+        A visao serve ao dono do token. A luz ilumina para todos, mas cada jogador so ve a area
+        iluminada ate onde o personagem dele tem linha de visao — a tocha da sala ao lado nao
+        aparece para quem esta do outro lado da parede.
       </span>
 
       <div className="divider" />
@@ -616,6 +613,22 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
 
   function create(anchor: MapEffect['anchor'], preset: Partial<MapEffect> = {}): void {
     if (!scene) return;
+    /*
+     * Nasce no centro do que esta na tela, e nao no centro do mapa: la ele
+     * podia cair fora da vista. E se ja houver um efeito solto ali, anda para
+     * o lado — cinco cliques nos Elementos empilhavam cinco areas no mesmo
+     * ponto, ilegiveis.
+     */
+    const view = mapViewCenter() ?? { x: scene.width / 2, y: scene.height / 2 };
+    const spot = { ...view };
+    const step = scene.grid.size * 2;
+    for (let i = 0; i < 12; i++) {
+      const taken = effects.some(
+        (e) => e.anchor === 'free' && Math.hypot(e.x - spot.x, e.y - spot.y) < step / 2,
+      );
+      if (!taken) break;
+      spot.x += step;
+    }
     void act('effect:create', {
       sceneId,
       effect: {
@@ -624,10 +637,13 @@ function EffectsSection({ effects, sceneId }: { effects: MapEffect[]; sceneId: s
         tokenId: anchor === 'token' ? selectedTokenId : null,
         cell:
           anchor === 'grid'
-            ? { a: Math.round(scene.width / 2 / scene.grid.size), b: Math.round(scene.height / 2 / scene.grid.size) }
+            ? {
+                a: Math.floor((spot.x - scene.grid.offsetX) / scene.grid.size),
+                b: Math.floor((spot.y - scene.grid.offsetY) / scene.grid.size),
+              }
             : null,
-        x: anchor === 'free' ? scene.width / 2 : 0,
-        y: anchor === 'free' ? scene.height / 2 : 0,
+        x: anchor === 'free' ? spot.x : 0,
+        y: anchor === 'free' ? spot.y : 0,
         label: kind === 'text' ? 'Anotacao' : '',
         ...preset,
       },
@@ -713,7 +729,7 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
           {effect.label || effect.kind}
           <span className="sub"> · {anchorLabel}</span>
         </span>
-        {effect.gmOnly && <span className="tag gm">MJ</span>}
+        {effect.visibility === 'hidden' && <span className="tag">oculto</span>}
         {effect.visibleTo && <HallucinationTag ids={effect.visibleTo} />}
         <button
           className="btn ghost sm"
@@ -866,13 +882,8 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
             </div>
           )}
 
-          <Toggle
-            label="Somente o mestre ve"
-            checked={effect.gmOnly}
-            onChange={(v) => patch({ gmOnly: v })}
-          />
-
-          <VisibleToField value={effect.visibleTo} onChange={(visibleTo) => patch({ visibleTo })} />
+          <WhoSeesField visibility={effect.visibility} visibleTo={effect.visibleTo} onChange={patch} />
+          <WhoSeesPlayers visibleTo={effect.visibleTo} onChange={(visibleTo) => patch({ visibleTo })} />
         </div>
       )}
     </div>
@@ -881,62 +892,98 @@ function EffectRow({ effect, sceneId }: { effect: MapEffect; sceneId: string }):
 
 // ---------------------------------------------------------------------------
 
+type WhoSees = 'all' | 'dim' | 'gm' | 'some';
+
 /**
- * "Visivel para": todos, ou apenas alguns jogadores (alucinacao).
+ * "Quem ve": um controle so para a pergunta que o mestre de fato faz.
+ *
+ * Eram tres — "Visibilidade: oculto", o toggle "Exclusivo do mestre" e
+ * "Visivel para: apenas..." com a lista vazia —, que davam o mesmo resultado
+ * para o jogador por regras diferentes, e o mestre nao sabia qual usar. O
+ * exclusivo do mestre virou oculto (ver `createToken`); a alucinacao segue
+ * sendo a lista `visibleTo`, escolhida aqui como "Alguns jogadores".
+ */
+function WhoSeesField({
+  visibility,
+  visibleTo,
+  allowDim = false,
+  onChange,
+}: {
+  visibility: TokenVisibility;
+  visibleTo: string[] | null;
+  allowDim?: boolean;
+  onChange: (patch: { visibility: TokenVisibility; visibleTo: string[] | null }) => void;
+}): JSX.Element {
+  const value: WhoSees =
+    visibleTo !== null ? 'some' : visibility === 'hidden' ? 'gm' : visibility === 'dim' && allowDim ? 'dim' : 'all';
+  const options: { value: WhoSees; label: string }[] = [
+    { value: 'all', label: 'Todos' },
+    ...(allowDim ? [{ value: 'dim' as const, label: 'Todos, semitransparente' }] : []),
+    { value: 'gm', label: 'So o mestre' },
+    { value: 'some', label: 'Alguns jogadores' },
+  ];
+  return (
+    <SelectField
+      label="Quem ve"
+      value={value}
+      options={options}
+      onChange={(v) =>
+        onChange(
+          v === 'some'
+            ? { visibility: 'visible', visibleTo: visibleTo ?? [] }
+            : { visibility: v === 'gm' ? 'hidden' : v === 'dim' ? 'dim' : 'visible', visibleTo: null },
+        )
+      }
+    />
+  );
+}
+
+/**
+ * Os jogadores de "Alguns jogadores" (alucinacao).
  *
  * Quem fica de fora nao recebe o objeto — o servidor tira do payload, e a
  * previa pelos olhos do jogador aplica o mesmo filtro. Lista vazia vale:
  * ninguem alem do mestre percebe, ate ele marcar alguem.
  */
-function VisibleToField({
-  value,
+function WhoSeesPlayers({
+  visibleTo,
   onChange,
 }: {
-  value: string[] | null;
-  onChange: (next: string[] | null) => void;
-}): JSX.Element {
+  visibleTo: string[] | null;
+  onChange: (next: string[]) => void;
+}): JSX.Element | null {
   // Seleciona a lista e filtra fora: um seletor que devolve array novo a cada
   // chamada faz o zustand re-renderizar sem fim.
   const allPlayers = useStore((s) => s.table?.players);
+  if (visibleTo === null) return null;
   const players = (allPlayers ?? []).filter((p) => p.role === 'PLAYER');
-  const restricted = value !== null;
 
   return (
     <div className="field">
-      <SelectField
-        label="Visivel para"
-        value={restricted ? 'some' : 'all'}
-        options={[
-          { value: 'all', label: 'Todos' },
-          { value: 'some', label: 'Apenas…' },
-        ]}
-        onChange={(v) => onChange(v === 'all' ? null : [])}
-      />
-      {restricted &&
-        (players.length === 0 ? (
-          <span className="hint">Nenhum jogador na mesa ainda.</span>
-        ) : (
-          <div className="row wrap">
-            {players.map((p) => {
-              const on = value.includes(p.id);
-              return (
-                <label key={p.id} className="check" style={{ width: 'auto' }}>
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => onChange(on ? value.filter((id) => id !== p.id) : [...value, p.id])}
-                  />
-                  <span>{p.name}</span>
-                </label>
-              );
-            })}
-          </div>
-        ))}
-      {restricted && (
-        <span className="hint">
-          Quem nao estiver marcado nao recebe este objeto — nem sabe que ele existe.
-        </span>
+      {players.length === 0 ? (
+        <span className="hint">Nenhum jogador na mesa ainda.</span>
+      ) : (
+        <div className="row wrap">
+          {players.map((p) => {
+            const on = visibleTo.includes(p.id);
+            return (
+              <label key={p.id} className="check" style={{ width: 'auto' }}>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => onChange(on ? visibleTo.filter((id) => id !== p.id) : [...visibleTo, p.id])}
+                />
+                <span>{p.name}</span>
+              </label>
+            );
+          })}
+        </div>
       )}
+      <span className="hint">
+        {visibleTo.length === 0
+          ? 'Ninguem marcado: por enquanto so voce ve.'
+          : 'Quem nao estiver marcado nao recebe este objeto — nem sabe que ele existe.'}
+      </span>
     </div>
   );
 }

@@ -20,10 +20,11 @@ import {
   type SheetTemplate,
 } from '@rpg/shared';
 
-import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, socketsOf, syncAssets } from '../broadcast.js';
+import { sendFullStateToAll, emitPlayers, emitTokenUpsert, emitTurns, notify, socketsOf, syncAssets } from '../broadcast.js';
 import { prisma, toJson } from '../db.js';
 import { atCapacity, LIMIT_MESSAGES } from '../limits.js';
 import { assetIdsOfSheet, sheetForViewer } from '../filter.js';
+import { removeSheet } from './cascade.js';
 import { applyCharacterArt, spawnCharacterToken, syncCharacterOwner } from './characters.js';
 import { publishChat } from './play.js';
 import type { Room } from '../room.js';
@@ -115,7 +116,10 @@ export async function createSheet(
   ctx.room.state.sheets.push(sheet);
   ctx.room.touchSheet(sheet.id);
   emitSheet(ctx.room, sheet);
-  spawnCharacterToken(ctx.room, sheet);
+  const token = spawnCharacterToken(ctx.room, sheet);
+  if (token?.visibility === 'hidden') {
+    notify(ctx.socket, 'info', `${sheet.name} entrou oculto: ha jogadores na mesa. Revele o token quando for a hora.`);
+  }
   ok(ack, sheet);
 }
 
@@ -166,7 +170,9 @@ export function updateSheet(
   }
 
   if (payload.name !== undefined && (gm || isOwner)) {
+    const previous = sheet.name;
     sheet.name = safeString(payload.name, 60, sheet.name);
+    if (sheet.name !== previous) renameLinked(ctx.room, sheet.id, previous, sheet.name);
   }
   if (payload.portraitAssetId !== undefined && (gm || isOwner)) {
     const previous = sheet.portraitAssetId;
@@ -189,41 +195,40 @@ export function updateSheet(
   ok(ack, null);
 }
 
-export function deleteSheet(ctx: Ctx, payload: { sheetId: string }, ack: Ack<null>): void {
-  const index = ctx.room.state.sheets.findIndex((s) => s.id === payload?.sheetId);
-  if (index === -1) return fail(ack, 'Ficha nao encontrada.');
-
-  const [removed] = ctx.room.state.sheets.splice(index, 1);
-  ctx.room.removeSheetRecord(removed.id);
-
-  // Desfaz os vinculos para nao deixar tokens e jogadores apontando para o vazio.
-  for (const scene of ctx.room.state.scenes) {
+/**
+ * O token e a vez da ficha seguem o nome dela. A ficha "Nova ficha" virava
+ * "Guarda", e o mapa e a ordem continuavam dizendo "Nova ficha". So troca o
+ * que ainda tinha o nome antigo: um token renomeado a parte fica como esta.
+ */
+function renameLinked(room: Room, sheetId: string, from: string, to: string): void {
+  for (const scene of room.state.scenes) {
     for (const token of scene.tokens) {
-      if (token.sheetId === removed.id) {
-        token.sheetId = null;
-        ctx.room.touchScene(scene.id);
-      }
+      if (token.sheetId !== sheetId || token.name !== from) continue;
+      token.name = to;
+      room.touchScene(scene.id);
+      emitTokenUpsert(room, scene, token);
     }
   }
-  for (const player of ctx.room.state.players) {
-    if (player.sheetId === removed.id) {
-      player.sheetId = null;
-      ctx.room.touchPlayer(player.id);
+  let turnsChanged = false;
+  for (const entry of room.state.turns.entries) {
+    if (entry.sheetId === sheetId && entry.name === from) {
+      entry.name = to;
+      turnsChanged = true;
     }
   }
-
-  // A ficha apagada sai da ordem de turnos com o resto dos vinculos.
-  const turns = ctx.room.state.turns;
-  const remaining = turns.entries.filter((e) => e.sheetId !== removed.id);
-  if (remaining.length !== turns.entries.length) {
-    const goneActive = !remaining.some((e) => e.id === turns.activeEntryId);
-    turns.entries = remaining;
-    if (goneActive) turns.activeEntryId = remaining.find((e) => !e.skipped)?.id ?? null;
-    ctx.room.touch('table');
-    emitTurns(ctx.room);
+  if (turnsChanged) {
+    room.touch('table');
+    emitTurns(room);
   }
+}
 
-  for (const socket of socketsOf(ctx.room)) socket.emit('sheets:patch', { remove: [removed.id] });
+/**
+ * Apaga a ficha com os tokens dela e a vez na ordem (ver `removeSheet`).
+ * Antes o token ficava no mapa sem ficha e a vez continuava na ordem; para
+ * manter a peca, o mestre desliga a ficha do token antes de apagar.
+ */
+export function deleteSheet(ctx: Ctx, payload: { sheetId: string }, ack: Ack<null>): void {
+  if (!removeSheet(ctx.room, payload?.sheetId)) return fail(ack, 'Ficha nao encontrada.');
   ok(ack, null);
 }
 

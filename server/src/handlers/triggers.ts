@@ -14,7 +14,7 @@ import {
   type TriggerTarget,
 } from '@rpg/shared';
 
-import { emitTokenUpsert, refreshVision, socketsOf } from '../broadcast.js';
+import { emitTokenUpsert, emitTurns, refreshVision, socketsOf } from '../broadcast.js';
 import { handoutForViewer } from '../filter.js';
 import type { Room } from '../room.js';
 import { fail, isGm, ok, type Ctx } from './context.js';
@@ -196,7 +196,7 @@ function runAction(
       const who = entry.playerName ? `${entry.tokenName} (${entry.playerName})` : entry.tokenName;
       for (const socket of socketsOf(room)) {
         if (socket.data.viewer.role === 'GM') {
-          socket.emit('notice', { level: 'info', message: `⚡ ${trigger.name}: ${who} entrou.` });
+          socket.emit('notice', { level: 'info', message: `Gatilho "${trigger.name}": ${who} entrou.` });
         }
       }
       return;
@@ -261,10 +261,13 @@ function runAction(
       const token = scene.tokens.find((t) => t.id === action.tokenId);
       if (!token) return;
       token.visibility = 'visible';
-      token.gmOnly = false;
       room.touchScene(scene.id);
       emitTokenUpsert(room, scene, token);
       refreshVision(room, scene);
+      // A vez do token na ordem segue a visibilidade dele (ver `turnsForViewer`),
+      // como em `updateToken`. Sem reenviar, o NPC revelado aparecia no mapa e
+      // a miniatura dele so entrava na faixa no proximo evento de turno.
+      emitTurns(room);
       return;
     }
   }

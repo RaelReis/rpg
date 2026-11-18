@@ -1,6 +1,7 @@
 import { DEFAULT_GRID } from './grid.js';
 import type {
   FogConfig,
+  LegacyVisibility,
   Trigger,
   TriggerArea,
   MapEffect,
@@ -66,6 +67,7 @@ export const DEFAULT_SETTINGS: TableSettings = {
   wallsBlockMovement: true,
   playersCanAnnotate: false,
   diceEnabled: true,
+  playersPassTurn: true,
 };
 
 export const DEFAULT_TURNS: TurnState = {
@@ -146,6 +148,7 @@ export const DEFAULT_WEATHER: WeatherConfig = { kind: 'none', intensity: 0.5, an
 export const DEFAULT_FOG: FogConfig = {
   mode: 'off',
   explored: [],
+  exploredBy: {},
   revealed: [],
   hidden: [],
   rememberExplored: true,
@@ -163,8 +166,27 @@ export function createScene(partial: Partial<Scene> = {}): Scene {
     width: partial.width ?? 2100,
     height: partial.height ?? 1400,
     grid: { ...DEFAULT_GRID, ...(partial.grid ?? {}) },
-    fog: { ...DEFAULT_FOG, ...(partial.fog ?? {}) },
-    walls: partial.walls ?? [],
+    // As listas sao copiadas: o espalhamento sozinho deixava toda cena nova
+    // apontando para os mesmos arrays do DEFAULT_FOG, e o que se explorava numa
+    // entrava em todas as outras criadas na mesma execucao — ate em outra mesa —,
+    // ate o servidor recarregar a cena do banco.
+    fog: (() => {
+      const fog = { ...DEFAULT_FOG, ...(partial.fog ?? {}) };
+      const exploredBy: Record<string, string[]> = {};
+      for (const [playerId, cells] of Object.entries(fog.exploredBy ?? {})) {
+        if (Array.isArray(cells)) exploredBy[playerId] = [...cells];
+      }
+      return {
+        ...fog,
+        explored: [...fog.explored],
+        exploredBy,
+        revealed: [...fog.revealed],
+        hidden: [...fog.hidden],
+      };
+    })(),
+    // Pela fabrica, para paredes gravadas antes de um campo novo (`locked`)
+    // chegarem completas.
+    walls: (partial.walls ?? []).map((w) => createWall(w)),
     tiles: partial.tiles ?? [],
     // Passar pelas fabricas completa campos criados depois que a cena foi
     // gravada (ou exportada): um token antigo chegaria sem `visibleTo`. As
@@ -195,7 +217,10 @@ export function createTrigger(area: TriggerArea, partial: Partial<Trigger> = {})
   };
 }
 
-export function createToken(partial: Partial<Token> = {}): Token {
+export function createToken(partial: Partial<Token> & LegacyVisibility = {}): Token {
+  // O "exclusivo do mestre" antigo escondia o token e apagava a luz dele para
+  // os jogadores; oculto com a luz zerada da o mesmo resultado na mesa.
+  const legacyGmOnly = partial.gmOnly === true;
   return {
     id: partial.id ?? generateId('tok'),
     name: partial.name ?? 'Token',
@@ -209,13 +234,12 @@ export function createToken(partial: Partial<Token> = {}): Token {
     // Arte inteira e o padrao: e assim que a peca aparece na mesa de verdade,
     // e a ficha do personagem ja chega com uma imagem de corpo.
     shape: partial.shape ?? 'art',
-    visibility: partial.visibility ?? 'visible',
+    visibility: legacyGmOnly ? 'hidden' : (partial.visibility ?? 'visible'),
     opacity: partial.opacity ?? 1,
-    gmOnly: partial.gmOnly ?? false,
     ownerPlayerId: partial.ownerPlayerId ?? null,
     sheetId: partial.sheetId ?? null,
     visionRadius: partial.visionRadius ?? 0,
-    lightRadius: partial.lightRadius ?? 0,
+    lightRadius: legacyGmOnly ? 0 : (partial.lightRadius ?? 0),
     bars: partial.bars ?? [],
     label: partial.label ?? '',
     locked: partial.locked ?? false,
@@ -242,7 +266,7 @@ export function createTile(partial: Partial<Tile> = {}): Tile {
   };
 }
 
-export function createEffect(partial: Partial<MapEffect> = {}): MapEffect {
+export function createEffect(partial: Partial<MapEffect> & LegacyVisibility = {}): MapEffect {
   return {
     id: partial.id ?? generateId('efx'),
     kind: partial.kind ?? 'circle',
@@ -261,8 +285,7 @@ export function createEffect(partial: Partial<MapEffect> = {}): MapEffect {
     angle: partial.angle ?? 0,
     spread: partial.spread ?? 60,
     layer: partial.layer ?? 4,
-    visibility: partial.visibility ?? 'visible',
-    gmOnly: partial.gmOnly ?? false,
+    visibility: partial.gmOnly === true ? 'hidden' : (partial.visibility ?? 'visible'),
     fontSize: partial.fontSize ?? 28,
     style: partial.style ?? 'flat',
     colorAlt: partial.colorAlt ?? '#ffffff',
@@ -331,6 +354,8 @@ export function createWall(partial: Partial<Wall> = {}): Wall {
     open: partial.open ?? false,
     window: partial.door ? false : (partial.window ?? false),
     hidden: partial.hidden ?? false,
+    // So porta tranca: parede e janela nao abrem de qualquer jeito.
+    locked: partial.door ? (partial.locked ?? false) : false,
   };
 }
 

@@ -1,9 +1,14 @@
 import {
   canPlayerSeeToken,
   computeVision,
+  concealedFromPlayers,
   filterSheetForRole,
   boardForViewer,
   filterTemplateForRole,
+  isEffectSeen,
+  exploredCellsOf,
+  isDoorSeen,
+  isTileSeen,
   perceives,
   reduceScreenEffect,
   type ActiveScreenEffect,
@@ -17,10 +22,14 @@ import {
   type Scene,
   type Sheet,
   type SheetTemplate,
+  type Tile,
   type TableState,
   type Token,
+  type TurnEntry,
   type TurnState,
+  type SharedSight,
   type VisionResult,
+  type Wall,
 } from '@rpg/shared';
 
 import type { Room } from './room.js';
@@ -40,8 +49,27 @@ export interface Viewer {
   role: Role;
 }
 
-export function visionFor(scene: Scene, viewer: Viewer): VisionResult {
-  return computeVision(scene, { role: viewer.role, playerId: viewer.playerId });
+export function visionFor(scene: Scene, viewer: Viewer, shared?: SharedSight): VisionResult {
+  return computeVision(scene, { role: viewer.role, playerId: viewer.playerId, shared });
+}
+
+/**
+ * A parede chega a este jogador? Parede secreta nunca. Com a visao no servidor,
+ * so a porta que ele ja viu (`isDoorSeen`): paredes comuns e janelas ficam no
+ * servidor, que ja calcula a visao com elas — a janela chegava ao jogador so
+ * para ser desenhada por cima da neblina. Sem a visao no servidor, o cliente
+ * calcula a propria visao e precisa de todas.
+ */
+export function wallShownTo(room: Room, scene: Scene, wall: Wall, viewer: Viewer, vision?: VisionResult): boolean {
+  if (viewer.role === 'GM') return true;
+  if (wall.hidden) return false;
+  if (!room.state.settings.strictVision) return true;
+  return wall.door && isDoorSeen(scene, vision ?? visionFor(scene, viewer), wall);
+}
+
+/** A parede como o jogador a recebe: a tranca so aparece quando ele tenta abrir. */
+export function wallForPlayer(wall: Wall): Wall {
+  return wall.locked ? { ...wall, locked: false } : wall;
 }
 
 /** Ids dos tokens que este observador enxerga na cena. */
@@ -55,7 +83,7 @@ export function visibleTokenIds(scene: Scene, viewer: Viewer, vision?: VisionRes
 }
 
 /** Aplica a semitransparencia de `dim` no que sai para o jogador. */
-function presentToken(room: Room, token: Token): Token {
+export function presentToken(room: Room, token: Token): Token {
   const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly).map(f => f.id));
   return { ...token, bars: token.bars.filter(b => publicFields.has(b.fieldId)),
     opacity: token.visibility === 'dim' ? Math.min(token.opacity, 0.45) : token.opacity };
@@ -71,29 +99,30 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
     .filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId))
     .map(t => presentToken(room, t));
 
-  const tiles = scene.tiles.filter((t) => !t.gmOnly);
-  const effects = scene.effects.filter((e) => effectVisibleTo(e, viewer));
+  const tiles = scene.tiles.filter((t) => tileShownTo(room, scene, t, viewer, vision));
+  const effects = scene.effects.filter((e) => effectShownTo(room, scene, e, viewer, vision));
 
   // Com strictVision as paredes ficam no servidor: elas descrevem a planta do
   // mapa e apareceriam inteiras no inspecionador de rede do navegador. O que
   // o jogador recebe sao portas visiveis (para poder interagir) e o resultado
   // ja calculado da visao.
-  const walls = strict
-    ? scene.walls.filter((w) => (w.door || w.window) && !w.hidden)
-    : scene.walls.filter((w) => !w.hidden);
+  const walls = scene.walls.filter((w) => wallShownTo(room, scene, w, viewer, vision)).map(wallForPlayer);
 
   // Com strictVision, as listas cruas de neblina (onde o mestre pintou, o que
   // o grupo ja explorou) nao saem do servidor; vao apenas as celulas
   // calculadas para ESTE jogador. Com a neblina desligada nao existem celulas
   // calculadas, e mandar listas vazias seria pedir para o cliente interpretar
   // "vazio" como "nao ve nada" — a cena inteira ficaria preta.
+  // A exploracao dos outros jogadores nunca sai: sem strictVision o jogador
+  // recebe a propria somada a base comum; com ela, so o resultado calculado.
   const fog = !strict
-    ? scene.fog
+    ? { ...scene.fog, explored: exploredCellsOf(scene, viewer.playerId), exploredBy: {} }
     : scene.fog.mode === 'off'
-      ? { ...scene.fog, explored: [], revealed: [], hidden: [] }
+      ? { ...scene.fog, explored: [], exploredBy: {}, revealed: [], hidden: [] }
       : {
           ...scene.fog,
           explored: [],
+          exploredBy: {},
           revealed: [],
           hidden: [],
           computedVisible: [...vision.visible],
@@ -106,12 +135,41 @@ export function sceneForViewer(room: Room, scene: Scene, viewer: Viewer): Scene 
 }
 
 /**
- * O efeito chega a este observador? Exclusivo do mestre, oculto e alucinacao
- * de outra pessoa ficam de fora do payload.
+ * O tile chega a este observador? Exclusivo do mestre nunca. Com a visao
+ * estrita, tambem nao o que esta fora do que o jogador viu: o bau da sala que
+ * ninguem explorou chegava com posicao e arte, e o tile que bloqueia a visao
+ * entregava a planta que as paredes escondem (ver `isTileSeen`).
+ */
+export function tileShownTo(room: Room, scene: Scene, tile: Tile, viewer: Viewer, vision?: VisionResult): boolean {
+  if (viewer.role === 'GM') return true;
+  if (tile.gmOnly) return false;
+  if (!room.state.settings.strictVision) return true;
+  return isTileSeen(scene, vision ?? visionFor(scene, viewer), tile);
+}
+
+/**
+ * O efeito chega a este observador, considerando tambem a neblina quando a
+ * visao estrita esta ligada? Mesma regra do renderizador (`isEffectSeen`).
+ */
+export function effectShownTo(
+  room: Room,
+  scene: Scene,
+  effect: MapEffect,
+  viewer: Viewer,
+  vision?: VisionResult,
+): boolean {
+  if (!effectVisibleTo(effect, viewer)) return false;
+  if (viewer.role === 'GM' || !room.state.settings.strictVision) return true;
+  return isEffectSeen(scene, vision ?? visionFor(scene, viewer), effect);
+}
+
+/**
+ * O efeito chega a este observador? Oculto e alucinacao de outra pessoa ficam
+ * de fora do payload.
  */
 export function effectVisibleTo(effect: MapEffect, viewer: Viewer): boolean {
   if (viewer.role === 'GM') return true;
-  if (effect.gmOnly || effect.visibility === 'hidden') return false;
+  if (effect.visibility === 'hidden') return false;
   return perceives(effect, viewer.playerId);
 }
 
@@ -123,6 +181,19 @@ export function effectVisibleTo(effect: MapEffect, viewer: Viewer): boolean {
 function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
   const publicFields = new Set(room.state.sheetTemplate.fields.filter(f => !f.gmOnly && f.type === 'resource').map(f => f.id));
   const fieldIds = new Set<string>();
+
+  /*
+   * PV e PD de outro personagem de JOGADOR vao sempre, com ou sem o token dele
+   * a vista: sao os retratos do grupo, e o colega sumia do canto da tela a cada
+   * vez que saia da linha de visao. NPC continua dependendo do token visivel —
+   * o PV do monstro atras da parede nao e assunto do grupo.
+   */
+  const ofPlayer = room.player(sheet.ownerPlayerId)?.role === 'PLAYER';
+  if (ofPlayer) {
+    for (const field of room.state.sheetTemplate.fields) {
+      if (field.vital && publicFields.has(field.id)) fieldIds.add(field.id);
+    }
+  }
   for (const token of tokens) {
     if (token.sheetId !== sheet.id) continue;
     for (const bar of token.bars) if (publicFields.has(bar.fieldId)) fieldIds.add(bar.fieldId);
@@ -133,7 +204,22 @@ function barOnlySheet(room: Room, sheet: Sheet, tokens: Token[]): Sheet | null {
   for (const id of fieldIds) {
     if (sheet.values[id] !== undefined) values[id] = sheet.values[id];
   }
-  return { ...sheet, values, portraitAssetId: null };
+  // Campo a campo, e nao `...sheet`: o espalhamento levava junto o nome da
+  // ficha, a arte de corpo, o dono e as datas. Com o token disfarcado de
+  // "Vulto", o "Lorde Vampiro" da ficha ia no payload assim que o jogador via
+  // o token. Do colega seguem nome e dono, que os retratos do grupo mostram;
+  // do NPC, so o id e as barras.
+  return {
+    id: sheet.id,
+    name: ofPlayer ? sheet.name : '',
+    ownerPlayerId: ofPlayer ? sheet.ownerPlayerId : null,
+    portraitAssetId: null,
+    bodyAssetId: null,
+    values,
+    sharedWithParty: false,
+    createdAt: 0,
+    updatedAt: 0,
+  };
 }
 
 /**
@@ -151,11 +237,10 @@ export function sheetForViewer(room: Room, sheet: Sheet, viewer: Viewer): Sheet 
 
   if (!room.state.settings.showPartyBars) return null;
 
+  // Sem cena ativa ainda ha os retratos do grupo (ver `barOnlySheet`).
   const scene = room.activeScene();
-  if (!scene) return null;
-
-  const vision = visionFor(scene, viewer);
-  const visible = scene.tokens.filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId));
+  const vision = scene ? visionFor(scene, viewer) : null;
+  const visible = scene && vision ? scene.tokens.filter((t) => canPlayerSeeToken(scene, t, vision, viewer.playerId)) : [];
   return barOnlySheet(room, sheet, visible);
 }
 
@@ -310,26 +395,45 @@ export function handoutForViewer(handout: Handout, viewer: Viewer): Handout | nu
 /**
  * A ordem de turnos como este observador tem direito de ve-la.
  *
- * Saem duas coisas: as miniaturas que o mestre escondeu e as de alucinacoes
- * que este jogador nao percebe — essas trariam o id e o nome do token, e a
- * ordem de turno entregaria o monstro que so a Alice ve. O historico e a vez
- * atual acompanham o mesmo corte: um registro do monstro escondido entregaria
- * que ele existe e em que rodada agiu.
+ * Saem tres coisas: as miniaturas que o mestre escondeu, as de tokens ocultos
+ * ou exclusivos do mestre, e as de alucinacoes que este jogador nao percebe —
+ * todas trariam o id e o nome do token, e a ordem de turno entregaria o
+ * monstro que a mesa ainda nao encontrou. O historico e a vez atual acompanham
+ * o mesmo corte: um registro do monstro escondido entregaria que ele existe e
+ * em que rodada agiu.
+ *
+ * A ocultacao do token e lida aqui, na hora do envio, e nao copiada para a
+ * vez quando ela entra na ordem. Copiada, dependia de o cliente mandar a flag:
+ * a ficha arrastada para a faixa nao mandava, e o NPC oculto aparecia para
+ * todos. Lida daqui, revelar o token tambem revela a vez dele.
  */
 export function turnsForViewer(room: Room, viewer: Viewer): TurnState {
   const turns = room.state.turns;
   if (viewer.role === 'GM') return turns;
 
   const unseenTokens = new Set<string>();
+  // Por ficha: tem token a mostra em alguma cena? E tem algum escondido?
+  const sheetShown = new Set<string>();
+  const sheetConcealed = new Set<string>();
   for (const scene of room.state.scenes) {
     for (const token of scene.tokens) {
-      if (!perceives(token, viewer.playerId)) unseenTokens.add(token.id);
+      const unseen = !perceives(token, viewer.playerId) || concealedFromPlayers(token);
+      if (unseen) unseenTokens.add(token.id);
+      if (token.sheetId) (unseen ? sheetConcealed : sheetShown).add(token.sheetId);
     }
   }
 
+  // Vez sem token (a ficha entrou na ordem numa cena onde o NPC nao esta):
+  // vale o que os tokens da ficha dizem. Sem isto, o NPC oculto em outra cena
+  // aparecia na faixa com o nome.
+  const concealedBySheet = (e: TurnEntry) =>
+    e.tokenId === null && e.sheetId !== null && sheetConcealed.has(e.sheetId) && !sheetShown.has(e.sheetId);
+
   const hidden = new Set(
     turns.entries
-      .filter((e) => e.hiddenFromPlayers || (e.tokenId !== null && unseenTokens.has(e.tokenId)))
+      .filter(
+        (e) => e.hiddenFromPlayers || (e.tokenId !== null && unseenTokens.has(e.tokenId)) || concealedBySheet(e),
+      )
       .map((e) => e.id),
   );
   if (hidden.size === 0) return turns;

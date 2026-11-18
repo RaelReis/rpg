@@ -5,17 +5,21 @@ import {
   createToken,
   createWall,
   enforceHallucinationRules,
+  isDoorWithinSight,
   movementBlocked,
   normalizeConditions,
   newlyExploredCells,
   sanitizeVisibleTo,
+  sharedSight,
   snapTokenPosition,
   type Ack,
   type FogPaintPayload,
   type FogResetPayload,
   type Layer,
+  type LegacyVisibility,
   type MapEffect,
   type Scene,
+  type SharedSight,
   type Tile,
   type Token,
   type TokenMovePayload,
@@ -31,14 +35,43 @@ import {
   emitTokenRemoved,
   emitTokenUpsert,
   emitWalls,
+  notify,
   refreshVision,
   socketsOf,
 } from '../broadcast.js';
-import { tokenForViewer } from '../filter.js';
+import { tokenForViewer, visionFor } from '../filter.js';
 import { canMoveToken, clampNumber, fail, isGm, ok, ownedAsset, safeString, type Ctx } from './context.js';
+import { removeTokens } from './cascade.js';
+import { playersWatching } from './characters.js';
 import { checkTriggers } from './triggers.js';
 
 /** Tokens, tiles, efeitos, paredes e neblina. */
+
+/**
+ * Posicao encaixada na grade mais proxima do token que ele alcanca sem cruzar
+ * parede ou obstaculo, entre a celula dele e as oito vizinhas.
+ */
+function nearestReachableCell(
+  scene: Scene,
+  token: Token,
+  center: (p: { x: number; y: number }) => { x: number; y: number },
+): { x: number; y: number } | null {
+  const stepX = scene.grid.size;
+  const stepY = cellHeight(scene.grid);
+  const seen = new Set<string>();
+  const candidates: { x: number; y: number }[] = [];
+  for (const dy of [0, -1, 1]) {
+    for (const dx of [0, -1, 1]) {
+      const c = snapTokenPosition(scene.grid, { x: token.x + dx * stepX, y: token.y + dy * stepY }, token.scale);
+      const key = `${c.x},${c.y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push(c);
+    }
+  }
+  candidates.sort((a, b) => Math.hypot(a.x - token.x, a.y - token.y) - Math.hypot(b.x - token.x, b.y - token.y));
+  return candidates.find((c) => !movementBlocked(scene, center(token), center(c), token.scale)) ?? null;
+}
 
 const MAX_CELLS_PER_PAINT = 20000;
 const VISIBILITIES = ['visible', 'hidden', 'dim'] as const;
@@ -83,7 +116,7 @@ const lastDragVision = new Map<string, number>();
 
 export function createTokenHandler(
   ctx: Ctx,
-  payload: { sceneId: string; token: Partial<Token> },
+  payload: { sceneId: string; token: Partial<Token> & LegacyVisibility },
   ack: Ack<Token>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -104,9 +137,19 @@ export function createTokenHandler(
     // Sem forma declarada, quem decide e o padrao do modelo (arte inteira):
     // repetir um literal aqui fazia o padrao valer so para o caminho da ficha.
     shape: TOKEN_SHAPES.includes(t.shape as never) ? t.shape : undefined,
-    visibility: VISIBILITIES.includes(t.visibility as never) ? t.visibility : 'visible',
+    // Sem visibilidade pedida, o NPC criado com a mesa assistindo nasce oculto:
+    // visivel, ele aparecia no mapa dos jogadores antes de o mestre esconde-lo.
+    // Alucinacao nao entra na regra: a lista `visibleTo` ja e a escolha de
+    // quem ve, e somar o oculto a ela faria o token continuar escondido
+    // depois de revelado. O `gmOnly` antigo chega a `createToken`, que o
+    // converte em oculto.
+    visibility: VISIBILITIES.includes(t.visibility as never)
+      ? t.visibility
+      : !t.ownerPlayerId && t.visibleTo == null && !t.gmOnly && playersWatching(ctx.room)
+        ? 'hidden'
+        : 'visible',
     opacity: clampNumber(t.opacity, 0.05, 1, 1),
-    gmOnly: Boolean(t.gmOnly),
+    gmOnly: t.gmOnly === true,
     ownerPlayerId: t.ownerPlayerId ?? null,
     sheetId: t.sheetId ?? null,
     visionRadius: clampNumber(t.visionRadius, 0, 40, 0),
@@ -127,14 +170,16 @@ export function createTokenHandler(
   scene.tokens.push(token);
   ctx.room.touchScene(scene.id);
   emitTokenUpsert(ctx.room, scene, token);
-  applyExploration(ctx, scene);
-  refreshVision(ctx.room, scene);
+  exploreAndRefresh(ctx, scene);
+  if (token.visibility === 'hidden' && t.visibility === undefined) {
+    notify(ctx.socket, 'info', `${token.name} entrou oculto: ha jogadores na mesa. Revele no inspetor quando for a hora.`);
+  }
   ok(ack, token);
 }
 
 export function updateToken(
   ctx: Ctx,
-  payload: { sceneId: string; tokenId: string; patch: Partial<Token> },
+  payload: { sceneId: string; tokenId: string; patch: Partial<Token> & LegacyVisibility },
   ack: Ack<null>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -176,8 +221,11 @@ export function updateToken(
       visionAffected = true;
     }
     if (p.opacity !== undefined) token.opacity = clampNumber(p.opacity, 0.05, 1, token.opacity);
-    if (p.gmOnly !== undefined) {
-      token.gmOnly = Boolean(p.gmOnly);
+    // Pedido no formato antigo (scripts, clientes desatualizados): exclusivo
+    // do mestre e oculto; tirar a marca revela.
+    if (p.gmOnly !== undefined && p.visibility === undefined) {
+      if (p.gmOnly) token.visibility = 'hidden';
+      else if (token.visibility === 'hidden') token.visibility = 'visible';
       visionAffected = true;
     }
     if (p.ownerPlayerId !== undefined) {
@@ -209,11 +257,12 @@ export function updateToken(
 
   ctx.room.touchScene(scene.id);
   emitTokenUpsert(ctx.room, scene, token);
-  if (visionAffected) {
-    applyExploration(ctx, scene);
-    refreshVision(ctx.room, scene);
+  if (visionAffected) exploreAndRefresh(ctx, scene);
+  // A vez do token na ordem segue a visibilidade dele (ver `turnsForViewer`):
+  // esconder ou revelar o token esconde ou revela a miniatura para a mesa.
+  if (gm && (p.visibleTo !== undefined || p.visibility !== undefined || p.gmOnly !== undefined)) {
+    emitTurns(ctx.room);
   }
-  if (p.visibleTo !== undefined && gm) emitTurns(ctx.room);
   ok(ack, null);
 }
 
@@ -273,11 +322,15 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
         return ok(ack, null);
       }
 
-      // Ao soltar, o token para onde o arraste chegou — encostado na parede.
-      // Sem isto ele ficaria fora da grade, porque o arraste nao usa snap.
+      // Ao soltar, o token para onde o arraste chegou — encostado na parede —
+      // e encaixado na grade. A celula mais proxima pode ficar do outro lado
+      // do obstaculo; entao vale a mais proxima que o token alcanca sem
+      // cruza-lo. Testar so a mais proxima deixava o token fora da grade, com
+      // o corpo em cima do obstaculo, sempre que o arraste parava no meio de
+      // uma celula.
       if (scene.grid.snap && scene.grid.type !== 'none') {
-        const settled = snapTokenPosition(scene.grid, { x: token.x, y: token.y }, token.scale);
-        if (!movementBlocked(scene, center(token), center(settled), token.scale)) {
+        const settled = nearestReachableCell(scene, token, (p) => center(p));
+        if (settled) {
           token.x = settled.x;
           token.y = settled.y;
           ctx.room.touchScene(scene.id);
@@ -288,7 +341,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
       refreshVision(ctx.room, scene);
       // So conta o trecho percorrido: da origem ate onde o token parou.
       checkTriggers(ctx, scene, token, from);
-      return fail(ack, 'Ha uma parede no caminho.');
+      return fail(ack, 'Ha uma parede no caminho.', 'MOVE_BLOCKED');
     }
   }
 
@@ -308,8 +361,10 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
       const last = lastDragVision.get(token.id) ?? 0;
       if (now - last >= DRAG_VISION_INTERVAL_MS) {
         lastDragVision.set(token.id, now);
-        applyExploration(ctx, scene);
-        refreshVision(ctx.room, scene, new Set([owner]));
+        // So quem arrasta explora durante o arraste; os outros sao
+        // recalculados ao soltar. Por jogador, a exploracao custa o mesmo que
+        // a visao, e fazer a mesa inteira a cada 100 ms multiplicava o custo.
+        exploreAndRefresh(ctx, scene, new Set([owner]));
       }
     }
     return ok(ack, null);
@@ -317,8 +372,7 @@ export function moveToken(ctx: Ctx, payload: TokenMovePayload, ack?: Ack<null>):
 
   lastDragVision.delete(token.id);
   ctx.room.touchScene(scene.id);
-  applyExploration(ctx, scene);
-  refreshVision(ctx.room, scene);
+  exploreAndRefresh(ctx, scene);
   ok(ack, null);
 }
 
@@ -354,21 +408,10 @@ export function deleteToken(ctx: Ctx, payload: { sceneId: string; tokenId: strin
   const scene = ctx.room.scene(payload?.sceneId);
   if (!scene) return fail(ack, 'Cena nao encontrada.');
 
-  const index = scene.tokens.findIndex((t) => t.id === payload.tokenId);
-  if (index === -1) return fail(ack, 'Token nao encontrado.');
+  if (!scene.tokens.some((t) => t.id === payload.tokenId)) return fail(ack, 'Token nao encontrado.');
 
-  scene.tokens.splice(index, 1);
-
-  // Efeitos presos ao token desaparecem junto com ele.
-  const orphans = scene.effects.filter((e) => e.anchor === 'token' && e.tokenId === payload.tokenId);
-  if (orphans.length) {
-    scene.effects = scene.effects.filter((e) => !orphans.includes(e));
-    emitEffects(ctx.room, scene, [], orphans.map((e) => e.id));
-  }
-
-  ctx.room.touchScene(scene.id);
-  emitTokenRemoved(ctx.room, scene, payload.tokenId);
-  refreshVision(ctx.room, scene);
+  // Leva junto os efeitos presos a ele e a vez dele na ordem.
+  removeTokens(ctx.room, scene, new Set([payload.tokenId]));
   ok(ack, null);
 }
 
@@ -376,15 +419,33 @@ export function deleteToken(ctx: Ctx, payload: { sceneId: string; tokenId: strin
 // Neblina
 // ---------------------------------------------------------------------------
 
-/** Acumula em `fog.explored` o que os tokens de jogador acabaram de descobrir. */
-function applyExploration(ctx: Ctx, scene: Scene): void {
-  const fresh = newlyExploredCells(scene);
-  if (fresh.length === 0) return;
+/**
+ * Exploracao e revisao de visao do mesmo movimento, com a linha de visao de
+ * cada jogador calculada uma vez so. As duas etapas refaziam o mesmo calculo,
+ * e com luz global (raio de 40 celulas) soltar um token custava o dobro.
+ * Entre uma e outra so muda `fog.exploredBy`, que nao entra na linha de visao.
+ */
+function exploreAndRefresh(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>): void {
+  const shared = sharedSight(scene);
+  applyExploration(ctx, scene, onlyPlayerIds, shared);
+  refreshVision(ctx.room, scene, onlyPlayerIds, shared);
+}
 
-  scene.fog.explored.push(...fresh);
+/** Acumula em `fog.exploredBy` o que cada jogador acabou de descobrir. */
+function applyExploration(ctx: Ctx, scene: Scene, onlyPlayerIds?: Set<string>, shared?: SharedSight): void {
+  const fresh = newlyExploredCells(scene, onlyPlayerIds, shared);
+  if (fresh.size === 0) return;
+
+  const exploredBy: Record<string, FogSetDelta> = {};
+  for (const [playerId, cells] of fresh) {
+    // Mesmo cuidado de `paintFog`: sem espalhar a lista em argumentos.
+    const list = (scene.fog.exploredBy[playerId] ??= []);
+    for (const c of cells) list.push(c);
+    exploredBy[playerId] = { add: cells };
+  }
   ctx.room.touchScene(scene.id);
 
-  emitFogPatch(ctx, scene, { explored: { add: fresh } });
+  emitFogPatch(ctx, scene, { exploredBy });
 }
 
 export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): void {
@@ -404,9 +465,22 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
         else set.delete(c);
       }
     }
+    // Laco, e nao `list.push(...set)`: o espalhamento passa cada celula como
+    // argumento e estoura a pilha acima de ~120 mil — depois de a lista ja ter
+    // sido esvaziada. A pintura devolvia erro e o revelado inteiro sumia.
     list.length = 0;
-    list.push(...set);
+    for (const c of set) list.push(c);
     return changed;
+  };
+
+  /** Tira as celulas pintadas da exploracao de cada jogador. */
+  const forgetExplored = (): Record<string, FogSetDelta> => {
+    const out: Record<string, FogSetDelta> = {};
+    for (const [playerId, list] of Object.entries(scene.fog.exploredBy)) {
+      const removed = apply(list, false);
+      if (removed.length) out[playerId] = { remove: removed };
+    }
+    return out;
   };
 
   let patch: FogDelta = {};
@@ -419,13 +493,13 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
       break;
     }
     case 'hide': {
-      // Cobrir de volta, sem selar: apaga o revelado e o explorado, e a area
-      // volta a ser descobrivel por quem andar ate la. E o que se espera do
-      // gesto de "fechar o mapa" — selar seria uma decisao bem mais forte,
-      // e por isso mora em `block`.
+      // Cobrir de volta, sem selar: apaga o revelado e o explorado — de todos
+      // os jogadores —, e a area volta a ser descobrivel por quem andar ate la.
+      // E o que se espera do gesto de "fechar o mapa"; selar seria uma decisao
+      // bem mais forte, e por isso mora em `block`.
       const unrevealed = apply(scene.fog.revealed, false);
       const unexplored = apply(scene.fog.explored, false);
-      patch = { revealed: { remove: unrevealed }, explored: { remove: unexplored } };
+      patch = { revealed: { remove: unrevealed }, explored: { remove: unexplored }, exploredBy: forgetExplored() };
       break;
     }
     case 'block': {
@@ -436,6 +510,7 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
         hidden: { add: added },
         revealed: { remove: unrevealed },
         explored: { remove: unexplored },
+        exploredBy: forgetExplored(),
       };
       break;
     }
@@ -456,7 +531,12 @@ export function paintFog(ctx: Ctx, payload: FogPaintPayload, ack?: Ack<null>): v
 }
 
 type FogSetDelta = { add?: string[]; remove?: string[] };
-type FogDelta = { explored?: FogSetDelta; revealed?: FogSetDelta; hidden?: FogSetDelta };
+type FogDelta = {
+  explored?: FogSetDelta;
+  exploredBy?: Record<string, FogSetDelta>;
+  revealed?: FogSetDelta;
+  hidden?: FogSetDelta;
+};
 
 /**
  * Entrega as listas cruas de neblina a quem tem direito a elas.
@@ -472,19 +552,52 @@ function emitFogPatch(ctx: Ctx, scene: Scene, patch: FogDelta | { reset: FogSetL
   const strict = ctx.room.state.settings.strictVision;
   for (const socket of socketsOf(ctx.room)) {
     const gm = socket.data.viewer.role === 'GM';
-    if (!gm && (strict || scene.id !== ctx.room.state.activeSceneId)) continue;
-    socket.emit('fog:patch', { sceneId: scene.id, ...patch });
+    if (gm) {
+      socket.emit('fog:patch', { sceneId: scene.id, ...patch });
+      continue;
+    }
+    if (strict || scene.id !== ctx.room.state.activeSceneId) continue;
+    const own = forPlayer(patch, socket.data.viewer.playerId);
+    if (own) socket.emit('fog:patch', { sceneId: scene.id, ...own });
   }
 }
 
-type FogSetLists = { explored: string[]; revealed: string[]; hidden: string[] };
+/**
+ * A parte de um patch de neblina que cabe a este jogador: a exploracao dele
+ * entra somada a base comum, e a dos outros nao sai do servidor.
+ */
+function forPlayer(
+  patch: FogDelta | { reset: FogSetLists },
+  playerId: string,
+): FogDelta | { reset: Omit<FogSetLists, 'exploredBy'> } | null {
+  if ('reset' in patch) {
+    const { exploredBy, ...lists } = patch.reset;
+    return { reset: { ...lists, explored: [...lists.explored, ...(exploredBy[playerId] ?? [])] } };
+  }
+  const { exploredBy, ...rest } = patch;
+  const mine = exploredBy?.[playerId];
+  const explored =
+    rest.explored || mine
+      ? {
+          add: [...(rest.explored?.add ?? []), ...(mine?.add ?? [])],
+          remove: [...(rest.explored?.remove ?? []), ...(mine?.remove ?? [])],
+        }
+      : undefined;
+  const out: FogDelta = { ...rest, ...(explored ? { explored } : {}) };
+  return out.explored || out.revealed || out.hidden ? out : null;
+}
+
+type FogSetLists = { explored: string[]; exploredBy: Record<string, string[]>; revealed: string[]; hidden: string[] };
 
 export function resetFog(ctx: Ctx, payload: FogResetPayload, ack: Ack<null>): void {
   const scene = ctx.room.scene(payload?.sceneId);
   if (!scene) return fail(ack, 'Cena nao encontrada.');
 
   const scope = payload.scope;
-  if (scope === 'explored' || scope === 'all') scene.fog.explored = [];
+  if (scope === 'explored' || scope === 'all') {
+    scene.fog.explored = [];
+    scene.fog.exploredBy = {};
+  }
   if (scope === 'revealed' || scope === 'all') scene.fog.revealed = [];
   if (scope === 'hidden' || scope === 'all') scene.fog.hidden = [];
 
@@ -492,6 +605,7 @@ export function resetFog(ctx: Ctx, payload: FogResetPayload, ack: Ack<null>): vo
   emitFogPatch(ctx, scene, {
     reset: {
       explored: scene.fog.explored,
+      exploredBy: scene.fog.exploredBy,
       revealed: scene.fog.revealed,
       hidden: scene.fog.hidden,
     },
@@ -585,7 +699,7 @@ export function deleteTile(ctx: Ctx, payload: { sceneId: string; tileId: string 
 
 export function createEffectHandler(
   ctx: Ctx,
-  payload: { sceneId: string; effect: Partial<MapEffect> },
+  payload: { sceneId: string; effect: Partial<MapEffect> & LegacyVisibility },
   ack: Ack<MapEffect>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -625,7 +739,7 @@ export function createEffectHandler(
     // Anotacao de jogador vive na camada de efeitos e nunca e exclusiva do mestre.
     layer: gm ? asLayer(e.layer, 4) : 4,
     visibility: gm && VISIBILITIES.includes(e.visibility as never) ? e.visibility! : 'visible',
-    gmOnly: gm ? Boolean(e.gmOnly) : false,
+    gmOnly: gm && e.gmOnly === true,
     fontSize: clampNumber(e.fontSize, 8, 200, 28),
     style: EFFECT_STYLES.includes(e.style as never) ? e.style : 'flat',
     colorAlt: safeString(e.colorAlt, 32, '#ffffff'),
@@ -641,7 +755,7 @@ export function createEffectHandler(
 
 export function updateEffect(
   ctx: Ctx,
-  payload: { sceneId: string; effectId: string; patch: Partial<MapEffect> },
+  payload: { sceneId: string; effectId: string; patch: Partial<MapEffect> & LegacyVisibility },
   ack: Ack<null>,
 ): void {
   const scene = ctx.room.scene(payload?.sceneId);
@@ -681,7 +795,10 @@ export function updateEffect(
     if (p.visibility !== undefined && VISIBILITIES.includes(p.visibility as never)) {
       effect.visibility = p.visibility;
     }
-    if (p.gmOnly !== undefined) effect.gmOnly = Boolean(p.gmOnly);
+    if (p.gmOnly !== undefined && p.visibility === undefined) {
+      if (p.gmOnly) effect.visibility = 'hidden';
+      else if (effect.visibility === 'hidden') effect.visibility = 'visible';
+    }
     if (p.visibleTo !== undefined) effect.visibleTo = visibleToOf(ctx, p.visibleTo);
   }
 
@@ -761,6 +878,7 @@ export function createWallHandler(ctx: Ctx, payload: { sceneId: string; wall: Pa
     open: Boolean(w.open),
     window: Boolean(w.window),
     hidden: Boolean(w.hidden),
+    locked: Boolean(w.locked),
   });
 
   scene.walls.push(wall);
@@ -789,6 +907,16 @@ export function updateWall(
   if (!gm) {
     if (!wall.door || wall.hidden) return fail(ack, 'Apenas o mestre pode editar paredes.');
     if (p.open === undefined) return fail(ack, 'Jogadores so podem abrir ou fechar portas.');
+    // Mesma regra do movimento: so a cena no ar, e so a porta que o jogador
+    // enxerga — as portas chegam a ele em todo o mapa, e abrir uma no escuro
+    // do outro lado revelaria a sala sem ninguem ir ate la.
+    if (scene.id !== ctx.room.state.activeSceneId) return fail(ack, 'Esta cena nao esta no ar.');
+    if (!isDoorWithinSight(scene, visionFor(scene, ctx.viewer), wall)) {
+      return fail(ack, 'Voce nao enxerga esta porta.');
+    }
+    // Trancada vale nos dois sentidos: o jogador tambem nao fecha a porta que
+    // o mestre deixou aberta e trancou (uma grade emperrada, por exemplo).
+    if (wall.locked) return fail(ack, 'A porta esta trancada.', 'DOOR_LOCKED');
     wall.open = Boolean(p.open);
   } else {
     if (p.x1 !== undefined) wall.x1 = clampNumber(p.x1, -30000, 30000, wall.x1);
@@ -799,16 +927,19 @@ export function updateWall(
     if (p.door !== undefined) {
       wall.door = Boolean(p.door);
       if (wall.door) wall.window = false;
+      else wall.locked = false;
     }
     if (p.window !== undefined) {
       wall.window = Boolean(p.window);
       if (wall.window) {
         wall.door = false;
         wall.open = false;
+        wall.locked = false;
       }
     }
     if (p.open !== undefined) wall.open = wall.door && Boolean(p.open);
     if (p.hidden !== undefined) wall.hidden = Boolean(p.hidden);
+    if (p.locked !== undefined) wall.locked = wall.door && Boolean(p.locked);
   }
 
   ctx.room.touchScene(scene.id);

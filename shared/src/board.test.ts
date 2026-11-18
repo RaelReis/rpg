@@ -37,6 +37,12 @@ describe('boardItemForViewer', () => {
     expect(shown.handoutId).toBe('hnd_diario');
   });
 
+  it('a legenda do cartao nao chega a quem nao ve o material', () => {
+    const captioned = { ...card, text: 'a carta do farol' };
+    expect(boardItemForViewer(captioned, () => false).text).toBe('');
+    expect(boardItemForViewer(captioned, () => true).text).toBe('a carta do farol');
+  });
+
   it('material apagado vira indisponivel', () => {
     expect(boardItemForViewer(card, () => false).unavailable).toBe(true);
   });

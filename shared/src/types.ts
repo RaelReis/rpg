@@ -62,14 +62,31 @@ export interface Wall {
   window: boolean;
   /** Bloqueia visao mas nao e desenhada para o jogador. */
   hidden: boolean;
+  /**
+   * Porta trancada: o jogador nao abre nem fecha, so o mestre. Nunca chega ao
+   * jogador como `true` (ver `wallForPlayer`): ele descobre tentando, como na
+   * mesa fisica, em vez de ver de longe quais portas vale a pena forcar.
+   */
+  locked: boolean;
 }
 
 export type FogMode = 'off' | 'manual' | 'vision';
 
 export interface FogConfig {
   mode: FogMode;
-  /** Celulas ja exploradas por algum token de jogador (ficam em penumbra). */
+  /**
+   * Area explorada comum a todos os jogadores (fica em penumbra). E o que as
+   * mesas gravadas antes da exploracao individual ja tinham descoberto, e o
+   * que um backup importado traz; jogo novo grava em `exploredBy`.
+   */
   explored: string[];
+  /**
+   * Area que CADA jogador explorou, por id de jogador. Era uma lista so por
+   * cena: a sala que a Alice olhou aparecia lembrada para o Bruno, que nunca
+   * tinha passado por la. Nunca sai inteira para um jogador: ele recebe so a
+   * propria, somada a base comum (ver `sceneForViewer`).
+   */
+  exploredBy: Record<string, string[]>;
   /** Celulas reveladas a mao pelo mestre (sempre visiveis). */
   revealed: string[];
   /** Celulas forcadas a escuro pelo mestre; vencem qualquer revelacao. */
@@ -102,6 +119,11 @@ export interface FogConfig {
 }
 
 export type TokenVisibility = 'visible' | 'hidden' | 'dim';
+
+/** Campo que tokens e efeitos gravados antes da unificacao ainda trazem. */
+export interface LegacyVisibility {
+  gmOnly?: boolean;
+}
 
 /**
  * Como o token e desenhado no mapa.
@@ -136,10 +158,14 @@ export interface Token {
   rotation: number;
   layer: Layer;
   shape: TokenShape;
+  /**
+   * Quem ve, junto de `visibleTo`. Havia tambem um `gmOnly` ("exclusivo do
+   * mestre"), que para o jogador dava o mesmo que `hidden` e so diferia na luz;
+   * tres controles para uma pergunta so confundiam o mestre. Tokens antigos
+   * com `gmOnly` viram `hidden` com a luz zerada em `createToken`.
+   */
   visibility: TokenVisibility;
   opacity: number;
-  /** Visivel apenas para o mestre, independente do fog. */
-  gmOnly: boolean;
   /** Jogador dono (pode mover e enxerga pelo token). Null = do mestre. */
   ownerPlayerId: string | null;
   /** Ficha vinculada; alimenta as barras e a janela de atributos. */
@@ -230,8 +256,8 @@ export interface MapEffect {
   /** Abertura do cone, em graus. */
   spread: number;
   layer: Layer;
+  /** Como no token: o antigo `gmOnly` virou `hidden` em `createEffect`. */
   visibility: TokenVisibility;
-  gmOnly: boolean;
   fontSize: number;
   style: EffectStyle;
   /** Cor secundaria; os estilos que a usam fazem degrade entre as duas. */
@@ -559,6 +585,11 @@ export interface TableSettings {
   /** Jogadores podem criar anotacoes na camada 4. */
   playersCanAnnotate: boolean;
   diceEnabled: boolean;
+  /**
+   * Quem esta com a vez pode passa-la. Sem isto so o mestre avancava, e a
+   * faixa dizia "sua vez" a quem nao tinha o que fazer com ela.
+   */
+  playersPassTurn: boolean;
 }
 
 export type AssetKind = 'map' | 'token' | 'portrait' | 'item' | 'effect' | 'tile' | 'card' | 'clue';

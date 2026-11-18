@@ -73,7 +73,7 @@ export function SheetView({
         <Section key={section.id} title={section.label} collapsible>
           <div className="fields">
             {fields.map((field) => (
-              <div key={field.id} className={`span-${field.span}`}>
+              <div key={field.id} className={`span-${field.span} sheet-cell-${field.type}`}>
                 <FieldEditor
                   field={field}
                   sheet={sheet}
@@ -142,7 +142,7 @@ function SheetHeader({
           <button className="btn sm" onClick={() => inputRef.current?.click()}>Trocar retrato</button>
           <button className="btn sm" onClick={() => bodyRef.current?.click()}>Trocar corpo inteiro</button>
         </div>}
-        <input ref={bodyRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden onChange={async e => {
+        <input ref={bodyRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic,image/heif" hidden onChange={async e => {
           const file = e.target.files?.[0]; if (!file) return;
           try { const asset = await uploadAsset(file, 'token'); await act('sheet:update', { sheetId: sheet.id, bodyAssetId: asset.id }); }
           catch (err) { notify('error', (err as Error).message); }
@@ -172,15 +172,6 @@ function SheetHeader({
           </span>
         </label>
 
-        {gm && (
-          <button
-            className="btn ghost sm"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={() => useStore.getState().openTemplateEditor(true)}
-          >
-            Editar modelo de ficha
-          </button>
-        )}
       </div>
 
       {onExpand && (
@@ -391,7 +382,7 @@ function FieldLabel({
           className="roll-btn"
           disabled={rolling}
           onClick={(e) => void roll(e)}
-          title={`Rolar ${field.rollFormula} — Alt para sussurrar ao mestre`}
+          title={`Rolar ${readableFormula(field.rollFormula, allFields)} — Alt para sussurrar ao mestre`}
           aria-label={`Rolar ${field.label}`}
         >
           <Icon name="roll" size="sm" />
@@ -408,6 +399,15 @@ function FieldLabel({
  * "Mente": a propria perícia ja esta escrita no rotulo, repeti-la no
  * subtitulo so faria ruido.
  */
+/**
+ * A formula como o jogador le: `1d20+@destreza` vira "1d20+Destreza". O
+ * tooltip mostrava os ids crus, e com os ids aleatorios de antes aparecia
+ * "1d20+@fld_eqa0f9zga6ec".
+ */
+function readableFormula(formula: string, allFields: SheetField[]): string {
+  return formula.replace(/@([A-Za-z0-9_-]+)/g, (raw, id: string) => allFields.find((f) => f.id === id)?.label ?? raw);
+}
+
 function referencedFieldLabels(field: SheetField, allFields: SheetField[]): string[] {
   const ids = [...field.rollFormula.matchAll(/@([A-Za-z0-9_-]+)/g)]
     .map((m) => m[1])

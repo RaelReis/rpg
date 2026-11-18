@@ -25,6 +25,9 @@ export function Gate(): JSX.Element {
   const [asGm, setAsGm] = useState(false);
   const [gmPassword, setGmPassword] = useState('');
   const [summary, setSummary] = useState<TableSummary | null>(null);
+  // Pergunta "e voce?" quando o nome e de um jogador desconectado da mesa.
+  const [reclaimAsk, setReclaimAsk] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   // criar
   const [tableName, setTableName] = useState('');
@@ -73,21 +76,30 @@ export function Gate(): JSX.Element {
     };
   }, [code]);
 
-  async function handleJoin(e: React.FormEvent): Promise<void> {
-    e.preventDefault();
+  async function join(reclaim: boolean): Promise<void> {
     setError(null);
+    setReclaimAsk(null);
     setBusy(true);
     try {
       await joinTable({
         code,
         name: name.trim(),
         gmPassword: asGm ? gmPassword : undefined,
+        reclaim: reclaim || undefined,
       });
     } catch (err) {
-      setError((err as Error).message);
+      // O nome e de alguem que ja esta na mesa, desconectado: em vez de criar
+      // um segundo personagem, pergunta se e a mesma pessoa voltando.
+      if ((err as { code?: string }).code === 'NAME_TAKEN_OFFLINE') setReclaimAsk((err as Error).message);
+      else setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleJoin(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    await join(false);
   }
 
   async function handleCreate(e: React.FormEvent): Promise<void> {
@@ -116,6 +128,19 @@ export function Gate(): JSX.Element {
   async function handleImport(file: File | undefined): Promise<void> {
     if (!file) return;
     const name = gmName.trim() || tableName.trim();
+    // O backup nao leva a senha; sem uma aqui, a mesa importada ficava sem
+    // senha em silencio, e o mestre so descobria ao tentar voltar de outro
+    // aparelho.
+    if (
+      name &&
+      !newPassword &&
+      !window.confirm(
+        'Importar sem senha de mestre? Sem ela, so este navegador guarda o papel de mestre da mesa importada.',
+      )
+    ) {
+      if (backupRef.current) backupRef.current.value = '';
+      return;
+    }
     if (!name) {
       setError('Preencha seu nome de mestre antes de importar.');
       return;
@@ -204,9 +229,13 @@ export function Gate(): JSX.Element {
                 </label>
                 <input
                   id="name"
+                  ref={nameRef}
                   className="input"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    setReclaimAsk(null);
+                  }}
                   placeholder="Como aparecer na mesa"
                   maxLength={40}
                   required
@@ -240,9 +269,30 @@ export function Gate(): JSX.Element {
                 </div>
               )}
 
-              <button className="btn primary block" disabled={busy}>
-                {busy ? 'Entrando...' : 'Entrar na mesa'}
-              </button>
+              {reclaimAsk ? (
+                <div className="reclaim-box" role="alert">
+                  <p>{reclaimAsk}</p>
+                  <div className="row">
+                    <button type="button" className="btn primary" disabled={busy} onClick={() => void join(true)}>
+                      Sim, sou eu
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => {
+                        setReclaimAsk(null);
+                        nameRef.current?.select();
+                      }}
+                    >
+                      Nao, vou usar outro nome
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn primary block" disabled={busy}>
+                  {busy ? 'Entrando...' : 'Entrar na mesa'}
+                </button>
+              )}
             </form>
           )}
 
@@ -291,9 +341,12 @@ export function Gate(): JSX.Element {
                   onChange={(e) => setNewPassword(e.target.value)}
                   autoComplete="new-password"
                 />
+                {/* O texto antigo dizia que, sem senha, qualquer um assumia a mesa — o
+                    servidor nunca deixou. O risco real e o inverso: sem senha, o
+                    mestre que troca de aparelho ou limpa o navegador nao volta. */}
                 <span className="hint">
-                  Protege o papel de mestre. Sem senha, qualquer pessoa com o codigo pode assumir o
-                  controle da mesa.
+                  Com senha, voce volta como mestre de outro aparelho pelo link com &amp;mestre. Sem ela, so
+                  este navegador guarda o papel de mestre.
                 </span>
               </div>
 
@@ -313,7 +366,8 @@ export function Gate(): JSX.Element {
               </button>
               <span className="hint">
                 Restaura cenas, fichas e materiais de um arquivo exportado. Cria sempre uma mesa
-                nova, com codigo novo — nada existente e sobrescrito.
+                nova, com codigo novo — nada existente e sobrescrito. Usa o seu nome e a senha de
+                mestre preenchidos acima.
               </span>
 
               <input

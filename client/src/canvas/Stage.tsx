@@ -20,9 +20,9 @@ import {
   type Wall,
 } from '@rpg/shared';
 
-import { act, emit, onTokenBlocked } from '../net/socket';
+import { act, emit, onTokenBlocked, rpc } from '../net/socket';
 import { createTriggerWithUndo } from '../state/triggerOps';
-import { activeScene, findAsset, findSheet, useStore, type WallKind } from '../state/store';
+import { activeScene, findAsset, findSheet, setMapViewCenter, useStore, type WallKind } from '../state/store';
 import {
   centerOn,
   clampCamera,
@@ -42,7 +42,10 @@ import {
   tileAtPoint,
   tokenAtPoint,
   tokensInRect,
+  wallsInRect,
   wallAtPoint,
+  closedDoorNear,
+  doorAtPoint,
   type Box,
   type HandleId,
   type MarqueeKind,
@@ -94,6 +97,8 @@ interface Gesture {
   originalRotation: number;
   originalSize: { width: number; height: number };
   moved: boolean;
+  /** Porta sob o clique do jogador: abre ou fecha no soltar, se nao houve arraste. */
+  doorId: string | null;
 }
 
 const emptyGesture = (): Gesture => ({
@@ -114,6 +119,7 @@ const emptyGesture = (): Gesture => ({
   originalRotation: 0,
   originalSize: { width: 0, height: 0 },
   moved: false,
+  doorId: null,
 });
 
 type FogAction = 'reveal' | 'hide' | 'block';
@@ -146,16 +152,18 @@ const WALL_LABELS: Record<WallKind, { one: string; many: string }> = {
   wall: { one: 'parede', many: 'paredes' },
   door: { one: 'porta', many: 'portas' },
   window: { one: 'janela', many: 'janelas' },
+  secret: { one: 'parede secreta', many: 'paredes secretas' },
 };
 
 const WALL_ICONS: Record<WallKind, IconName> = {
   wall: 'wall',
   door: 'door',
   window: 'window',
+  secret: 'secretWall',
 };
 
-function wallKindOf(wall: Pick<Wall, 'door' | 'window'>): WallKind {
-  return wall.door ? 'door' : wall.window ? 'window' : 'wall';
+function wallKindOf(wall: Pick<Wall, 'door' | 'window' | 'hidden'>): WallKind {
+  return wall.door ? 'door' : wall.window ? 'window' : wall.hidden ? 'secret' : 'wall';
 }
 
 interface ContextMenuState {
@@ -210,15 +218,60 @@ export function Stage(): JSX.Element {
   // de mexer neles e eles seguem so o que o servidor aceitar.
   const dragBlockedRef = useRef(new Set<string>());
 
+  /*
+   * Aviso de movimento barrado, uma vez por arraste. O token parava encostado
+   * na porta sem nada dizer por que: o novato lia como defeito, e nao sabia que
+   * a porta abre com um clique. Com porta fechada perto, ela pisca e o aviso
+   * diz o que fazer; sem porta, foi uma parede — que o jogador nem recebe.
+   */
+  const [blockedHint, setBlockedHint] = useState<{ text: string; at: Point } | null>(null);
+  const blockedHintShownRef = useRef(false);
+  const blockedHintTimerRef = useRef<number | null>(null);
+  const flashWallRef = useRef<{ id: string; until: number } | null>(null);
+
+  /** Aviso curto sobre uma porta: o mesmo lugar e o mesmo tempo do bloqueio. */
+  const showDoorHint = useCallback((door: Wall, text: string) => {
+    flashWallRef.current = { id: door.id, until: performance.now() + 1600 };
+    const mid = { x: (door.x1 + door.x2) / 2, y: (door.y1 + door.y2) / 2 };
+    setBlockedHint({ text, at: worldToScreen(cameraRef.current, viewportRef.current, mid.x, mid.y) });
+    if (blockedHintTimerRef.current !== null) window.clearTimeout(blockedHintTimerRef.current);
+    blockedHintTimerRef.current = window.setTimeout(() => setBlockedHint(null), 1800);
+  }, []);
+
+  const showBlockedHint = useCallback((tokenId: string) => {
+    if (blockedHintShownRef.current) return;
+    const scene = activeScene(useStore.getState());
+    const token = scene?.tokens.find((t) => t.id === tokenId);
+    if (!scene || !token) return;
+    blockedHintShownRef.current = true;
+
+    const size = scene.grid.size * token.scale;
+    const center = { x: token.x + size / 2, y: token.y + size / 2 };
+    const door = closedDoorNear(scene, center, size / 2 + scene.grid.size);
+    if (door) flashWallRef.current = { id: door.id, until: performance.now() + 1600 };
+
+    const anchor = door ? { x: (door.x1 + door.x2) / 2, y: (door.y1 + door.y2) / 2 } : center;
+    setBlockedHint({
+      text: door ? 'Porta fechada — clique nela para abrir' : 'Caminho bloqueado',
+      at: worldToScreen(cameraRef.current, viewportRef.current, anchor.x, anchor.y),
+    });
+    if (blockedHintTimerRef.current !== null) window.clearTimeout(blockedHintTimerRef.current);
+    blockedHintTimerRef.current = window.setTimeout(() => setBlockedHint(null), 1800);
+  }, []);
+
   useEffect(
     () =>
       onTokenBlocked((tokenId) => {
-        if (gestureRef.current.kind === 'drag-token') dragBlockedRef.current.add(tokenId);
+        if (gestureRef.current.kind !== 'drag-token') return;
+        dragBlockedRef.current.add(tokenId);
+        showBlockedHint(tokenId);
       }),
-    [],
+    [showBlockedHint],
   );
 
   const [zoomLabel, setZoomLabel] = useState(1);
+  const [overDoor, setOverDoor] = useState(false);
+  const overDoorRef = useRef(false);
   const [measureText, setMeasureText] = useState<{ text: string; at: Point } | null>(null);
   const [dropGhost, setDropGhost] = useState<DropGhost | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -229,6 +282,13 @@ export function Stage(): JSX.Element {
 
   const tool = useStore((s) => s.tool);
   const rev = useStore((s) => s.rev);
+  // Cena fora do ar aberta para montar (so o mestre): o mapa passa a ser ela.
+  const mapSceneId = useStore((s) => s.mapSceneId);
+  const offAirName = useStore((s) =>
+    s.mapSceneId && s.mapSceneId !== s.table?.activeSceneId && !s.previewPlayerId
+      ? (s.table?.scenes.find((sc) => sc.id === s.mapSceneId)?.name ?? null)
+      : null,
+  );
   const pings = useStore((s) => s.pings);
 
   const wallDraft = useStore((s) => s.wallDraft);
@@ -238,7 +298,7 @@ export function Stage(): JSX.Element {
   const previewName = useStore(
     (s) => s.table?.players.find((p) => p.id === s.previewPlayerId)?.name ?? null,
   );
-  const scene = useMemo(() => activeScene(useStore.getState()), [rev]);
+  const scene = useMemo(() => activeScene(useStore.getState()), [rev, mapSceneId]);
 
   // -- dimensionamento ------------------------------------------------------
 
@@ -364,8 +424,10 @@ export function Stage(): JSX.Element {
       activeEntry?.tokenId != null ||
       state.selectedTokenIds.length > 0 ||
       state.selectedTileId !== null ||
-      state.selectedWallId !== null ||
+      state.selectedWallIds.length > 0 ||
       state.pings.length > 0 ||
+      // A porta que barrou o arraste pisca por um instante.
+      (flashWallRef.current !== null && performance.now() < flashWallRef.current.until) ||
       state.wallDraft.length > 0 ||
       // O anel de encaixe segue o cursor enquanto a ferramenta esta ativa.
       walling ||
@@ -399,6 +461,7 @@ export function Stage(): JSX.Element {
       idleKeyRef.current = key;
     }
 
+    setMapViewCenter({ x: cameraRef.current.x, y: cameraRef.current.y });
     renderScene({
       ctx,
       scene: currentScene,
@@ -412,7 +475,11 @@ export function Stage(): JSX.Element {
       hiddenLayers: new Set(state.hiddenLayers),
       selectedTokenIds: new Set(state.selectedTokenIds),
       selectedTileId: state.selectedTileId,
-      selectedWallId: state.selectedWallId,
+      selectedWallIds: new Set(
+        flashWallRef.current && performance.now() < flashWallRef.current.until
+          ? [...state.selectedWallIds, flashWallRef.current.id]
+          : state.selectedWallIds,
+      ),
       marquee: marqueeRef.current,
       wallPath,
       wallKind: state.wallKind,
@@ -563,6 +630,9 @@ export function Stage(): JSX.Element {
         measureRef.current = { from: world, to: world };
       } else if (state.tool === 'ping') {
         emit('map:ping', { sceneId: currentScene.id, x: world.x, y: world.y, focus: e.altKey });
+        // Uso unico: com a ferramenta presa no ping, o clique seguinte no
+        // proprio token pingava de novo em vez de seleciona-lo.
+        state.setTool(state.toolBeforePing);
         gestureRef.current = gesture;
         return;
       } else if (state.tool === 'fog-reveal' || state.tool === 'fog-hide') {
@@ -639,7 +709,13 @@ export function Stage(): JSX.Element {
           new Set(state.hiddenLayers),
           vision,
           assetUrlOf,
+          gm ? null : (state.session?.playerId ?? null),
         );
+
+        // Porta, para o jogador: o clique seco a abre ou fecha no soltar. Fica
+        // anotada aqui, e nao decidida ja, porque o arraste que comeca no vao
+        // da porta tem de continuar movendo o token que esta parado ali.
+        if (!gm) gesture.doorId = doorAtPoint(currentScene, world, cameraRef.current.zoom, () => vision)?.id ?? null;
 
         if (token) {
           // Shift acrescenta a selecao em vez de troca-la.
@@ -650,6 +726,7 @@ export function Stage(): JSX.Element {
             gesture.kind = 'drag-token';
             gesture.tokenId = token.id;
             dragBlockedRef.current.clear();
+            blockedHintShownRef.current = false;
             gesture.tokenOffset = { x: world.x - token.x, y: world.y - token.y };
 
             // Tudo que estiver selecionado e movivel viaja junto.
@@ -707,6 +784,19 @@ export function Stage(): JSX.Element {
         gesture.moved = true;
       }
 
+      // Cursor de mao sobre a porta que o jogador pode abrir: sem isso, nada
+      // indica que a linha dourada no mapa responde ao clique.
+      if (gesture.kind === 'none' && state.tool === 'select' && state.session?.role !== 'GM') {
+        const over =
+          doorAtPoint(currentScene, world, cameraRef.current.zoom, () =>
+            resolveVision(currentScene, 'PLAYER', state.session?.playerId ?? null),
+          ) !== null;
+        if (over !== overDoorRef.current) {
+          overDoorRef.current = over;
+          setOverDoor(over);
+        }
+      }
+
       // A posicao do cursor nao sai daqui: ninguem, nem o mestre, ve o
       // ponteiro dos outros. Apontar algo e gesto deliberado, pelo ping.
       const now = performance.now();
@@ -753,7 +843,10 @@ export function Stage(): JSX.Element {
             const y = start.y + dy;
             if (wallsBlock) {
               const token = currentScene.tokens.find((t) => t.id === id);
-              if (token && !dragStepAllowed(currentScene, token, x, y)) continue;
+              if (token && !dragStepAllowed(currentScene, token, x, y)) {
+                showBlockedHint(id);
+                continue;
+              }
             }
             // Parado pelo servidor: o pedido continua indo, para o token voltar
             // a andar se o cursor recuar por um caminho livre, mas a posicao na
@@ -821,7 +914,7 @@ export function Stage(): JSX.Element {
           break;
       }
     },
-    [flushFog, toLocalScreen, toWorld],
+    [flushFog, showBlockedHint, toLocalScreen, toWorld],
   );
 
   const onPointerUp = useCallback(
@@ -832,6 +925,21 @@ export function Stage(): JSX.Element {
       if (!currentScene) return;
 
       const world = toWorld(e);
+
+      if (gesture.doorId && !gesture.moved && gesture.button === 0) {
+        const door = currentScene.walls.find((w) => w.id === gesture.doorId);
+        if (door) {
+          // O jogador nao sabe que a porta esta trancada ate tentar (o servidor
+          // nao manda a tranca a ele): a recusa vira o aviso sobre a porta, em
+          // vez de uma notificacao de erro no canto da tela.
+          rpc('wall:update', { sceneId: currentScene.id, wallId: door.id, patch: { open: !door.open } }).catch(
+            (err: Error & { code?: string }) => {
+              if (err.code === 'DOOR_LOCKED') showDoorHint(door, 'Trancada');
+              else state.notify('error', err.message);
+            },
+          );
+        }
+      }
 
       switch (gesture.kind) {
         case 'drag-token': {
@@ -845,7 +953,13 @@ export function Stage(): JSX.Element {
               };
               const moveTo = (p: Point) =>
                 void act('tile:update', { sceneId: currentScene.id, tileId, patch: { x: p.x, y: p.y } });
-              state.pushUndo({ label: 'mover tile', undo: () => moveTo(start), redo: () => moveTo(end) });
+              const sceneId = currentScene.id;
+              state.pushUndo({
+                label: 'mover tile',
+                undo: () => moveTo(start),
+                redo: () => moveTo(end),
+                blocked: (dir) => movedSince(sceneId, 'tile', new Map([[tileId, dir === 'undo' ? end : start]])),
+              });
             }
             break;
           }
@@ -881,27 +995,42 @@ export function Stage(): JSX.Element {
               y = snapped.y;
             }
 
-            // O encaixe final pode cair do outro lado da parede mesmo com o
-            // arraste parado antes dela: fica onde a previa ja estava.
-            if (wallsBlock && !dragStepAllowed(currentScene, token, x, y)) {
-              x = token.x;
-              y = token.y;
-            }
-            // Parado numa parede que o cliente nao conhece: solta onde o
-            // servidor o deixou, e nao no cursor — senao o soltar vira erro.
-            if (dragBlockedRef.current.has(id)) {
-              x = token.x;
-              y = token.y;
+            // Parado numa parede — que o cliente conhece (porta, janela) ou nao
+            // (com a visao estrita, as comuns e os tiles que bloqueiam) —: solta
+            // onde a previa ou o servidor o deixou, e nao no cursor, senao o
+            // soltar vira erro. Encaixado na grade: sem isso o token ficava no
+            // meio da celula, com o corpo em cima do obstaculo. Se a celula
+            // encaixada cair do outro lado, o servidor escolhe a vizinha que o
+            // token alcanca.
+            if ((wallsBlock && !dragStepAllowed(currentScene, token, x, y)) || dragBlockedRef.current.has(id)) {
+              const settled = snap
+                ? snapTokenPosition(currentScene.grid, { x: token.x, y: token.y }, token.scale)
+                : { x: token.x, y: token.y };
+              x = settled.x;
+              y = settled.y;
             }
 
             state.moveTokenLocal(currentScene.id, id, x, y);
             after.set(id, { x, y });
-            void act('token:move', {
-              sceneId: currentScene.id,
-              tokenId: id,
-              x,
-              y,
-              dragging: false,
+            const drop = { sceneId: currentScene.id, tokenId: id, x, y, dragging: false };
+            const sent = blockedHintShownRef.current
+              ? // O arraste ja parou num obstaculo e o aviso ja apareceu: a
+                // recusa do soltar e esperada, e o servidor ja encaixou o token
+                // na celula que ele alcanca. Repetir "ha uma parede" em toast
+                // so dobraria o aviso.
+                rpc('token:move', drop).catch((err: Error & { code?: string }) => {
+                  if (err.code !== 'MOVE_BLOCKED') useStore.getState().notify('error', err.message);
+                })
+              : act('token:move', drop);
+            // O desfazer confere contra onde o token de fato ficou, que pode
+            // nao ser o pedido: barrado numa parede, o servidor o encaixa em
+            // outra celula. O servidor emite o movimento antes de responder,
+            // entao aqui o store ja tem a posicao final.
+            const sceneId = currentScene.id;
+            void sent.finally(() => {
+              const final = activeScene(useStore.getState());
+              const t = final?.id === sceneId ? final.tokens.find((tk) => tk.id === id) : undefined;
+              if (t) after.set(id, { x: t.x, y: t.y });
             });
           }
 
@@ -911,10 +1040,12 @@ export function Stage(): JSX.Element {
                 void act('token:move', { sceneId: currentScene.id, tokenId: id, x: p.x, y: p.y, dragging: false });
               }
             };
+            const sceneId = currentScene.id;
             state.pushUndo({
               label: before.size > 1 ? `mover ${before.size} tokens` : 'mover token',
               undo: () => place(before),
               redo: () => place(after),
+              blocked: (dir) => movedSince(sceneId, 'token', dir === 'undo' ? after : before),
             });
           }
           break;
@@ -991,7 +1122,12 @@ export function Stage(): JSX.Element {
             state.session?.playerId ?? null,
           );
           const hits = tokensInRect(currentScene, rect, new Set(state.hiddenLayers), vision);
-          state.selectTokens(hits.map((t) => t.id));
+          // Paredes entram so para o mestre: o jogador nem pode apaga-las.
+          const walls = state.session?.role === 'GM' ? wallsInRect(currentScene, rect) : [];
+          state.selectArea(
+            hits.map((t) => t.id),
+            walls.map((w) => w.id),
+          );
           break;
         }
 
@@ -1021,7 +1157,7 @@ export function Stage(): JSX.Element {
       setMeasureText(null);
       gestureRef.current = emptyGesture();
     },
-    [flushFog, toLocalScreen, toWorld],
+    [flushFog, showDoorHint, toLocalScreen, toWorld],
   );
 
   const onWheel = useCallback(
@@ -1239,6 +1375,7 @@ export function Stage(): JSX.Element {
   // -- render ---------------------------------------------------------------
 
   const cursorStyle = useMemo(() => {
+    if (tool === 'select' && overDoor) return 'pointer';
     switch (tool) {
       case 'pan':
         return 'grab';
@@ -1255,7 +1392,7 @@ export function Stage(): JSX.Element {
       default:
         return 'default';
     }
-  }, [tool]);
+  }, [tool, overDoor]);
 
   return (
     <div
@@ -1313,6 +1450,17 @@ export function Stage(): JSX.Element {
         />
       )}
 
+      {offAirName && (
+        <div className="preview-banner offair-banner">
+          <span>
+            Montando <strong>{offAirName}</strong> — fora do ar: os jogadores nao recebem nada daqui
+          </span>
+          <button className="btn sm" onClick={() => useStore.getState().setMapScene(null)}>
+            Voltar para a cena no ar
+          </button>
+        </div>
+      )}
+
       {previewPlayerId && (
         <div className="preview-banner">
           <span>
@@ -1325,6 +1473,11 @@ export function Stage(): JSX.Element {
       )}
 
       <div className="stage-overlay">
+        {blockedHint && (
+          <div className="blocked-hint" style={{ left: blockedHint.at.x, top: blockedHint.at.y }}>
+            {blockedHint.text}
+          </div>
+        )}
         {measureText && (
           <div className="measure-readout" style={{ left: measureText.at.x, top: measureText.at.y }}>
             {measureText.text}
@@ -1419,6 +1572,7 @@ function addWallSegment(scene: Scene, point: Point, kind: WallKind): void {
     y2: point.y,
     door: kind === 'door',
     window: kind === 'window',
+    hidden: kind === 'secret',
   };
   let wallId: string | null = null;
 
@@ -1480,16 +1634,33 @@ function resolveWallVertex(
 
   // Junta em T: projeta o ponto sobre a parede mais proxima ao alcance.
   let onWall: Point | null = null;
+  let onWallSegment: Wall | null = null;
   let onWallDistance = reach * 0.6;
   for (const wall of scene.walls) {
     const projected = projectOntoSegment(world, wall);
     const d = Math.hypot(projected.x - world.x, projected.y - world.y);
     if (d <= onWallDistance) {
       onWall = projected;
+      onWallSegment = wall;
       onWallDistance = d;
     }
   }
-  if (onWall) return { point: onWall, snapped: true };
+  if (onWall && onWallSegment) {
+    // Se um vertice da grade esta sobre essa parede e ao alcance, ele ganha da
+    // projecao: a junta fica na grade. So com a projecao, um clique a 3px do
+    // canto dava um vertice em 653,3 e a parede nova saia torta.
+    if (!free) {
+      const vertex = snapToGridVertex(scene, world);
+      const onLine = projectOntoSegment(vertex, onWallSegment);
+      if (
+        Math.hypot(onLine.x - vertex.x, onLine.y - vertex.y) < 0.5 &&
+        Math.hypot(vertex.x - world.x, vertex.y - world.y) <= reach
+      ) {
+        return { point: vertex, snapped: true };
+      }
+    }
+    return { point: onWall, snapped: true };
+  }
 
   return { point: free ? world : snapToGridVertex(scene, world), snapped: false };
 }
@@ -1508,6 +1679,23 @@ function dropSpot(scene: Scene, world: Point, free: boolean): Point {
   const topLeft = { x: world.x - scene.grid.size / 2, y: world.y - scene.grid.size / 2 };
   if (free || !scene.grid.snap || scene.grid.type === 'none') return topLeft;
   return snapTokenPosition(scene.grid, topLeft, 1);
+}
+
+/**
+ * Conferencia do desfazer de movimento: os objetos ainda estao onde a acao os
+ * deixou? Se alguem os moveu depois, desfazer atropelaria esse movimento.
+ */
+function movedSince(sceneId: string, kind: 'token' | 'tile', expected: Map<string, Point>): string | null {
+  const scene = useStore.getState().table?.scenes.find((s) => s.id === sceneId);
+  const pool: { id: string; x: number; y: number }[] = kind === 'token' ? (scene?.tokens ?? []) : (scene?.tiles ?? []);
+  for (const [id, p] of expected) {
+    const item = pool.find((t) => t.id === id);
+    if (!item) return kind === 'token' ? 'o token nao existe mais' : 'o tile nao existe mais';
+    if (Math.hypot(item.x - p.x, item.y - p.y) > 1) {
+      return kind === 'token' ? 'o token foi movido depois' : 'o tile foi movido depois';
+    }
+  }
+  return null;
 }
 
 /** Token de uma ficha na cena, se ela ja tiver um. */
@@ -1535,7 +1723,12 @@ async function dropSheet(scene: Scene, sheetId: string, spot: Point): Promise<vo
     state.moveTokenLocal(scene.id, existing.id, spot.x, spot.y);
     place(spot);
     state.selectToken(existing.id);
-    state.pushUndo({ label: `mover ${sheet.name}`, undo: () => place(from), redo: () => place(spot) });
+    state.pushUndo({
+      label: `mover ${sheet.name}`,
+      undo: () => place(from),
+      redo: () => place(spot),
+      blocked: (dir) => movedSince(scene.id, 'token', new Map([[existing.id, dir === 'undo' ? spot : from]])),
+    });
     return;
   }
 
@@ -1604,8 +1797,10 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
   const label = WALL_LABELS[kind].one;
 
   const convert = (next: WallKind) => {
-    const before = { door: wall.door, window: wall.window, open: wall.open };
-    const patch = { door: next === 'door', window: next === 'window' };
+    const before = { door: wall.door, window: wall.window, open: wall.open, hidden: wall.hidden };
+    // Sair de secreta revela; entrar em secreta esconde — inclusive a porta
+    // que o mestre quer tirar do mapa dos jogadores de novo.
+    const patch = { door: next === 'door', window: next === 'window', hidden: next === 'secret' };
     void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch });
     useStore.getState().pushUndo({
       label: `transformar em ${WALL_LABELS[next].one}`,
@@ -1630,7 +1825,25 @@ function WallContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose: (
           {wall.open ? 'Fechar porta' : 'Abrir porta'}
         </button>
       )}
-      {(['wall', 'door', 'window'] as WallKind[])
+      {wall.door && (
+        <button
+          role="menuitem"
+          onClick={() => {
+            const patch = { locked: !wall.locked };
+            void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch });
+            useStore.getState().pushUndo({
+              label: wall.locked ? 'destrancar porta' : 'trancar porta',
+              undo: () => void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch: { locked: wall.locked } }),
+              redo: () => void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch }),
+            });
+            onClose();
+          }}
+        >
+          <Icon name={wall.locked ? 'unlockDoor' : 'lockDoor'} size="sm" />
+          {wall.locked ? 'Destrancar porta' : 'Trancar porta'}
+        </button>
+      )}
+      {(['wall', 'door', 'window', 'secret'] as WallKind[])
         .filter((k) => k !== kind)
         .map((k) => (
           <button key={k} role="menuitem" onClick={() => convert(k)}>
@@ -1665,7 +1878,7 @@ async function deleteWallWithUndo(scene: Scene, wall: Wall): Promise<void> {
   };
 
   remove();
-  if (state.selectedWallId === originalId) state.selectWall(null);
+  if (state.selectedWallIds.includes(originalId)) state.selectWall(null);
   state.pushUndo({
     label: `excluir ${WALL_LABELS[wallKindOf(wall)].one}`,
     undo: async () => {
@@ -1759,29 +1972,32 @@ async function deleteSelection(scene: Scene): Promise<void> {
   const state = useStore.getState();
   const tokens = scene.tokens.filter((t) => state.selectedTokenIds.includes(t.id));
   const tile = scene.tiles.find((t) => t.id === state.selectedTileId) ?? null;
-  const wall = scene.walls.find((w) => w.id === state.selectedWallId) ?? null;
+  const walls = scene.walls.filter((w) => state.selectedWallIds.includes(w.id));
 
-  if (wall) {
-    await deleteWallWithUndo(scene, wall);
+  // Uma parede so, clicada, mantem o rotulo proprio ("excluir porta").
+  if (walls.length === 1 && tokens.length === 0 && !tile) {
+    await deleteWallWithUndo(scene, walls[0]);
     return;
   }
 
-  if (tokens.length === 0 && !tile) return;
+  if (tokens.length === 0 && !tile && walls.length === 0) return;
 
   // Desfazer recria objetos equivalentes, com ids novos: o suficiente para
   // consertar um engano, sem sincronizar historicos entre clientes. Os ids
   // vivos ficam aqui, para o refazer apagar os recriados e nao os originais.
   let tokenIds = tokens.map((t) => t.id);
   let tileId = tile?.id ?? null;
+  let wallIds = walls.map((w) => w.id);
 
   const removeAll = () => {
     for (const tokenId of tokenIds) void act('token:delete', { sceneId: scene.id, tokenId });
     if (tileId) void act('tile:delete', { sceneId: scene.id, tileId });
+    for (const wallId of wallIds) void act('wall:delete', { sceneId: scene.id, wallId });
   };
 
   removeAll();
   state.pushUndo({
-    label: tokens.length > 1 ? `excluir ${tokens.length} tokens` : 'excluir do mapa',
+    label: deleteLabel(tokens.length, walls.length),
     undo: async () => {
       const recreated = await Promise.all(
         tokens.map(({ id: _omit, ...rest }) => {
@@ -1795,12 +2011,26 @@ async function deleteSelection(scene: Scene): Promise<void> {
         void _omitTile;
         tileId = (await act<Tile>('tile:create', { sceneId: scene.id, tile: rest }))?.id ?? null;
       }
+      const rebuilt = await Promise.all(
+        walls.map(({ id: _omitWall, ...rest }) => {
+          void _omitWall;
+          return act<Wall>('wall:create', { sceneId: scene.id, wall: rest });
+        }),
+      );
+      wallIds = rebuilt.flatMap((w) => (w ? [w.id] : []));
     },
     redo: removeAll,
   });
 
   state.selectToken(null);
   state.selectTile(null);
+  state.selectWall(null);
+}
+
+function deleteLabel(tokens: number, walls: number): string {
+  if (walls === 0) return tokens > 1 ? `excluir ${tokens} tokens` : 'excluir do mapa';
+  if (tokens === 0) return `excluir ${walls} paredes`;
+  return `excluir ${tokens + walls} itens`;
 }
 
 // ---------------------------------------------------------------------------

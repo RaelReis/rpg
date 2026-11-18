@@ -85,6 +85,11 @@ quando o corte era do meu próprio recorte de screenshot.
   vez de agir e descrever), não marcam combate: não existe abrir nem encerrar. O
   grupo entra na ordem sozinho, e a ordem da lista **é** a ordem dos turnos —
   quem a define é o mestre, arrastando as miniaturas no cabeçalho.
+- **A vez de um token oculto é escondida no envio, não gravada.** `turnsForViewer`
+  lê `concealedFromPlayers(token)` a cada envio; `hiddenFromPlayers` na vez é só
+  o ajuste manual do mestre. Não volte a copiar a ocultação do token para a flag
+  ao pôr alguém na ordem: o caminho da ficha arrastada não copiava, e o NPC
+  oculto vazava para os jogadores.
 - **A coluna `initiative` do banco guarda o `TurnState`.** O nome é legado;
   renomear exigiria migrar todas as mesas gravadas. O mapeamento fica em
   `server/src/room.ts`.
@@ -97,10 +102,27 @@ quando o corte era do meu próprio recorte de screenshot.
   duas chegarem.
 - **Parede sai por clique.** Cada clique grava o trecho na hora; duplo clique ou
   `Esc` só encerram a sequência. Não existe tecla de confirmação.
+- **Porta trancada nunca chega ao jogador como trancada.** `wallForPlayer`
+  (`server/src/filter.ts`) zera `locked` no estado inicial e no `walls:patch`;
+  o jogador descobre pela recusa `DOOR_LOCKED` ao clicar. Caminho novo que
+  envie paredes ao jogador tem de passar por ela e por `wallShownTo`: com a
+  visão no servidor, o jogador só recebe a porta que já viu (`isDoorSeen`), e
+  nunca janela ou parede comum.
+- **Visão e exploração são por jogador.** `playerSightCells` junta o que os
+  tokens do jogador veem com a luz alheia que eles têm linha de visão para
+  enxergar; `fog.exploredBy[playerId]` guarda o que cada um explorou, e
+  `fog.explored` virou a base comum (mesas antigas, backup importado). A lista
+  de outro jogador nunca sai do servidor: `sceneForViewer` e `emitFogPatch`
+  entregam só a do próprio, somada à base.
 - **Colisão mede o corpo do token**, não só o centro: trajeto do centro e dos
   quatro cantos, e o corpo não pode parar em cima da parede. Sem isso, tokens de
   tamanho par atravessavam qualquer parede, porque o snap encaixa o centro deles
   exatamente sobre as linhas da grade.
+- **No cliente, `activeScene()` é a cena do mapa, não a cena no ar.** Com o
+  mestre montando uma cena fora do ar (`mapSceneId`), ela devolve essa cena;
+  o que diz respeito à mesa ao vivo (faixa de turnos, HUD do grupo) usa
+  `liveScene()`. O servidor não precisa saber: os emissores já só entregam ao
+  jogador o que é da `activeSceneId`.
 - **Condições são gravadas por id** (`burning`, `dead`), com migração dos emojis
   antigos em `normalizeConditions`.
 

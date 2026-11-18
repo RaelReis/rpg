@@ -65,6 +65,11 @@ export interface JoinRequest {
   gmPassword?: string;
   /** Cor preferida do jogador no chat e nos pings. */
   color?: string;
+  /**
+   * Retomar o jogador desconectado com este mesmo nome. Sem isto, o servidor
+   * responde `NAME_TAKEN_OFFLINE` e o cliente pergunta "E voce?" antes.
+   */
+  reclaim?: boolean;
 }
 
 export interface ResumeRequest {
@@ -130,10 +135,15 @@ export interface CellSet {
 export interface FogPatch {
   sceneId: string;
   explored?: CellSet;
+  /**
+   * Exploracao individual, por jogador. So o mestre recebe; o jogador sem
+   * `strictVision` recebe a propria ja somada em `explored`.
+   */
+  exploredBy?: Record<string, CellSet>;
   revealed?: CellSet;
   hidden?: CellSet;
   /** Substituicao total das listas cruas (reset do mestre). */
-  reset?: { explored?: string[]; revealed?: string[]; hidden?: string[] };
+  reset?: { explored?: string[]; exploredBy?: Record<string, string[]>; revealed?: string[]; hidden?: string[] };
   /**
    * Visao ja calculada pelo servidor para ESTE jogador (`strictVision`).
    *
@@ -141,8 +151,15 @@ export interface FogPatch {
    * cliente gravava toda substituicao tambem como visao calculada: um reset
    * de listas cruas faria o cliente tratar o pincel do mestre como "o que o
    * jogador ve", ignorando a linha de visao dos tokens.
+   *
+   * `visible` vem sempre inteiro: e pequeno e muda a cada passo. O explorado
+   * so cresce enquanto o jogador anda, entao vai como diferenca
+   * (`exploredAdd`, as celulas novas); a lista inteira (`explored`) so vem
+   * quando ele encolheu — o mestre cobriu ou zerou a area. Mandar as duas
+   * listas inteiras a cada passo do arraste dava ~36 KB por patch, dez vezes
+   * por segundo. O estado completo e a cena reenviada seguem com tudo.
    */
-  computed?: { visible: string[]; explored: string[] };
+  computed?: { visible: string[]; explored?: string[]; exploredAdd?: string[] };
 }
 
 export interface TokensPatch {
@@ -222,7 +239,8 @@ export interface ClientToServerEvents {
   'scene:create': (payload: { name: string; backgroundAssetId?: string | null }, ack: Ack<Scene>) => void;
   'scene:update': (payload: { sceneId: string; patch: Partial<Scene> }, ack: Ack<null>) => void;
   'scene:delete': (payload: { sceneId: string }, ack: Ack<null>) => void;
-  'scene:activate': (payload: { sceneId: string }, ack: Ack<null>) => void;
+  /** `bringParty`: cria na cena o token de cada personagem de jogador que nao esta nela. */
+  'scene:activate': (payload: { sceneId: string; bringParty?: boolean }, ack: Ack<null>) => void;
 
   'token:create': (payload: { sceneId: string; token: Partial<Token> }, ack: Ack<Token>) => void;
   'token:update': (payload: { sceneId: string; tokenId: string; patch: Partial<Token> }, ack: Ack<null>) => void;
@@ -277,6 +295,8 @@ export interface ClientToServerEvents {
   /** Passa a vez para uma miniatura especifica, sem percorrer a ordem. */
   'turns:set': (payload: { entryId: string }, ack: Ack<null>) => void;
   'turns:next': (ack: Ack<null>) => void;
+  /** Quem esta com a vez a passa adiante (so a propria, e se a mesa permitir). */
+  'turns:pass': (ack: Ack<null>) => void;
   'turns:previous': (ack: Ack<null>) => void;
 
   'player:update': (patch: { name?: string; color?: string }, ack: Ack<null>) => void;

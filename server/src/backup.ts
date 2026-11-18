@@ -373,6 +373,12 @@ async function buildImportedTable(
       visibleTo: Array.isArray(t.visibleTo) ? [] : null,
     }));
     scene.effects = scene.effects.map((e) => ({ ...e, visibleTo: Array.isArray(e.visibleTo) ? [] : null }));
+    // A exploracao por jogador apontava para jogadores que nao existem aqui:
+    // vira base comum, para a mesa restaurada nao perder o mapa descoberto.
+    const explored = new Set(scene.fog.explored);
+    for (const cells of Object.values(scene.fog.exploredBy)) for (const cell of cells) explored.add(cell);
+    scene.fog.explored = [...explored];
+    scene.fog.exploredBy = {};
     room.touchScene(scene.id);
   }
 

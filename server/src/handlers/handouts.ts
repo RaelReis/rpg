@@ -20,15 +20,22 @@ import { clampNumber, fail, ok, ownedAsset, safeString, type Ctx } from './conte
 const MAX_HANDOUTS = 200;
 const MAX_TEXT = 20000;
 
-/** Envia o material a cada socket, ou o remove de quem perdeu o acesso. */
-export function emitHandout(room: Room, handout: Handout): void {
+/**
+ * Envia o material a cada socket, ou o remove de quem perdeu o acesso.
+ *
+ * `before` e o material como estava antes da mudanca (`null` = ninguem via).
+ * O `remove` so vai a quem via antes: mandado a todos os que nao veem, ele
+ * entregava o id do material a quem nunca teve acesso — e, com ele, que o
+ * material existe e quando o mestre mexeu nele.
+ */
+export function emitHandout(room: Room, handout: Handout, before: Handout | null = null): void {
   for (const socket of socketsOf(room)) {
     const visible = handoutForViewer(handout, socket.data.viewer);
     if (visible) {
       // A imagem acompanha o acesso: material em preparacao nao entrega a arte.
       syncAssets(room, socket, [visible.assetId]);
       socket.emit('handouts:patch', { upsert: [visible] });
-    } else {
+    } else if (before && handoutForViewer(before, socket.data.viewer)) {
       socket.emit('handouts:patch', { remove: [handout.id] });
     }
   }
@@ -70,6 +77,7 @@ export function updateHandout(
   const handout = ctx.room.state.handouts.find((h) => h.id === payload?.handoutId);
   if (!handout) return fail(ack, 'Material nao encontrado.');
 
+  const before: Handout = { ...handout, sharedWith: [...handout.sharedWith] };
   const p = payload.patch ?? {};
   if (p.title !== undefined) handout.title = safeString(p.title, 120, handout.title);
   if (p.text !== undefined) handout.text = safeString(p.text, MAX_TEXT, handout.text);
@@ -87,7 +95,7 @@ export function updateHandout(
 
   handout.updatedAt = Date.now();
   ctx.room.touch('table');
-  emitHandout(ctx.room, handout);
+  emitHandout(ctx.room, handout, before);
   ok(ack, null);
 }
 
@@ -98,7 +106,9 @@ export function deleteHandout(ctx: Ctx, payload: { handoutId: string }, ack: Ack
   const [removed] = ctx.room.state.handouts.splice(index, 1);
   ctx.room.touch('table');
   for (const socket of socketsOf(ctx.room)) {
-    socket.emit('handouts:patch', { remove: [removed.id] });
+    if (handoutForViewer(removed, socket.data.viewer)) {
+      socket.emit('handouts:patch', { remove: [removed.id] });
+    }
   }
   refreshBoardForHandout(ctx.room, removed.id);
   ok(ack, null);

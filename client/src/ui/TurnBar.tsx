@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import type { TurnEntry, TurnRecord } from '@rpg/shared';
+import { concealedFromPlayers, type TurnEntry, type TurnRecord } from '@rpg/shared';
 
 import { act } from '../net/socket';
-import { activeScene, findAsset, findSheet, isGm, useStore } from '../state/store';
+import { activeScene, liveScene, findAsset, findSheet, isGm, useStore } from '../state/store';
 import { Icon } from './icons';
 
 /**
@@ -31,6 +31,10 @@ export function TurnBar(): JSX.Element | null {
   const [showHistory, setShowHistory] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ id: string; after: boolean } | null>(null);
+  // Ficha passando sobre a faixa: ela acende para dizer que aceita o soltar.
+  // Presa ao arraste em curso, para apagar tambem quando ele acaba fora dela.
+  const [sheetOver, setSheetOver] = useState(false);
+  const draggingSheet = useStore((s) => s.dragging?.kind === 'sheet');
 
   void rev;
   if (!table) return null;
@@ -38,6 +42,12 @@ export function TurnBar(): JSX.Element | null {
   const turns = table.turns;
   const entries = turns.entries;
   if (entries.length === 0) return null;
+
+  // Tokens escondidos do grupo: a vez deles ja nao chega aos jogadores (o
+  // servidor le a ocultacao do token), e a miniatura do mestre mostra isso.
+  const concealedTokens = new Set(
+    table.scenes.flatMap((s) => s.tokens).filter(concealedFromPlayers).map((t) => t.id),
+  );
 
   function reorder(dragged: string, target: string, after: boolean): void {
     const ids = entries.map((e) => e.id).filter((id) => id !== dragged);
@@ -50,7 +60,9 @@ export function TurnBar(): JSX.Element | null {
   function addSheet(sheetId: string): void {
     const sheet = findSheet(sheetId);
     if (!sheet) return;
-    const token = activeScene(useStore.getState())?.tokens.find((t) => t.sheetId === sheet.id);
+    // A ordem e da cena no ar: o token da vez e o de la, mesmo com o mestre
+    // montando outra cena no mapa.
+    const token = liveScene(useStore.getState())?.tokens.find((t) => t.sheetId === sheet.id);
     void act('turns:add', {
       entries: [
         { sheetId: sheet.id, tokenId: token?.id ?? null, playerId: sheet.ownerPlayerId, name: sheet.name },
@@ -71,8 +83,10 @@ export function TurnBar(): JSX.Element | null {
         sheetId: token.sheetId,
         playerId: token.ownerPlayerId,
         name: findSheet(token.sheetId)?.name ?? token.name,
-        // Quem o mestre esconde do mapa tambem fica fora da ordem visivel.
-        hiddenFromPlayers: token.gmOnly || token.visibility === 'hidden',
+        // Sem `hiddenFromPlayers`: quem o mestre esconde do mapa ja fica fora
+        // da ordem visivel pelo servidor, que le a ocultacao do token na hora
+        // do envio. Gravar a flag aqui prendia a vez escondida mesmo depois de
+        // o mestre revelar o token.
       })),
     });
   }
@@ -97,13 +111,23 @@ export function TurnBar(): JSX.Element | null {
   return (
     <div className="turn-bar">
       <div
-        className="turn-strip"
+        className={`turn-strip${sheetOver && draggingSheet ? ' sheet-over' : ''}`}
         onDragOver={(e) => {
           if (!gm) return;
           const payload = useStore.getState().dragging;
           if (dragId || payload?.kind === 'sheet') e.preventDefault();
+          if (payload?.kind === 'sheet' && !sheetOver) setSheetOver(true);
+        }}
+        onDragLeave={(e) => {
+          // Pelas coordenadas, e nao por relatedTarget: no Chrome ele chega
+          // nulo, e passar de uma miniatura para outra apagava o destaque.
+          const r = e.currentTarget.getBoundingClientRect();
+          if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) {
+            setSheetOver(false);
+          }
         }}
         onDrop={(e) => {
+          setSheetOver(false);
           if (!gm) return;
           const payload = useStore.getState().dragging;
           if (payload?.kind === 'sheet') {
@@ -123,6 +147,7 @@ export function TurnBar(): JSX.Element | null {
               entry={entry}
               active={entry.id === turns.activeEntryId}
               mine={entry.playerId !== null && entry.playerId === myId}
+              tokenConcealed={entry.tokenId !== null && concealedTokens.has(entry.tokenId)}
               gm={gm}
               dragging={dragId === entry.id}
               drop={dropAt?.id === entry.id ? (dropAt.after ? 'after' : 'before') : null}
@@ -153,6 +178,17 @@ export function TurnBar(): JSX.Element | null {
           <span className={`turn-now${myTurn ? ' mine' : ''}`}>
             {myTurn ? 'sua vez' : active.name}
           </span>
+        )}
+
+        {/* Quem esta com a vez a passa quando termina, sem esperar o mestre. */}
+        {myTurn && !gm && table.settings.playersPassTurn && (
+          <button
+            className="btn sm turn-pass"
+            onClick={() => void act('turns:pass')}
+            title="Terminei: passar a vez para o proximo"
+          >
+            Passar
+          </button>
         )}
 
         {gm && (
@@ -206,6 +242,7 @@ function Mini({
   entry,
   active,
   mine,
+  tokenConcealed,
   gm,
   dragging,
   drop,
@@ -218,6 +255,8 @@ function Mini({
   entry: TurnEntry;
   active: boolean;
   mine: boolean;
+  /** O token da vez esta oculto: ela some para os jogadores, com ou sem a flag. */
+  tokenConcealed: boolean;
   gm: boolean;
   dragging: boolean;
   drop: 'before' | 'after' | null;
@@ -234,7 +273,7 @@ function Mini({
     active ? 'active' : '',
     mine ? 'mine' : '',
     entry.skipped ? 'skipped' : '',
-    entry.hiddenFromPlayers ? 'hidden-entry' : '',
+    entry.hiddenFromPlayers || tokenConcealed ? 'hidden-entry' : '',
     dragging ? 'dragging' : '',
     drop ? `drop-${drop}` : '',
   ]
@@ -267,6 +306,9 @@ function Mini({
       }}
       onDrop={(e) => {
         if (!gm) return;
+        // Ficha solta sobre a miniatura sobe para a faixa, que a poe na ordem.
+        // Parar aqui engolia o soltar: so funcionava no fundo da faixa.
+        if (useStore.getState().dragging?.kind === 'sheet') return;
         e.preventDefault();
         e.stopPropagation();
         onDropMini(sideOf(e));
@@ -295,19 +337,32 @@ function Mini({
           >
             <Icon name={entry.skipped ? 'resumeTurn' : 'skipTurn'} size="sm" />
           </button>
-          <button
-            className="btn ghost sm icon-only"
-            onClick={() =>
-              void act('turns:update', {
-                entryId: entry.id,
-                patch: { hiddenFromPlayers: !entry.hiddenFromPlayers },
-              })
-            }
-            title={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
-            aria-label={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
-          >
-            <Icon name={entry.hiddenFromPlayers ? 'blinded' : 'vision'} size="sm" />
-          </button>
+          {tokenConcealed ? (
+            // Com o token oculto, a flag da vez nao muda nada para os
+            // jogadores: o botao explica em vez de parecer que falhou.
+            <button
+              className="btn ghost sm icon-only"
+              disabled
+              title="Escondida porque o token esta oculto — revele o token para mostrar"
+              aria-label="Escondida porque o token esta oculto"
+            >
+              <Icon name="blinded" size="sm" />
+            </button>
+          ) : (
+            <button
+              className="btn ghost sm icon-only"
+              onClick={() =>
+                void act('turns:update', {
+                  entryId: entry.id,
+                  patch: { hiddenFromPlayers: !entry.hiddenFromPlayers },
+                })
+              }
+              title={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
+              aria-label={entry.hiddenFromPlayers ? 'Mostrar aos jogadores' : 'Esconder dos jogadores'}
+            >
+              <Icon name={entry.hiddenFromPlayers ? 'blinded' : 'vision'} size="sm" />
+            </button>
+          )}
           <button
             className="btn ghost sm icon-only"
             onClick={() => void act('turns:remove', { entryId: entry.id })}
@@ -381,7 +436,7 @@ function faceOf(entry: TurnEntry): { url: string | null; color: string } {
     ? (state.table?.players.find((p) => p.id === entry.playerId) ?? null)
     : null;
   const token = entry.tokenId
-    ? (activeScene(state)?.tokens.find((t) => t.id === entry.tokenId) ?? null)
+    ? (liveScene(state)?.tokens.find((t) => t.id === entry.tokenId) ?? null)
     : null;
 
   const asset = findAsset(sheet?.portraitAssetId ?? player?.portraitAssetId ?? token?.assetId ?? null);

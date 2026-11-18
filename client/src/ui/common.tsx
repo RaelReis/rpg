@@ -16,7 +16,11 @@ export function Modal({
   wide,
 }: {
   title: string;
-  onClose: () => void;
+  /**
+   * Sem `onClose`, a janela nao tem X e ignora Esc e clique fora: so sai
+   * pelos botoes do rodape. E para janela que nao pode sumir por engano.
+   */
+  onClose?: () => void;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
@@ -31,14 +35,16 @@ export function Modal({
   }, []);
   return (
     <dialog ref={ref} className="modal-shell" aria-labelledby={titleId}
-      onCancel={e => { e.preventDefault(); onClose(); }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      onCancel={e => { e.preventDefault(); onClose?.(); }}
+      onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}>
       <div className="modal" style={wide ? { width: 'min(980px, 100%)' } : undefined}>
         <header>
           <h2 id={titleId}>{title}</h2>
-          <button type="button" className="btn ghost sm icon-only" onClick={onClose} aria-label="Fechar">
-            <Icon name="close" />
-          </button>
+          {onClose && (
+            <button type="button" className="btn ghost sm icon-only" onClick={onClose} aria-label="Fechar">
+              <Icon name="close" />
+            </button>
+          )}
         </header>
         <div className="body">{children}</div>
         {footer && <footer>{footer}</footer>}
@@ -323,13 +329,17 @@ export function Dropzone({
       >
         {busy ? 'Enviando...' : (label ?? 'Arraste uma imagem ou clique para escolher')}
         <span className="hint" style={{ display: 'block', marginTop: 4 }}>
-          PNG, JPEG, WebP, GIF ou AVIF — ate {formatBytes(uploadLimitFor(kind))}
+          {/* O limite deixou de ser um teto para quem envia: acima dele a imagem
+              e reduzida antes de subir (ver `shrink.ts`). So o GIF animado,
+              que perderia a animacao, continua preso a ele. */}
+          PNG, JPEG, WebP, AVIF ou GIF (animado ate {formatBytes(uploadLimitFor(kind))}) — imagens
+          grandes sao reduzidas antes de enviar
         </span>
       </button>
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic,image/heif"
         multiple={multiple}
         hidden
         onChange={(e) => void send(e.target.files)}

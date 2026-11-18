@@ -6,6 +6,8 @@ import {
   canPlayerSeeToken,
   cellsInRect,
   hexRadius,
+  isDoorSeen,
+  isDoorWithinSight,
   isHallucination,
   isHex,
   perceives,
@@ -79,13 +81,13 @@ export interface RenderInput {
   hiddenLayers: Set<number>;
   selectedTokenIds: Set<string>;
   selectedTileId: string | null;
-  selectedWallId: string | null;
+  selectedWallIds: Set<string>;
   /** Retangulo em construcao: selecao, area de neblina ou tile novo. */
   marquee: { from: Point; to: Point; kind: MarqueeKind } | null;
   /** Parede em polilinha ainda aberta, incluindo o segmento sob o cursor. */
   wallPath: Point[] | null;
   /** Tipo do proximo trecho de parede, para a previa sair na cor certa. */
-  wallKind: 'wall' | 'door' | 'window';
+  wallKind: 'wall' | 'door' | 'window' | 'secret';
   /** Ponta de parede existente onde o cursor vai encaixar, se houver. */
   wallSnap: Point | null;
   /** Pre-visualizacao do pincel de neblina sob o cursor. */
@@ -501,7 +503,12 @@ function drawToken(input: RenderInput, token: Token): void {
   const cx = token.x + w / 2;
   const cy = token.y + h / 2;
 
-  if (!litEnoughToDraw(input, token.layer, { x: cx, y: cy })) return;
+  // O proprio personagem aparece mesmo numa celula escura ou selada: o
+  // servidor ja o manda de proposito, e sem isto o jogador perdia o token de
+  // vista quando o mestre selava a area em volta dele.
+  const viewer = input.previewPlayerId ?? input.playerId;
+  const own = input.role !== 'GM' || input.previewPlayerId !== null ? token.ownerPlayerId === viewer : false;
+  if (!own && !litEnoughToDraw(input, token.layer, { x: cx, y: cy })) return;
 
   const radius = Math.min(w, h) / 2;
   const isSelected = input.selectedTokenIds.has(token.id);
@@ -584,11 +591,11 @@ function drawToken(input: RenderInput, token: Token): void {
     ctx.setLineDash([]);
   }
 
-  // Sinais que so o mestre ve: token escondido dos jogadores ou exclusivo dele.
-  if (input.role === 'GM' && (token.gmOnly || token.visibility !== 'visible')) {
+  // Sinais que so o mestre ve: dourado para oculto, azul para semitransparente.
+  if (input.role === 'GM' && token.visibility !== 'visible') {
     ctx.beginPath();
     ctx.arc(cx, cy, radius * 1.02, 0, Math.PI * 2);
-    ctx.strokeStyle = token.gmOnly ? '#d9a441' : '#6ea8d8';
+    ctx.strokeStyle = token.visibility === 'hidden' ? '#d9a441' : '#6ea8d8';
     ctx.lineWidth = 1.5 / camera.zoom;
     ctx.setLineDash([3 / camera.zoom, 5 / camera.zoom]);
     ctx.stroke();
@@ -713,10 +720,10 @@ function drawArtToken(
     ctx.restore();
   }
 
-  // Sinais que so o mestre ve: oculto dos jogadores, ou exclusivo dele.
-  if (input.role === 'GM' && (token.gmOnly || token.visibility !== 'visible')) {
+  // Sinais que so o mestre ve: dourado para oculto, azul para semitransparente.
+  if (input.role === 'GM' && token.visibility !== 'visible') {
     ctx.save();
-    ctx.strokeStyle = token.gmOnly ? '#d9a441' : '#6ea8d8';
+    ctx.strokeStyle = token.visibility === 'hidden' ? '#d9a441' : '#6ea8d8';
     ctx.lineWidth = 1.5 / camera.zoom;
     ctx.setLineDash([3 / camera.zoom, 5 / camera.zoom]);
     ctx.strokeRect(-artW / 2, -artH, artW, artH);
@@ -889,7 +896,7 @@ function effectOrigin(input: RenderInput, effect: MapEffect): Point | null {
 function drawEffect(input: RenderInput, effect: MapEffect): void {
   if (
     input.previewPlayerId !== null &&
-    (effect.gmOnly || effect.visibility === 'hidden' || !perceives(effect, input.previewPlayerId))
+    (effect.visibility === 'hidden' || !perceives(effect, input.previewPlayerId))
   ) {
     return;
   }
@@ -1515,8 +1522,11 @@ function drawWalls(input: RenderInput): void {
 
   ctx.save();
   for (const wall of scene.walls) {
-    // O jogador so ve portas e janelas; paredes comuns sao informacao do mestre.
-    if (role !== 'GM' && ((!wall.door && !wall.window) || wall.hidden)) continue;
+    // O jogador so ve portas, e so as que ja viu. Paredes comuns e janelas sao
+    // ferramenta de montagem do mestre — a janela ja esta na arte do mapa, e a
+    // linha azul atravessava a neblina entregando a planta. Vale tambem sem a
+    // visao no servidor, quando o cliente recebe todas as paredes.
+    if (role !== 'GM' && (!wall.door || wall.hidden || !isDoorSeen(scene, input.vision, wall))) continue;
 
     ctx.beginPath();
     ctx.moveTo(wall.x1, wall.y1);
@@ -1541,7 +1551,9 @@ function drawWalls(input: RenderInput): void {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    if (wall.id === input.selectedWallId) {
+    if (role === 'GM' && wall.door && wall.locked) drawPadlock(ctx, (wall.x1 + wall.x2) / 2, (wall.y1 + wall.y2) / 2, camera.zoom);
+
+    if (input.selectedWallIds.has(wall.id)) {
       // Halo claro por baixo: a parede fica obvia sem perder a cor que diz
       // o tipo dela (porta, secreta, comum).
       ctx.save();
@@ -1560,6 +1572,34 @@ function drawWalls(input: RenderInput): void {
 }
 
 /**
+ * Cadeado desenhado a mao no meio da porta trancada, em tamanho de tela fixo.
+ * So o mestre ve: o jogador descobre a tranca tentando abrir.
+ */
+function drawPadlock(ctx: CanvasRenderingContext2D, x: number, y: number, zoom: number): void {
+  const s = 1 / zoom;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(12, 14, 19, 0.85)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#d9a441';
+  ctx.fillStyle = '#d9a441';
+  ctx.lineWidth = 1.8;
+  // Alca e corpo.
+  ctx.beginPath();
+  ctx.arc(0, -2, 3.6, Math.PI, 0);
+  ctx.moveTo(-3.6, -2);
+  ctx.lineTo(-3.6, 0);
+  ctx.moveTo(3.6, -2);
+  ctx.lineTo(3.6, 0);
+  ctx.stroke();
+  ctx.fillRect(-5.5, 0, 11, 7);
+  ctx.restore();
+}
+
+/**
  * Parede sob o ponto, com tolerancia em pixels de TELA — uma parede fina
  * precisa continuar clicavel com o mapa afastado.
  */
@@ -1571,6 +1611,45 @@ export function wallAtPoint(scene: Scene, world: Point, zoom: number): Wall | nu
     if (distanceToSegment(world, wall) <= reach) return wall;
   }
   return null;
+}
+
+/**
+ * Porta que o jogador pode abrir sob o ponto: visivel (nao secreta) e ao
+ * alcance dos olhos dele, pela mesma regra que o servidor confere.
+ *
+ * A visao vem por funcao porque isto roda a cada movimento do mouse, e sem
+ * visao estrita calcula-la custa caro: so e pedida quando ha porta perto.
+ */
+export function doorAtPoint(
+  scene: Scene,
+  world: Point,
+  zoom: number,
+  vision: () => VisionResult,
+): Wall | null {
+  const reach = 8 / zoom;
+
+  for (let i = scene.walls.length - 1; i >= 0; i--) {
+    const wall = scene.walls[i];
+    if (!wall.door || wall.hidden) continue;
+    if (distanceToSegment(world, wall) > reach) continue;
+    if (isDoorWithinSight(scene, vision(), wall)) return wall;
+  }
+  return null;
+}
+
+/** Porta fechada e visivel mais proxima do ponto, dentro de `maxDist`. */
+export function closedDoorNear(scene: Scene, point: Point, maxDist: number): Wall | null {
+  let best: Wall | null = null;
+  let bestDist = maxDist;
+  for (const wall of scene.walls) {
+    if (!wall.door || wall.open || wall.hidden) continue;
+    const d = distanceToSegment(point, wall);
+    if (d <= bestDist) {
+      best = wall;
+      bestDist = d;
+    }
+  }
+  return best;
 }
 
 function distanceToSegment(p: Point, seg: { x1: number; y1: number; x2: number; y2: number }): number {
@@ -1933,6 +2012,7 @@ function drawDrafts(input: RenderInput): void {
 
   drawWallEndpoints(input);
   drawWallPath(input);
+  drawSealedCells(input);
   drawFogCursor(input);
   drawMarquee(input);
   drawHandles(input);
@@ -1950,6 +2030,7 @@ function drawWallPath(input: RenderInput): void {
   ctx.globalAlpha = 0.9;
   ctx.lineJoin = 'round';
   if (input.wallKind === 'window') ctx.setLineDash([10 / camera.zoom, 5 / camera.zoom]);
+  if (input.wallKind === 'secret') ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
 
   ctx.beginPath();
   ctx.moveTo(path[0].x, path[0].y);
@@ -2006,10 +2087,12 @@ function drawWallEndpoints(input: RenderInput): void {
   ctx.restore();
 }
 
-const WALL_COLORS: Record<'wall' | 'door' | 'window', string> = {
+const WALL_COLORS: Record<'wall' | 'door' | 'window' | 'secret', string> = {
   wall: '#cf5b52',
   door: '#d9a441',
   window: '#7fb3d8',
+  // O mesmo roxo tracejado com que a parede secreta ja aparece no mapa.
+  secret: '#9b7ede',
 };
 
 /** Area que o pincel de neblina vai afetar se houver clique agora. */
@@ -2032,6 +2115,24 @@ function drawFogCursor(input: RenderInput): void {
   ctx.restore();
 }
 
+/**
+ * Areas seladas, no mapa do mestre. Ele enxerga o mapa inteiro, e nada
+ * mostrava o que tinha selado: o selo so aparecia na tela do jogador, ou
+ * ligando "mostrar ate onde o grupo enxerga". Fica fora da previa pelos olhos
+ * de um jogador, que ja desenha a neblina como ele a ve.
+ */
+function drawSealedCells(input: RenderInput): void {
+  const { ctx, scene, camera, role } = input;
+  if (role !== 'GM' || input.previewPlayerId !== null) return;
+  if (scene.fog.mode === 'off' || scene.fog.hidden.length === 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = '#cf5b52';
+  for (const key of scene.fog.hidden) fillCell(ctx, scene, parseCellKey(key), 0.4 / camera.zoom);
+  ctx.restore();
+}
+
 /** Retangulo arrastado: selecao, area de neblina ou tile novo. */
 function drawMarquee(input: RenderInput): void {
   const marquee = input.marquee;
@@ -2049,7 +2150,9 @@ function drawMarquee(input: RenderInput): void {
     'fog-hide': '#8a8f9c',
     tile: '#5cc98a',
   };
-  const color = palette[marquee.kind];
+  // Selando, o retangulo fica vermelho como a previa do pincel livre: o gesto
+  // e o mesmo de cobrir, e so a cor avisa que a area vai ficar trancada.
+  const color = marquee.kind === 'fog-hide' && input.fogSeal ? '#cf5b52' : palette[marquee.kind];
 
   ctx.save();
   ctx.fillStyle = color;
@@ -2228,6 +2331,8 @@ export function tokenAtPoint(
   hiddenLayers: Set<number>,
   vision: VisionResult,
   assetUrlOf?: (assetId: string | null) => string | null,
+  /** O proprio token responde ao clique mesmo fora da luz (ver `drawToken`). */
+  ownerId: string | null = null,
 ): Token | null {
   // Mesma ordem do desenho, invertida: quem aparece por cima e pego primeiro.
   const stack = [...scene.tokens].sort((a, b) => {
@@ -2244,7 +2349,7 @@ export function tokenAtPoint(
     const cx = token.x + w / 2;
     const cy = token.y + h / 2;
 
-    if (!vision.unrestricted && token.layer > 2) {
+    if (!vision.unrestricted && token.layer > 2 && (ownerId === null || token.ownerPlayerId !== ownerId)) {
       if (!vision.visible.has(cellKey(cellAtPoint(scene, { x: cx, y: cy })))) continue;
     }
 
@@ -2263,6 +2368,13 @@ export function tokenAtPoint(
         const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
         const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
         if (lx >= -w / 2 && lx <= w / 2 && ly >= -artH && ly <= 0) return token;
+        // A celula que o token ocupa tambem responde: e onde fica o anel dos
+        // pes, e onde o README diz que esta a posicao dele. So com a figura, o
+        // clique no anel — o gesto natural de quem nunca usou a mesa — virava
+        // uma selecao retangular vazia, sem nenhum retorno.
+        if (world.x >= token.x && world.x <= token.x + w && world.y >= token.y && world.y <= token.y + h) {
+          return token;
+        }
         continue;
       }
     }
@@ -2320,6 +2432,46 @@ export function tokensInRect(
     }
     return true;
   });
+}
+
+/**
+ * Paredes que o retangulo de selecao toca. Basta encostar: exigir o trecho
+ * inteiro dentro obrigaria a cercar paredes longas que atravessam o mapa so
+ * para apaga-las.
+ */
+export function wallsInRect(
+  scene: Scene,
+  rect: { x: number; y: number; width: number; height: number },
+): Wall[] {
+  return scene.walls.filter((wall) => segmentTouchesRect(wall, rect));
+}
+
+/** Recorte de Liang-Barsky: o segmento tem algum trecho dentro do retangulo? */
+function segmentTouchesRect(
+  seg: { x1: number; y1: number; x2: number; y2: number },
+  rect: { x: number; y: number; width: number; height: number },
+): boolean {
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: [number, number][] = [
+    [-dx, seg.x1 - rect.x],
+    [dx, rect.x + rect.width - seg.x1],
+    [-dy, seg.y1 - rect.y],
+    [dy, rect.y + rect.height - seg.y1],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
 }
 
 export { isHex, worldToScreen };

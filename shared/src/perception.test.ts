@@ -9,7 +9,7 @@ import {
   sanitizeVisibleTo,
 } from './perception.js';
 import type { Scene } from './types.js';
-import { canPlayerSeeToken, computeVision, newlyExploredCells, visionSources } from './vision.js';
+import { canPlayerSeeToken, computeVision, newlyExploredCells, playerSightCells } from './vision.js';
 
 /**
  * Alucinacoes: objetos que so alguns jogadores percebem.
@@ -136,12 +136,12 @@ describe('alucinacoes e visao', () => {
     const ghost = createToken({ visibleTo: [ALICE], lightRadius: 4, ownerPlayerId: ALICE, visionRadius: 4 });
     s.tokens.push(ghost);
 
-    expect(visionSources(s, ALICE)).toHaveLength(0);
-    expect(visionSources(s, BRUNO)).toHaveLength(0);
+    expect(playerSightCells(s, ALICE).size).toBe(0);
+    expect(playerSightCells(s, BRUNO).size).toBe(0);
     for (const who of [ALICE, BRUNO]) {
       const v = computeVision(s, { role: 'PLAYER', playerId: who });
       expect(v.visible.has(cellKey({ a: 0, b: 0 }))).toBe(false);
     }
-    expect(newlyExploredCells(s)).toHaveLength(0);
+    expect(newlyExploredCells(s).size).toBe(0);
   });
 });

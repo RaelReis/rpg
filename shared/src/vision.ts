@@ -2,13 +2,15 @@ import {
   cellAt,
   cellCenter,
   cellKey,
+  cellsInRect,
   cellsWithinRadius,
   cellHeight,
   tokenCell,
+  parseCellKey,
   tokenCenter,
 } from './grid.js';
-import { isHallucination, perceives } from './perception.js';
-import type { Cell, GridConfig, Point, Scene, Token, Role, Wall } from './types.js';
+import { concealedFromPlayers, isHallucination, perceives } from './perception.js';
+import type { Cell, GridConfig, MapEffect, Point, Scene, Tile, Token, Role, Wall } from './types.js';
 
 /**
  * Fog of war e linha de visao.
@@ -223,24 +225,187 @@ export function tokenVisionCells(
   return out;
 }
 
+/** Token que participa da visao: na camada de tokens e nao alucinacao. */
+function sightToken(t: Token): boolean {
+  // Alucinacao nao ilumina nem enxerga: a neblina dos outros a denunciaria.
+  return t.layer === 3 && !isHallucination(t);
+}
+
+/** Os "olhos" do jogador: os proprios tokens que enxergam ou carregam luz. */
+function eyesOf(scene: Scene, playerId: string): Token[] {
+  return scene.tokens.filter(
+    (t) => sightToken(t) && t.ownerPlayerId === playerId && (t.visionRadius > 0 || t.lightRadius > 0),
+  );
+}
+
+/** Jogadores com olhos na cena: sao eles que exploram. */
+export function scenePlayersWithEyes(scene: Scene): string[] {
+  const out = new Set<string>();
+  for (const t of scene.tokens) {
+    if (t.ownerPlayerId && sightToken(t) && (t.visionRadius > 0 || t.lightRadius > 0)) out.add(t.ownerPlayerId);
+  }
+  return [...out];
+}
+
 /**
- * Quais tokens servem de "olhos" para este jogador: os proprios tokens com
- * visao, mais qualquer fonte de luz do mapa (uma tocha acesa numa sala
- * revela a sala para todo mundo que a alcance).
+ * O que os olhos deste jogador alcancam agora, sem o que o mestre revelou.
+ *
+ * Duas partes. A primeira e o que os proprios tokens veem, ate o raio de
+ * visao (ou da luz que carregam). A segunda e a luz dos OUTROS: uma celula
+ * iluminada por uma tocha alheia so conta se algum olho do jogador tiver
+ * linha de visao ate ela, a qualquer distancia.
+ *
+ * Antes a luz revelava para todos os jogadores: a tocha da Alice numa sala
+ * distante aparecia na tela do Bruno, em outro corredor, sem nada ligando os
+ * dois. Era visao compartilhada por outro caminho.
  */
-export function visionSources(scene: Scene, playerId: string | null): Token[] {
-  return scene.tokens.filter((t) => {
-    if (t.layer !== 3) return false;
-    // Alucinacao nao ilumina nem enxerga: a neblina dos outros a denunciaria.
-    if (isHallucination(t)) return false;
-    if (t.lightRadius > 0 && !t.gmOnly) return true;
-    return t.ownerPlayerId !== null && t.ownerPlayerId === playerId && t.visionRadius > 0;
-  });
+/**
+ * Celulas iluminadas por cada fonte de luz da cena, por id do token. Calculado
+ * uma vez por passagem e dividido entre os jogadores: por jogador, a mesma
+ * tocha era refeita a cada movimento, e com quatro jogadores o custo da visao
+ * quase dobrava.
+ */
+export function sceneLightCells(scene: Scene, blockers = collectBlockers(scene)): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const light of scene.tokens) {
+    if (!sightToken(light) || light.lightRadius <= 0) continue;
+    out.set(light.id, tokenVisionCells(scene, light, light.lightRadius, blockers));
+  }
+  return out;
+}
+
+/** O que da para reaproveitar entre os jogadores num mesmo calculo de visao. */
+export interface SharedSight {
+  blockers: Segment[];
+  lights: Map<string, Set<string>>;
+  /**
+   * O que cada jogador ve, ja calculado nesta passagem. So vale enquanto a
+   * cena nao muda: quem divide um `SharedSight` entre duas chamadas garante
+   * que nada mexeu em token, parede ou luz no meio.
+   */
+  sights: Map<string, Set<string>>;
+  /** Grade, luz global e obstaculos em texto: a parte de `sightKey` comum a todos. */
+  key: string;
+}
+
+export function sharedSight(scene: Scene): SharedSight {
+  const blockers = collectBlockers(scene);
+  // As luzes so sao calculadas se alguem precisar: com a visao de todos ainda
+  // guardada (`sightMemory`), nenhuma tocha e refeita.
+  let lights: Map<string, Set<string>> | undefined;
+  return {
+    blockers,
+    get lights() {
+      return (lights ??= sceneLightCells(scene, blockers));
+    },
+    sights: new Map(),
+    key: `${JSON.stringify(scene.grid)}|${scene.globalLight}|${blockers.map((b) => `${b.x1},${b.y1},${b.x2},${b.y2}`).join(';')}`,
+  };
+}
+
+/**
+ * A visao de cada jogador, guardada entre um movimento e outro enquanto nada
+ * do que ela depende mudar.
+ *
+ * Com luz global o raio vira 40 celulas, e cada token solto refazia a visao de
+ * todos os jogadores — inclusive quando quem andou foi um NPC, que nao muda a
+ * visao de ninguem. A regra nao muda: o que se guarda e o resultado de
+ * `playerSightCells`, com a lista de tudo o que entrou no calculo (`sightKey`).
+ * Se qualquer item diferir, o calculo e refeito. Por ser conferida pelo
+ * conteudo, e nao por aviso de quem alterou a cena, nao ha caminho que
+ * esqueca de invalidar.
+ */
+const sightMemory = new WeakMap<Scene, Map<string, { key: string; cells: Set<string> }>>();
+
+/**
+ * Tudo de que `playerSightCells` depende, alem do que ja esta em
+ * `SharedSight.key`: os olhos do jogador e as luzes alheias, na ordem em que
+ * entram no calculo. Mexeu no calculo, mexa aqui.
+ */
+function sightKey(scene: Scene, playerId: string, eyes: Token[], shared: SharedSight): string {
+  const parts = [shared.key];
+  for (const e of eyes) parts.push(`e${e.x},${e.y},${e.scale},${e.visionRadius},${e.lightRadius}`);
+  for (const t of scene.tokens) {
+    if (t.ownerPlayerId === playerId || !sightToken(t) || t.lightRadius <= 0) continue;
+    parts.push(`l${t.x},${t.y},${t.scale},${t.lightRadius}`);
+  }
+  return parts.join('|');
+}
+
+/**
+ * O conjunto devolvido pode ser o mesmo de uma chamada anterior (ver
+ * `SharedSight.sights` e `sightMemory`): quem recebe le, nao altera.
+ */
+export function playerSightCells(scene: Scene, playerId: string, shared: SharedSight = sharedSight(scene)): Set<string> {
+  const done = shared.sights.get(playerId);
+  if (done) return done;
+
+  const eyes = eyesOf(scene, playerId);
+  if (eyes.length === 0) return new Set();
+
+  const signature = sightKey(scene, playerId, eyes, shared);
+  let memory = sightMemory.get(scene);
+  if (!memory) sightMemory.set(scene, (memory = new Map()));
+  const kept = memory.get(playerId);
+  if (kept?.key === signature) {
+    shared.sights.set(playerId, kept.cells);
+    return kept.cells;
+  }
+
+  const { blockers, lights } = shared;
+  const out = new Set<string>();
+
+  for (const eye of eyes) {
+    for (const key of tokenVisionCells(scene, eye, Math.max(eye.visionRadius, eye.lightRadius), blockers)) {
+      out.add(key);
+    }
+  }
+
+  const origins = eyes.map((eye) => tokenCenter(scene.grid, { x: eye.x, y: eye.y }, eye.scale));
+  for (const light of scene.tokens) {
+    if (light.ownerPlayerId === playerId) continue;
+    const lit = lights.get(light.id);
+    if (!lit) continue;
+    for (const key of lit) {
+      if (out.has(key)) continue;
+      const cell = parseCellKey(key);
+      if (origins.some((origin) => cellIsLit(origin, cell, scene, blockers))) out.add(key);
+    }
+  }
+  memory.set(playerId, { key: signature, cells: out });
+  shared.sights.set(playerId, out);
+  return out;
+}
+
+/**
+ * Tudo o que o grupo enxerga agora: a uniao do que cada jogador ve. E o que o
+ * mestre liga em "mostrar ate onde o grupo enxerga".
+ */
+export function partySightCells(scene: Scene): Set<string> {
+  const out = new Set<string>();
+  if (scene.fog.mode === 'off') return out;
+  if (scene.fog.mode === 'vision') {
+    const shared = sharedSight(scene);
+    for (const playerId of scenePlayersWithEyes(scene)) {
+      for (const key of playerSightCells(scene, playerId, shared)) out.add(key);
+    }
+  }
+  for (const key of scene.fog.revealed) out.add(key);
+  for (const key of scene.fog.hidden) out.delete(key);
+  return out;
+}
+
+/** Area explorada de um jogador: a base comum mais a dele. */
+export function exploredCellsOf(scene: Scene, playerId: string | null): string[] {
+  const own = playerId ? (scene.fog.exploredBy?.[playerId] ?? []) : [];
+  return own.length ? [...scene.fog.explored, ...own] : scene.fog.explored;
 }
 
 export interface VisionOptions {
   role: Role;
   playerId: string | null;
+  /** Paredes e luzes ja calculadas, quando a visao de varios jogadores sai junta. */
+  shared?: SharedSight;
 }
 
 /**
@@ -257,31 +422,23 @@ export function computeVision(scene: Scene, opts: VisionOptions): VisionResult {
   const hidden = new Set(scene.fog.hidden);
   const revealed = scene.fog.revealed.filter((k) => !hidden.has(k));
 
+  const remembered = exploredCellsOf(scene, opts.playerId).filter((k) => !hidden.has(k));
+
   if (scene.fog.mode === 'manual') {
     const visible = new Set(revealed);
-    const explored = scene.fog.rememberExplored
-      ? new Set([...scene.fog.explored.filter((k) => !hidden.has(k)), ...revealed])
-      : new Set(visible);
+    const explored = scene.fog.rememberExplored ? new Set([...remembered, ...revealed]) : new Set(visible);
     return { visible, explored, unrestricted: false, gm: false };
   }
 
   // mode === 'vision'
-  const blockers = collectBlockers(scene);
   const visible = new Set(revealed);
-
-  for (const token of visionSources(scene, opts.playerId)) {
-    const radius = Math.max(
-      token.ownerPlayerId === opts.playerId ? token.visionRadius : 0,
-      token.lightRadius,
-    );
-    for (const key of tokenVisionCells(scene, token, radius, blockers)) {
+  if (opts.playerId) {
+    for (const key of playerSightCells(scene, opts.playerId, opts.shared)) {
       if (!hidden.has(key)) visible.add(key);
     }
   }
 
-  const explored = scene.fog.rememberExplored
-    ? new Set([...scene.fog.explored.filter((k) => !hidden.has(k)), ...visible])
-    : new Set(visible);
+  const explored = scene.fog.rememberExplored ? new Set([...remembered, ...visible]) : new Set(visible);
 
   return { visible, explored, unrestricted: false, gm: false };
 }
@@ -304,6 +461,138 @@ export function isPointVisible(scene: Scene, vision: VisionResult, p: Point): bo
 }
 
 /**
+ * Ponto onde o efeito esta ancorado: o centro da celula, o centro do token que
+ * ele segue (mais o deslocamento) ou a coordenada solta. `null` quando o token
+ * da ancora nao existe mais.
+ */
+export function effectAnchorPoint(
+  scene: Scene,
+  effect: Pick<MapEffect, 'anchor' | 'tokenId' | 'cell' | 'x' | 'y'>,
+): Point | null {
+  if (effect.anchor === 'token') {
+    const token = scene.tokens.find((t) => t.id === effect.tokenId);
+    if (!token) return null;
+    const h = scene.grid.type === 'none' ? scene.grid.size : cellHeight(scene.grid);
+    return {
+      x: token.x + (scene.grid.size * token.scale) / 2 + effect.x,
+      y: token.y + (h * token.scale) / 2 + effect.y,
+    };
+  }
+  if (effect.anchor === 'grid' && effect.cell) {
+    const c = cellCenter(scene.grid, effect.cell);
+    return { x: c.x + effect.x, y: c.y + effect.y };
+  }
+  return { x: effect.x, y: effect.y };
+}
+
+/**
+ * O jogador enxerga este tile — ou ja o viu?
+ *
+ * Tiles sao cenario (camadas 1 e 2): ficam no mapa em penumbra depois de
+ * explorados, entao contam as celulas visiveis e as exploradas. Um tile que
+ * bloqueia a visao e obstaculo, a mesma planta que as paredes descrevem, e
+ * nunca vai ao jogador: o efeito dele ja esta nas celulas calculadas.
+ *
+ * Com a neblina desligada (ou para o mestre), tudo vale — so a visao estrita
+ * no servidor chama isto para filtrar.
+ */
+export function isTileSeen(scene: Scene, vision: VisionResult, tile: Tile): boolean {
+  if (vision.gm || vision.unrestricted) return true;
+  if (tile.blocksVision) return false;
+
+  // Tile girado: vale o quadrado que o contem em qualquer angulo, que e o
+  // retangulo mais barato que nunca deixa a peca de fora.
+  const rect = tile.rotation
+    ? (() => {
+        const side = Math.hypot(tile.width, tile.height);
+        const cx = tile.x + tile.width / 2;
+        const cy = tile.y + tile.height / 2;
+        return { x: cx - side / 2, y: cy - side / 2, width: side, height: side };
+      })()
+    : { x: tile.x, y: tile.y, width: tile.width, height: tile.height };
+
+  for (const cell of cellsInRect(scene.grid, rect)) {
+    const key = cellKey(cell);
+    if (vision.visible.has(key) || vision.explored.has(key)) return true;
+  }
+  return false;
+}
+
+/**
+ * O jogador enxerga este efeito? Mesma regra que o renderizador usa para
+ * desenha-lo: nas camadas de cenario (1 e 2), a ancora numa celula vista ou
+ * explorada; acima da neblina (3 e 4), a ancora numa celula iluminada agora.
+ * Mandar o que o cliente nao desenharia so entregaria o efeito ao inspetor
+ * de rede.
+ */
+export function isEffectSeen(scene: Scene, vision: VisionResult, effect: MapEffect): boolean {
+  if (vision.gm || vision.unrestricted) return true;
+  const origin = effectAnchorPoint(scene, effect);
+  if (!origin) return false;
+  const key = cellKey(cellAt(scene.grid, origin));
+  return vision.visible.has(key) || (effect.layer <= 2 && vision.explored.has(key));
+}
+
+/**
+ * O jogador alcanca esta porta com os olhos — pode abri-la ou fecha-la?
+ *
+ * A porta fica na fronteira entre duas celulas, e basta enxergar uma delas:
+ * quem esta de um lado de uma porta fechada nao ve o outro. Sem esta regra,
+ * como as portas chegam ao jogador em qualquer ponto do mapa, dava para abrir
+ * uma porta no escuro do outro lado da masmorra e explorar a sala sem ir ate
+ * la. As amostras ficam a um quarto de celula da porta, perpendiculares a ela,
+ * para cair dentro das celulas vizinhas e nao sobre a linha da grade.
+ */
+export function isDoorWithinSight(
+  scene: Scene,
+  vision: VisionResult,
+  wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
+): boolean {
+  return doorTouches(scene, vision, wall, (key) => vision.visible.has(key));
+}
+
+/**
+ * O jogador ja viu esta porta — agora ou antes (area explorada)? E o que decide
+ * se ela chega a ele e se aparece no mapa. Antes todas as portas e janelas iam
+ * para o jogador e eram desenhadas por cima da neblina: as linhas atravessavam
+ * o escuro e entregavam a planta de salas que ninguem tinha visitado.
+ */
+export function isDoorSeen(
+  scene: Scene,
+  vision: VisionResult,
+  wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
+): boolean {
+  return doorTouches(scene, vision, wall, (key) => vision.visible.has(key) || vision.explored.has(key));
+}
+
+function doorTouches(
+  scene: Scene,
+  vision: VisionResult,
+  wall: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>,
+  known: (cellKey: string) => boolean,
+): boolean {
+  if (vision.gm || vision.unrestricted || scene.fog.mode === 'off') return true;
+
+  const dx = wall.x2 - wall.x1;
+  const dy = wall.y2 - wall.y1;
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length;
+  const ny = dx / length;
+  const reach = scene.grid.size / 4;
+
+  // Tres pontos ao longo da porta: numa porta de varias celulas, enxergar
+  // qualquer trecho dela basta.
+  for (const t of [0.5, 0.2, 0.8]) {
+    const mx = wall.x1 + dx * t;
+    const my = wall.y1 + dy * t;
+    for (const side of [1, -1]) {
+      if (known(cellKey(cellAt(scene.grid, { x: mx + nx * reach * side, y: my + ny * reach * side })))) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Um token so aparece para o jogador se nao for exclusivo do mestre, nao
  * estiver marcado como oculto, e (com fog de visao) ocupar uma celula
  * iluminada. Tokens do proprio jogador sao sempre visiveis para ele, para
@@ -322,7 +611,7 @@ export function canPlayerSeeToken(
   // Percepcao antes de tudo: quem nao esta na lista da alucinacao nao a ve,
   // nem sendo dono, nem com a neblina desligada.
   if (!perceives(token, playerId)) return false;
-  if (token.gmOnly || token.visibility === 'hidden') return false;
+  if (concealedFromPlayers(token)) return false;
   if (token.ownerPlayerId !== null && token.ownerPlayerId === playerId) return true;
   if (vision.unrestricted || scene.fog.mode === 'off') return true;
 
@@ -336,34 +625,70 @@ export function canPlayerSeeToken(
 }
 
 /**
- * Celulas que os tokens de jogador acabaram de descobrir, para acumular em
- * `fog.explored`. O servidor chama isto a cada movimento e so persiste o
- * delta, evitando reescrever o conjunto inteiro a cada passo.
+ * A luz que o proprio token carrega o mostra a este jogador, onde ele esta
+ * agora?
+ *
+ * E a segunda parte de `playerSightCells` — luz alheia so conta com linha de
+ * visao de um olho do jogador —, restrita as celulas que o token ocupa. Serve
+ * ao arraste: a cada passo o servidor decide se manda a posicao usando a visao
+ * do ultimo calculo completo, e essa visao guarda a tocha na posicao ANTIGA.
+ * Sem esta consulta, o colega que carrega luz sumia no meio do arraste;
+ * refazer a visao inteira de cada jogador a cada quadro custaria caro demais.
  */
-export function newlyExploredCells(scene: Scene): string[] {
-  if (scene.fog.mode !== 'vision' || !scene.fog.rememberExplored) return [];
+export function tokenShownByOwnLight(
+  scene: Scene,
+  token: Token,
+  playerId: string,
+  blockers: Segment[] = collectBlockers(scene),
+): boolean {
+  if (scene.fog.mode !== 'vision') return false;
+  if (!sightToken(token) || token.lightRadius <= 0 || token.ownerPlayerId === playerId) return false;
+  if (!perceives(token, playerId) || concealedFromPlayers(token)) return false;
 
-  const known = new Set(scene.fog.explored);
-  const blockers = collectBlockers(scene);
-  const fresh: string[] = [];
+  const eyes = eyesOf(scene, playerId);
+  if (eyes.length === 0) return false;
+  const origins = eyes.map((eye) => tokenCenter(scene.grid, { x: eye.x, y: eye.y }, eye.scale));
 
-  for (const token of scene.tokens) {
-    if (token.layer !== 3) continue;
-    if (isHallucination(token)) continue;
-    const isPlayerEye = token.ownerPlayerId !== null && token.visionRadius > 0;
-    const isLight = token.lightRadius > 0 && !token.gmOnly;
-    if (!isPlayerEye && !isLight) continue;
-
-    const radius = Math.max(isPlayerEye ? token.visionRadius : 0, token.lightRadius);
-    for (const key of tokenVisionCells(scene, token, radius, blockers)) {
-      if (!known.has(key)) {
-        known.add(key);
-        fresh.push(key);
-      }
-    }
+  const origin = tokenCenter(scene.grid, { x: token.x, y: token.y }, token.scale);
+  const limit = effectiveRadius(scene, token.lightRadius) * scene.grid.size;
+  const span = Math.max(0, Math.ceil(token.scale) - 1);
+  for (const cell of cellsWithinRadius(scene.grid, cellAt(scene.grid, origin), span)) {
+    if (scene.fog.hidden.includes(cellKey(cell))) continue;
+    const center = cellCenter(scene.grid, cell);
+    if (Math.hypot(center.x - origin.x, center.y - origin.y) > limit) continue;
+    if (!cellIsLit(origin, cell, scene, blockers)) continue;
+    if (origins.some((eye) => cellIsLit(eye, cell, scene, blockers))) return true;
   }
+  return false;
+}
 
-  return fresh;
+/**
+ * Celulas que cada jogador acabou de descobrir, para acumular em
+ * `fog.exploredBy`. O servidor chama isto a cada movimento e so persiste o
+ * delta, evitando reescrever o conjunto inteiro a cada passo. Cada jogador
+ * explora com os proprios olhos (`playerSightCells`): o que um descobre nao
+ * entra na memoria do outro.
+ */
+export function newlyExploredCells(
+  scene: Scene,
+  onlyPlayerIds?: Set<string>,
+  shared?: SharedSight,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (scene.fog.mode !== 'vision' || !scene.fog.rememberExplored) return out;
+
+  shared ??= sharedSight(scene);
+  const hidden = new Set(scene.fog.hidden);
+  for (const playerId of scenePlayersWithEyes(scene)) {
+    if (onlyPlayerIds && !onlyPlayerIds.has(playerId)) continue;
+    const known = new Set(exploredCellsOf(scene, playerId));
+    const fresh: string[] = [];
+    for (const key of playerSightCells(scene, playerId, shared)) {
+      if (!known.has(key) && !hidden.has(key)) fresh.push(key);
+    }
+    if (fresh.length) out.set(playerId, fresh);
+  }
+  return out;
 }
 
 /**

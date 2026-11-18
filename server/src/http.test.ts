@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import { asyncRoute } from './http.js';
-import { guardUploads, registerImageAccessRoutes } from './image-access.js';
+import { guardUploads, IMAGE_ACCESS_CACHE_MS, registerImageAccessRoutes } from './image-access.js';
 import { rooms, Room } from './room.js';
 import { createDefaultTemplate, createScene, DEFAULT_SETTINGS, DEFAULT_TURNS, type TableState } from '@rpg/shared';
 
@@ -37,6 +37,8 @@ it('issues independent cookies and rechecks sharing on each download', async () 
   room.state.handouts[0].sharedWithAll = true;
   expect((await download()).status).toBe(200);
   room.state.handouts[0].sharedWithAll = false;
+  // The allowed-image set is cached for a short window; revocation lands once it expires.
+  const now = Date.now(); vi.spyOn(Date, 'now').mockReturnValue(now + IMAGE_ACCESS_CACHE_MS);
   expect((await download()).status).toBe(404);
   const revoke = await fetch(`${base}/api/session/image-access`, { method: 'DELETE', headers: { 'x-session-token': 'token-b' } });
   expect(revoke.headers.get('set-cookie')!.split('=')[0]).toBe(b.split('=')[0]);

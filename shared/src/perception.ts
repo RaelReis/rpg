@@ -17,6 +17,15 @@ import type { MapEffect, Token } from './types.js';
 
 type Perceivable = Pick<Token, 'visibleTo'> | Pick<MapEffect, 'visibleTo'>;
 
+/**
+ * O mestre escondeu o token de todos os jogadores? Vale para o mapa e para
+ * tudo que deriva do token — como a vez dele na ordem de turnos, que
+ * entregaria nome e id do monstro.
+ */
+export function concealedFromPlayers(token: Pick<Token, 'visibility'>): boolean {
+  return token.visibility === 'hidden';
+}
+
 /** O objeto tem visibilidade restrita a uma lista de jogadores? */
 export function isHallucination(obj: Perceivable): boolean {
   return Array.isArray(obj.visibleTo);

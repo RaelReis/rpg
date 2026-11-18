@@ -39,13 +39,22 @@ mande esse link e o código da mesa para os amigos.
 - Se o servidor cair no meio da sessão, ele sobe de novo sozinho; o link
   continua o mesmo e os jogadores reconectam.
 - O link muda a cada `npm run share`.
-- **Ctrl+C** encerra tudo e grava a mesa.
+- **Ctrl+C** encerra tudo e grava a mesa. As mudanças são gravadas em lote,
+  a cada 1,5 s; mensagens e rolagens do chat são gravadas na hora, para uma
+  queda do servidor não levar a rolagem que a mesa inteira viu.
 - Encerre o `npm run dev` antes: os dois usariam a mesma porta.
 - Quem entra pelo convite entra como jogador: a opção "entrar como mestre" não
   aparece numa mesa que já tem mestre. Para voltar como mestre de outro
   aparelho, acrescente `&mestre` ao link — a senha de mestre continua exigida.
   Numa mesa **sem** senha, ninguém assume o papel pelo convite; defina uma
   senha ao criar a mesa se quiser poder voltar de outro aparelho.
+- **No celular** (até 700 px de largura) a mesa abre no mapa. O cabeçalho
+  ganha uma segunda linha só para a faixa de turnos; o painel (ficha, chat,
+  materiais) vira uma gaveta, aberta e fechada pelo botão redondo no canto
+  superior esquerdo do mapa; os retratos do grupo ficam em duas colunas e a
+  ficha em duas, com os recursos na linha inteira. Arrastar o próprio token
+  funciona com o dedo; zoom por pinça ainda não existe — use o botão de
+  enquadrar. A preparação da mesa continua pensada para a tela grande.
 
 A campanha inteira mora em `server/prisma/dev.db` e `server/uploads/`. Copie
 os dois antes de cada sessão.
@@ -55,7 +64,7 @@ Outros comandos:
 | Comando | O que faz |
 | --- | --- |
 | `npm run share` | Publica a mesa para os amigos por um Cloudflare Tunnel |
-| `npm test` | Testes unitários do pacote compartilhado (grade, visão, dados, fichas) |
+| `npm test` | Testes unitários de `shared/`, `client/` e `server/` |
 | `npm run typecheck` | Verifica os três pacotes com o TypeScript |
 | `npm run test:e2e` | Teste ponta a ponta com dois clientes reais (exige o servidor no ar) |
 | `npm run bench:fog` | Mede as recomposições da textura de neblina numa sessão típica |
@@ -120,17 +129,22 @@ de um jeito, e o mesmo gesto aparecia com símbolos diferentes em cada painel.
 A regra do projeto é **não enviar e depois esconder na interface**. Se o jogador
 não deveria saber de algo, aquilo não entra no payload dele:
 
-- tokens marcados como ocultos ou exclusivos do mestre;
+- tokens e efeitos marcados como *Só o mestre*;
 - tokens dentro da neblina (quando a visão estrita está ligada);
-- as **paredes** da cena — elas descrevem a planta do mapa e apareceriam
-  inteiras no inspecionador de rede do navegador;
+- as **paredes e janelas** da cena — elas descrevem a planta do mapa e
+  apareceriam inteiras no inspecionador de rede do navegador; das **portas**,
+  só as que o jogador já viu (na visão ou na área explorada), e nunca a tranca;
+- **tiles que bloqueiam a visão**, pelo mesmo motivo das paredes, e os demais
+  tiles e efeitos de mapa fora do que o jogador viu (com a visão estrita): o
+  cenário chega quando entra na visão ou na área explorada, e o efeito acima da
+  neblina só enquanto a âncora dele está iluminada;
 - campos de ficha marcados como exclusivos do mestre;
 - **alucinações** destinadas a outros jogadores — nem o id chega;
 - cenas ainda não ativadas (material de preparação);
 - **cartelas de cena** ainda não apresentadas — nem o título, nem a imagem;
 - **gatilhos** do mapa — nem as áreas, nem os nomes, nem o registro de disparos;
 - no quadro de pistas, o **cartão de um material** que o jogador não recebeu:
-  chega como "Material indisponível", sem título, imagem ou id;
+  chega como "Material indisponível", sem título, imagem, id ou legenda;
 - a lista de imagens da mesa — o mapa da próxima sessão apareceria ali;
 - sussurros de outras pessoas.
 
@@ -180,12 +194,27 @@ O pincel tem duas ações destrutivas que **não** são a mesma coisa:
 
 Cobrir é o gesto do dia a dia; selar é para o que o grupo não pode ver de jeito
 nenhum. O alternador aparece no trilho quando o pincel de cobrir está ativo, e
-a prévia sob o cursor fica vermelha quando você está selando.
+a prévia — do pincel livre e do retângulo — fica vermelha quando você está
+selando. No mapa do mestre, as áreas seladas ficam com um tom vermelho, para ele
+ver o que trancou sem trocar de perspectiva.
 
 No modo por visão, cada token precisa de um **dono** e de um **raio de visão**
-para enxergar. `Luz emitida` é diferente: revela para todos os jogadores — é a
-tocha na mão de alguém iluminando a sala inteira. A **luz do ambiente** da cena
-vai de dia claro (visão limitada só por paredes) a escuridão total.
+para enxergar. `Luz emitida` é diferente: ilumina a área para todos, **mas cada
+jogador só vê a parte iluminada até onde o personagem dele tem linha de visão**,
+a qualquer distância — a tocha no fundo do salão aparece para quem está no
+salão, e não para quem está do outro lado da parede. O dono de um token com luz
+vê o que a própria luz ilumina. A **luz do ambiente** da cena vai de dia claro
+(visão limitada só por paredes) a escuridão total.
+
+**Cada jogador lembra do que o próprio personagem viu.** A área explorada é
+guardada por jogador: a sala que a Alice olhou não aparece em penumbra para o
+Bruno, que nunca passou por lá — e o cenário e as portas dessa sala também não
+chegam a ele. O que as mesas já tinham explorado antes desta regra continua
+valendo para todos, como base comum; *Reencobrir explorado* apaga a de todos, e
+uma pessoa removida da mesa leva a dela junto. Num backup importado, a
+exploração de cada um vira base comum, porque os jogadores de lá não existem na
+mesa nova. Em *Mostrar até onde o grupo enxerga* e em *Ver pelos olhos*, o
+mestre vê a mesma regra.
 
 O alcance de visão e de luz é **circular**, medido por distância euclidiana —
 um facho de 6 células chega a 6 células em qualquer direção. A medição de
@@ -276,6 +305,9 @@ mesa — e a ficha já chega com uma imagem de corpo inteiro pedida na entrada. 
 imagem nenhuma, o token continua sendo desenhado como peça redonda, então nunca
 fica invisível.
 
+Para pegar o token, vale a figura **ou** a célula que ele ocupa — o anel dos pés
+responde ao clique, como a figura.
+
 A escolha é **só visual**. A área que o token ocupa para movimento, visão e
 alcance continua sendo o tamanho declarado, não a altura do desenho — o
 tamanho define a largura, e a altura vem da proporção da imagem.
@@ -295,7 +327,9 @@ seleciona vários tokens por retângulo; `Shift` no clique soma à seleção.
 mapa do mestre — mover, criar, apagar, transformar, pintar neblina. O
 histórico é local, e não colaborativo: desfazer uma exclusão recria um objeto
 equivalente, com id novo, e o refazer seguinte apaga esse novo. Qualquer ação
-nova depois de um desfazer descarta o que havia para refazer.
+nova depois de um desfazer descarta o que havia para refazer. Se outra pessoa
+mexeu no mesmo token ou tile depois, o desfazer daquele movimento é ignorado,
+com aviso — em vez de teletransportar a peça por cima do movimento dela.
 
 **Paredes** saem em sequência e **cada clique grava um trecho na hora** — não
 há rascunho a perder e não há nada a confirmar no fim. Duplo clique ou `Esc`
@@ -309,21 +343,65 @@ exatamente pelo vértice de um canto não escapa mais pela fresta.
 
 O que o próximo trecho será é escolhido no **trilho**, enquanto a ferramenta
 está ativa: ▤ parede sólida, 🚪 porta, 🪟 **janela** — que deixa ver o outro
-lado mas barra a passagem. `Alt` no clique faz uma porta avulsa.
+lado mas barra a passagem — e **parede secreta**, que barra como a comum e nunca
+chega ao jogador; para revelá-la, transforme-a em porta pelo botão direito.
+`Alt` no clique faz uma porta avulsa.
 
 Clique com o **botão direito sobre uma parede** para excluí-la, convertê-la
 entre parede, porta e janela, ou abrir e fechar a porta. Botão direito
 arrastando continua movendo a câmera.
 
 **Portas** bloqueiam a visão quando fechadas, e os jogadores podem abri-las e
-fechá-las. Janelas e portas são desenhadas para os jogadores; paredes comuns e
-secretas, não.
+fechá-las **com um clique** sobre a porta (o cursor vira a mão). Vale para a
+porta que o jogador enxerga — a de uma célula vizinha iluminada —, e não para
+uma porta no escuro do outro lado do mapa; o servidor confere a mesma regra.
+Arrastar a partir do vão da porta continua movendo o token que está ali. Quando
+o arraste para numa porta fechada, ela pisca e um aviso diz como abri-la.
+
+**Porta trancada**: pelo botão direito na porta (*Trancar porta*) ou pelo
+cadeado na lista de paredes da aba *Cena*. Trancada, só o mestre a abre ou
+fecha — o jogador não fecha nem a porta que foi trancada aberta. No mapa do
+mestre ela ganha um cadeado; o jogador **descobre tentando**: o servidor nunca
+lhe manda a tranca, e o clique numa porta trancada mostra o aviso *Trancada*
+sobre ela. Assim ninguém sabe de longe quais portas vale a pena forçar.
+Para os jogadores, **só as portas que eles já viram** são desenhadas — as da
+visão atual ou da área explorada. Paredes comuns, janelas e paredes secretas
+não aparecem: a janela já está na arte do mapa, e as linhas atravessavam a
+neblina, entregando a planta de salas que ninguém visitou. O efeito da janela
+(deixar ver, não deixar passar) continua valendo no cálculo da visão.
 
 **Toda ficha nova ganha o próprio token** na cena ativa, ligado a ela, com o
 dono, as barras do modelo e visão 1. Na aba *Fichas*, o mestre **arrasta uma
 ficha para o mapa**: se o personagem já está na cena, ele vai até o ponto; se
 não, nasce ali. Uma prévia encaixada na grade mostra onde e o que vai
 acontecer antes de soltar.
+
+**NPC criado com jogadores conectados nasce oculto** — a ficha nova ou o token
+enviado pelo mestre sem visibilidade escolhida. Visível, ele aparecia no mapa de
+todos antes de o mestre conseguir escondê-lo; um aviso lembra de revelá-lo
+quando for a hora. Alucinações seguem a própria escolha.
+
+**Quem vê**, no inspetor do token ou do efeito, é um controle só: *Todos*,
+*Todos, semitransparente* (só para tokens), *Só o mestre* ou *Alguns
+jogadores* (a alucinação, abaixo). Eram três — visibilidade, “exclusivo do
+mestre” e “visível para” — que davam o mesmo resultado ao jogador por regras
+diferentes. Um token *Só o mestre* que emite luz continua iluminando para os
+jogadores, como uma tocha que se vê sem saber quem a carrega; zere a luz para
+esconder as duas coisas. Tokens e efeitos gravados como “exclusivos do mestre”
+viram *Só o mestre* ao carregar a mesa, com a luz zerada — a luz deles não
+chegava aos jogadores, e assim continua.
+
+**Ativar uma cena** abre uma confirmação com *Levar o grupo para esta cena*,
+marcada: os personagens dos jogadores que ainda não estão nela entram em volta do
+centro do mapa, e a ordem de turnos passa a apontar para eles. Desmarque para
+uma cena sem o grupo, como um sonho ou um flashback.
+
+**Montar uma cena fora do ar**: em *Cena*, com uma cena que não está no ar
+aberta, *Editar no mapa* passa o mapa do mestre para ela. Paredes, portas,
+tokens, tiles, efeitos, neblina e gatilhos vão para essa cena, e os jogadores
+continuam na cena no ar sem receber nada — nem o arraste de uma ficha para o
+mapa. Uma faixa no topo do mapa lembra que a cena está fora do ar, e *Voltar
+para a cena no ar* desfaz a troca; ativar a cena também a desfaz.
 
 ### PV, PD e retratos do grupo
 
@@ -338,8 +416,10 @@ impressa (acima de 20 pontos, vira barra). O retrato pisca ao perder ou
 recuperar pontos, pulsa com pouca resistência, ganha o selo *Morrendo* em 0 PV
 ou *Em colapso* em 0 PD, e brilha em latão na vez do personagem.
 
-- O jogador vê o próprio retrato primeiro e o dos colegas quando **Barras do
-  grupo** está ligado (aba *Mesa*); o mestre vê todos.
+- O jogador vê o próprio retrato primeiro e o dos colegas quando **Barras e
+  retratos do grupo** está ligado (aba *Mesa → Regras da mesa*), estejam eles à
+  vista ou não; o mestre vê todos. Dos NPCs, só chegam as barras dos tokens à
+  vista.
 - Clicar no retrato abre a ficha, para quem pode abri-la.
 - O botão **Grupo** recolhe os retratos.
 - O que conta como PV e PD é o **papel no retrato**, escolhido no editor do
@@ -401,7 +481,8 @@ para a sala onde estava metade do corpo dele.
 
 ## Fichas
 
-O mestre monta o modelo em *Fichas → Editar modelo de ficha*: seções e campos
+O mestre monta o modelo em *Fichas → Modelo* (o botão fica no alto da aba,
+mesmo antes de existir qualquer ficha): seções e campos
 de texto, número, sim/não, lista de opções, **recurso** (barra tipo vida/mana),
 **inventário** (itens com quantidade e ícone próprio) e imagem.
 
@@ -423,15 +504,20 @@ barras sobre os tokens no mapa.
 
 Um campo com **fórmula de rolagem** ganha um dado clicável. A fórmula aceita
 referências a outros campos da mesma ficha com `@id`, por exemplo
-`1d20+@destreza` — o id de cada campo aparece no editor de modelo. `Alt` no
-clique sussurra o resultado ao mestre.
+`1d20+@destreza`. O id vem do nome do campo — *Destreza* vira `destreza`,
+*Pontos de Vida* vira `pontos_de_vida` — e aparece nas opções do campo no
+editor, onde dá para trocá-lo enquanto o campo é novo; depois de salvo ele fica
+fixo, porque as fichas guardam os valores por ele. O menu *Referenciar um campo*
+insere a referência sem digitar o id, e o dado mostra a fórmula pelos nomes
+("1d20+Destreza"). `Alt` no clique sussurra o resultado ao mestre.
 
 Quem resolve as referências e joga os dados é o **servidor**: uma rolagem
 decidida no navegador seria apenas uma sugestão.
 
 ### Reaproveitar o modelo
 
-Os botões **Exportar** e **Importar** no editor salvam o modelo como JSON.
+Os botões **Exportar** e **Importar** no editor salvam o modelo como JSON (com
+um campo `format`; arquivos antigos, sem ele, continuam sendo aceitos).
 Montar a ficha de um sistema dá trabalho; sem isso ela ficaria presa a uma
 mesa, e cada campanha nova começaria do zero. O modelo importado entra como
 rascunho — você revisa antes de aplicar.
@@ -461,8 +547,8 @@ aparece na tela do jogador é decidido no servidor; o cliente só desenha.
 
 ### Alucinações
 
-No inspetor de um token ou de um efeito de mapa, **Visível para** escolhe
-entre *todos* (o normal) e *apenas…* alguns jogadores. Quem não está na lista
+No inspetor de um token ou de um efeito de mapa, **Quem vê → Alguns jogadores**
+abre a lista de jogadores para marcar. Quem não está na lista
 não recebe o objeto: ele não é escondido na tela, ele não existe no payload
 daquela pessoa — nem como id, nem na ordem de iniciativa, nem no aviso de que
 foi apagado. Mudar a lista tira o objeto da tela de quem saiu e o entrega a
@@ -624,9 +710,11 @@ sessões e vai no backup.
 
 **Materiais não compartilhados.** Um cartão pode apontar para uma carta que só
 a Alice recebeu. Para quem não tem acesso, ele chega como **"Material
-indisponível"** — sem título, sem imagem e sem o id do material. Quando o
-mestre compartilha o material, o cartão se completa sozinho na tela de quem
-ganhou acesso. Um jogador não consegue pregar um material que não recebeu.
+indisponível"** — sem título, sem imagem, sem o id do material e sem a
+legenda, que costuma descrever justamente o material; quem não o vê também não
+consegue reescrevê-la. Quando o mestre compartilha o material, o cartão se
+completa sozinho na tela de quem ganhou acesso. Um jogador não consegue pregar
+um material que não recebeu.
 
 **Sincronização.** Em tempo real, com a última escrita vencendo por item.
 Durante o arraste, a posição vai aos outros na hora (quem arrasta não recebe o
@@ -642,7 +730,8 @@ Em *Mesa → Backup*, o mestre baixa a campanha inteira num arquivo: cenas,
 fichas, materiais, cartelas, gatilhos, quadro de pistas, tokens, paredes e
 neblina. Há duas versões — **com imagens**,
 que é o backup de verdade, e **só a estrutura**, leve o bastante para versionar
-ou compartilhar a montagem de um sistema.
+ou compartilhar a montagem de um sistema. Os arquivos saem com o sufixo
+`-completo` ou `-estrutura`, para não se confundirem.
 
 O arquivo **não carrega a senha de mestre nem as sessões dos jogadores**. Um
 backup circula por e-mail e drive; se levasse credenciais, quem o recebesse
@@ -694,6 +783,7 @@ e serve a qualquer sistema.
 | `+` | Coloca na ordem quem está selecionado no mapa (monstros, aliados) |
 | Arrastar uma ficha do painel até a faixa | Coloca aquele personagem na ordem |
 | Pular / esconder / remover | Aparecem ao passar o mouse sobre a miniatura |
+| **Passar** (jogador) | Quem está com a vez a passa adiante; desligável em *Mesa → Regras da mesa* |
 
 A vez atual fica destacada na faixa (com o nome ao lado, ou *"sua vez"* para
 quem está com ela), no retrato do grupo e como anel pulsante no token do mapa. O
@@ -708,8 +798,17 @@ mostra as últimas doze vezes e conta as anteriores numa linha de texto.
 
 Quem entra na mesa já nasce na ordem, e quem sai dela sai da ordem junto.
 
+Exclusões levam junto o que dependia do objeto: **remover um jogador** apaga a
+ficha, os tokens dela e a vez dele (para manter o personagem como NPC, troque o
+dono da ficha antes); **apagar uma ficha** apaga os tokens dela e a vez; **apagar
+um token** tira a vez dele da ordem. Um token do jogador sem ficha, como um
+familiar, fica no mapa sem dono.
+
 O que o mestre esconde, fica escondido: uma miniatura marcada como oculta não
 chega ao jogador — nem na ordem, nem no histórico, nem como "a vez de alguém".
+O mesmo vale para a vez de um token que **só o mestre vê**, venha ela
+pelo `+` ou pela ficha arrastada até a faixa. A ocultação é lida do token na hora
+do envio, então revelar o NPC no meio da cena revela também a vez dele.
 
 ### Imagens do personagem
 
@@ -752,18 +851,28 @@ cena. Quem ainda não enviou retrato aparece com a inicial na própria cor.
 
 ## Uploads
 
-| Categoria | Limite | Quem envia |
-| --- | --- | --- |
-| Mapa | 20 MB | mestre |
-| Tile | 10 MB | mestre |
-| Token | 5 MB | todos |
-| Retrato | 5 MB | todos |
-| Efeito | 5 MB | mestre |
-| Cartela | 10 MB | mestre |
-| Pista (quadro) | 5 MB | todos |
-| Item | 2 MB | todos |
+| Categoria | Limite | Lado máximo | Quem envia |
+| --- | --- | --- | --- |
+| Mapa | 20 MB | 8192 px | mestre |
+| Tile | 10 MB | 4096 px | mestre |
+| Token / corpo inteiro | 5 MB | 2048 px | todos |
+| Retrato | 5 MB | 1024 px | todos |
+| Efeito | 5 MB | 2048 px | mestre |
+| Cartela | 10 MB | 4096 px | mestre |
+| Pista (quadro) | 5 MB | 1600 px | todos |
+| Item | 2 MB | 1600 px | todos |
 
-Formatos: PNG, JPEG, WebP, GIF, AVIF; até 8192 px por lado.
+Formatos: PNG, JPEG, WebP, GIF, AVIF.
+
+**Imagem grande é reduzida no navegador antes de subir.** Acima do limite ou do
+lado máximo, ela é redimensionada e recodificada — JPEG continua JPEG; PNG,
+WebP e AVIF viram WebP, que mantém a transparência do personagem recortado.
+Imagem dentro das regras sobe intacta. Assim a foto de celular (de 5 a 10 MB)
+entra sem que o jogador precise reduzi-la em outro programa. Duas exceções:
+GIF animado continua preso ao limite, porque a redução perderia a animação; e
+foto HEIC do iPhone é convertida quando o navegador sabe lê-la (Safari sabe) —
+nos outros, a mensagem pede para exportar como JPEG. O servidor continua
+conferindo limite, formato e dimensão.
 
 O arquivo **nunca é confiado pelo nome**: o formato real é detectado
 decodificando os bytes, e a extensão gravada vem dessa detecção — um `.png` que
@@ -778,7 +887,7 @@ na verdade é outra coisa é recusado.
 | `V` | Selecionar e mover |
 | `H` | Mover o mapa |
 | `M` | Medir distância |
-| `P` | Ping (com `Alt`, puxa a câmera da mesa) |
+| `P` | Ping (com `Alt`, puxa a câmera da mesa); depois de um ping, volta à ferramenta anterior |
 | `F` | Enquadrar o mapa |
 | `Esc` | Limpar seleção |
 | `Delete` | Remover o que está selecionado (mestre) |
@@ -808,6 +917,18 @@ participante. Se a conexão cai, o cliente reconecta e reapresenta esse token �
 a pessoa volta para o **mesmo** personagem, com a mesma ficha e os mesmos tokens
 sob controle. Fechar a aba e reabrir também retoma a sessão direto, sem digitar
 o código de novo.
+
+Quando a sessão se perde de vez (outro aparelho, histórico limpo), a pessoa entra
+de novo pelo código com o **mesmo nome**. Se esse jogador está desconectado, a
+tela pergunta *"Já existe um personagem de Alice nesta mesa, desconectado. É
+você?"*; confirmando, ela volta ao mesmo personagem, e o acesso antigo deixa de
+valer. Nome igual ao de alguém conectado é recusado. O mestre é avisado de toda
+retomada: a pergunta evita o personagem duplicado por engano, mas não prova quem
+está do outro lado — numa mesa entre amigos, quem conduz percebe se algo saiu
+errado.
+
+A janela de imagens da entrada não fecha no `Esc` nem no X; sair da mesa por ela
+pede confirmação.
 
 O estado autoritativo da mesa vive em memória no servidor e é gravado no banco
 de forma agrupada: arrastar um token não custa uma escrita em disco por quadro.

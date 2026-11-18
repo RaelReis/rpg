@@ -24,7 +24,15 @@ export function SheetPanel(): JSX.Element {
   void rev;
   if (!table) return <Empty>Sem mesa carregada.</Empty>;
 
-  const sheets = table.sheets;
+  /*
+   * O jogador so escolhe entre fichas inteiras: a dele e as compartilhadas com
+   * o grupo. As demais chegam reduzidas as barras (para os retratos do grupo),
+   * e abertas aqui apareciam como ficha completa com zeros onde faltava campo —
+   * foi assim que uma jogadora abriu, sem perceber, a ficha de outra pessoa.
+   */
+  const sheets = gm
+    ? table.sheets
+    : table.sheets.filter((s) => s.ownerPlayerId === playerId || s.sharedWithParty);
   const own = sheets.find((s) => s.ownerPlayerId === playerId) ?? null;
   const selected: Sheet | null =
     sheets.find((s) => s.id === selectedId) ?? own ?? (gm ? (sheets[0] ?? null) : null);
@@ -35,16 +43,28 @@ export function SheetPanel(): JSX.Element {
         title={gm ? `Fichas (${sheets.length})` : 'Minha ficha'}
         actions={
           gm && (
-            <button
-              className="btn sm"
-              onClick={() =>
-                void act<Sheet>('sheet:create', { name: 'Nova ficha' }).then(
-                  (sheet) => sheet && selectSheet(sheet.id),
-                )
-              }
-            >
-              <Icon name="add" size="sm" /> Ficha
-            </button>
+            <>
+              {/* Sempre a vista, mesmo sem nenhuma ficha: o botao ficava so
+                  dentro de uma ficha aberta, e para montar o modelo antes de
+                  os jogadores entrarem era preciso criar uma ficha a toa. */}
+              <button
+                className="btn ghost sm"
+                onClick={() => useStore.getState().openTemplateEditor(true)}
+                title="Editar o modelo de ficha da mesa"
+              >
+                Modelo
+              </button>
+              <button
+                className="btn sm"
+                onClick={() =>
+                  void act<Sheet>('sheet:create', { name: 'Nova ficha' }).then(
+                    (sheet) => sheet && selectSheet(sheet.id),
+                  )
+                }
+              >
+                <Icon name="add" size="sm" /> Ficha
+              </button>
+            </>
           )
         }
       >
@@ -82,7 +102,10 @@ export function SheetPanel(): JSX.Element {
               className="btn ghost sm danger"
               style={{ alignSelf: 'flex-start' }}
               onClick={() => {
-                if (window.confirm(`Excluir a ficha "${selected.name}"?`)) {
+                const tokens = table.scenes.flatMap((s) => s.tokens).filter((t) => t.sheetId === selected.id).length;
+                const which = tokens === 1 ? 'O token' : `Os ${tokens} tokens`;
+                const extra = tokens > 0 ? `\n\n${which} dela e a vez na ordem saem junto.` : '';
+                if (window.confirm(`Excluir a ficha "${selected.name}"?${extra}`)) {
                   void act('sheet:delete', { sheetId: selected.id });
                 }
               }}
@@ -102,7 +125,9 @@ export function SheetPanel(): JSX.Element {
           <Empty>
             {gm
               ? 'Nenhuma ficha criada ainda.'
-              : 'Sua ficha aparecera assim que o mestre configurar o modelo.'}
+              : // A mensagem antiga falava em "configurar o modelo", que nao era o
+                // caso: sem ficha, o jogador so volta a ter uma pelo mestre.
+                'Voce esta sem ficha nesta mesa. Peca ao mestre para criar uma para voce.'}
           </Empty>
         </section>
       )}

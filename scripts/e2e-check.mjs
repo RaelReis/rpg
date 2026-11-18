@@ -112,10 +112,17 @@ async function main() {
   );
 
   console.log('\n== 4. Tokens e visibilidade ==');
+  // Visibilidade explicita: com jogador conectado, NPC sem visibilidade pedida
+  // nasce oculto (conferido logo abaixo).
   const visible = await rpc(gm, 'token:create', {
     sceneId,
-    token: { name: 'Guarda', x: 300, y: 300, layer: 3 },
+    token: { name: 'Guarda', x: 300, y: 300, layer: 3, visibility: 'visible' },
   });
+  const newcomer = await rpc(gm, 'token:create', {
+    sceneId,
+    token: { name: 'Recem-chegado', x: 500, y: 300, layer: 3 },
+  });
+  check('NPC criado com jogador conectado nasce oculto', newcomer.visibility === 'hidden', newcomer.visibility);
   const secret = await rpc(gm, 'token:create', {
     sceneId,
     token: { name: 'Assassino oculto', x: 400, y: 300, layer: 3, gmOnly: true },
@@ -130,6 +137,10 @@ async function main() {
   check(
     'token comum chega ao jogador',
     playerTokensAfterCreate.some((t) => t.id === visible.id),
+  );
+  check(
+    'NPC que nasceu oculto NAO chega ao jogador',
+    !playerTokensAfterCreate.some((t) => t.id === newcomer.id),
   );
   check(
     'token exclusivo do mestre NAO chega ao jogador',
@@ -1155,7 +1166,9 @@ async function main() {
   const windowWalls = waitFor(alice, 'walls:patch', (p) => p.upsert?.some((w) => w.id === glass.id));
   await rpc(gm2, 'wall:update', { sceneId: scene2, wallId: glass.id, patch: { window: true } });
   check('janela deixa ver o outro lado', !!(await windowVision));
-  check('o jogador recebe a janela para desenhar', !!(await windowWalls));
+  // A janela fica no servidor: a arte do mapa ja a mostra, e a linha dela
+  // atravessava a neblina entregando a planta.
+  check('a janela nao chega ao jogador', !(await windowWalls));
 
   let windowCrossRefused = false;
   try {

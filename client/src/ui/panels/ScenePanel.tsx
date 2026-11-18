@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { LAYER_NAMES, type GridType, type Layer, type Scene } from '@rpg/shared';
 
 import { act } from '../../net/socket';
-import { confirmSceneActivation, editingScene, findAsset, useStore } from '../../state/store';
+import { editingScene, findAsset, useStore } from '../../state/store';
+import { requestSceneActivation } from '../SceneActivation';
 import {
   ColorField,
   Dropzone,
@@ -28,13 +29,14 @@ export function ScenePanel(): JSX.Element {
   const rev = useStore((s) => s.rev);
   const table = useStore((s) => s.table);
   const [newSceneName, setNewSceneName] = useState('');
-  const selectedWallId = useStore((s) => s.selectedWallId);
+  const selectedWallIds = useStore((s) => s.selectedWallIds);
   const selectWall = useStore((s) => s.selectWall);
   const hiddenLayers = useStore((s) => s.hiddenLayers);
   const toggleLayer = useStore((s) => s.toggleLayer);
   const showTriggers = useStore((s) => s.showTriggers);
   const toggleTriggers = useStore((s) => s.toggleTriggers);
   const editingSceneId = useStore((s) => s.editingSceneId);
+  const mapSceneId = useStore((s) => s.mapSceneId);
   const setEditingScene = useStore((s) => s.setEditingScene);
 
   void rev;
@@ -76,8 +78,16 @@ export function ScenePanel(): JSX.Element {
             .sort((a, b) => a.order - b.order)
             .map((s) => {
               const live = s.id === table.activeSceneId;
+              const editing = s.id === editingId && !live;
+              // Bronze e so para a cena no ar, como na tira do cabecalho. Antes
+              // o bronze seguia a cena em configuracao: ao abrir outra cena
+              // para preparar, a que estava no ar perdia o destaque e o mestre
+              // passava a mexer achando que aquela era a dos jogadores.
               return (
-                <div key={s.id} className={`item${s.id === editingId ? ' active' : ''}`}>
+                <div
+                  key={s.id}
+                  className={`item${live ? ' active' : ''}${editing ? ' scene-editing' : ''}`}
+                >
                   <button
                     className="name"
                     style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left' }}
@@ -86,12 +96,13 @@ export function ScenePanel(): JSX.Element {
                   >
                     {s.name}
                   </button>
+                  {editing && <span className="tag">configurando</span>}
                   {live && <span className="tag on">no ar</span>}
                   {!live && (
                     <button
                       className="btn ghost sm"
                       onClick={() => {
-                        if (confirmSceneActivation(table, s.name)) void act('scene:activate', { sceneId: s.id });
+                        requestSceneActivation(s.id);
                       }}
                       title="Ativar para todos os jogadores"
                     >
@@ -138,23 +149,34 @@ export function ScenePanel(): JSX.Element {
             collapsible
             actions={
               !editingLive && (
-                <button
-                  className="btn sm"
-                  onClick={() => {
-                    if (confirmSceneActivation(table, scene.name)) void act('scene:activate', { sceneId: scene.id });
-                  }}
-                  title="Ativar esta cena para todos os jogadores"
-                >
-                  Ativar para todos
-                </button>
+                <>
+                  {mapSceneId !== scene.id && (
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => useStore.getState().setMapScene(scene.id)}
+                      title="Abrir esta cena no seu mapa para montar paredes, tokens, tiles e gatilhos, sem ativar"
+                    >
+                      Editar no mapa
+                    </button>
+                  )}
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      requestSceneActivation(scene.id);
+                    }}
+                    title="Ativar esta cena para todos os jogadores"
+                  >
+                    Ativar para todos
+                  </button>
+                </>
               )
             }
           >
             {!editingLive && (
               <span className="hint">
-                Fundo, grid, neblina e clima daqui valem so para esta cena, mesmo fora do ar. O mapa
-                que voce ve, porem, continua sendo o da cena ativa — parede, tile e token novos
-                desenhados nele vao para ela, nao para esta.
+                Fundo, grid, neblina e clima daqui valem so para esta cena, mesmo fora do ar. Para
+                montar paredes, tokens, tiles e gatilhos dela, use <strong>Editar no mapa</strong>: o
+                seu mapa passa a mostra-la, e os jogadores continuam na cena no ar sem receber nada.
               </span>
             )}
             <TextField label="Nome" value={scene.name} onChange={(v) => patch({ name: v })} maxLength={80} />
@@ -337,7 +359,7 @@ export function ScenePanel(): JSX.Element {
 
             <Toggle
               label="Lembrar areas exploradas"
-              hint="O que ja foi visto continua no mapa, em penumbra, sem mostrar tokens."
+              hint="O que ja foi visto continua no mapa, em penumbra, sem mostrar tokens. Cada jogador lembra so do que o personagem dele viu."
               checked={scene.fog.rememberExplored}
               onChange={(v) => patch({ fog: { ...scene.fog, rememberExplored: v } })}
             />
@@ -375,6 +397,7 @@ export function ScenePanel(): JSX.Element {
               <button
                 className="btn sm"
                 onClick={() => void act('fog:reset', { sceneId: scene.id, scope: 'explored' })}
+                title="Apaga o que todos os jogadores exploraram nesta cena"
               >
                 Reencobrir explorado
               </button>
@@ -522,7 +545,7 @@ export function ScenePanel(): JSX.Element {
               {scene.walls.map((wall, index) => (
                 <div
                   key={wall.id}
-                  className={`item${wall.id === selectedWallId ? ' active' : ''}`}
+                  className={`item${selectedWallIds.includes(wall.id) ? ' active' : ''}`}
                   onClick={() => selectWall(wall.id)}
                 >
                   <span
@@ -542,6 +565,7 @@ export function ScenePanel(): JSX.Element {
                   <span className="name">
                     {wall.door ? 'Porta' : wall.window ? 'Janela' : 'Parede'} {index + 1}
                     {wall.hidden && <span className="sub"> · secreta</span>}
+                    {wall.door && wall.locked && <span className="sub"> · trancada</span>}
                   </span>
 
                   {wall.door && (
@@ -557,6 +581,21 @@ export function ScenePanel(): JSX.Element {
                       }}
                     >
                       {wall.open ? 'Fechar' : 'Abrir'}
+                    </button>
+                  )}
+
+                  {wall.door && (
+                    <button
+                      className={`btn ghost sm${wall.locked ? ' active' : ''}`}
+                      title={wall.locked ? 'Destrancar: os jogadores voltam a abrir' : 'Trancar: so voce abre e fecha'}
+                      aria-label={wall.locked ? 'Destrancar porta' : 'Trancar porta'}
+                      aria-pressed={wall.locked}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void act('wall:update', { sceneId: scene.id, wallId: wall.id, patch: { locked: !wall.locked } });
+                      }}
+                    >
+                      <Icon name={wall.locked ? 'lockDoor' : 'unlockDoor'} size="sm" />
                     </button>
                   )}
 
@@ -593,8 +632,8 @@ export function ScenePanel(): JSX.Element {
             </div>
 
             <span className="hint">
-              Desenhe com a ferramenta de parede: cada clique grava um trecho,{' '}
-              <strong>Enter</strong> encerra, <strong>Alt</strong> faz uma porta.
+              Desenhe com a ferramenta de parede: cada clique grava um trecho; duplo clique,{' '}
+              <strong>Esc</strong> ou <strong>Enter</strong> encerram, e <strong>Alt</strong> faz uma porta.
               <br />
               Para excluir ou converter uma parede, clique nela com o <strong>botao direito</strong> no
               mapa — ou use a lixeira desta lista.

@@ -370,12 +370,25 @@ export class Room {
     }
   }
 
+  /**
+   * Mensagem e rolagem gravam na hora, sem esperar o debounce.
+   *
+   * Uma queda do servidor perdia o ultimo 1,5 s — num arraste, so um passo do
+   * token; no chat, a rolagem decisiva que a mesa inteira viu. O volume de
+   * mensagens e baixo o bastante para nao pesar como pesaria o movimento.
+   */
   appendChat(message: ChatMessage): void {
     this.state.chat.push(message);
     if (this.state.chat.length > CHAT_HISTORY_SIZE) {
       this.state.chat.splice(0, this.state.chat.length - CHAT_HISTORY_SIZE);
     }
     this.touch('table');
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    // A falha ja volta a marcar e reagenda dentro de persistPending.
+    void this.flush().catch(() => {});
   }
 }
 
@@ -398,8 +411,14 @@ export interface CreatedTable {
  * explorado, essa lista sozinha domina o custo do flush.
  */
 function sceneForStorage(scene: Scene): Record<string, unknown> {
-  const { explored, ...fog } = scene.fog;
-  return { ...scene, fog: { ...fog, exploredRuns: encodeExploredCells(explored) } };
+  const { explored, exploredBy, ...fog } = scene.fog;
+  // A exploracao por jogador usa o mesmo codec: com quatro jogadores, sao
+  // quatro listas do tamanho da antiga, e o custo do flush crescia junto.
+  const exploredByRuns: Record<string, unknown> = {};
+  for (const [playerId, cells] of Object.entries(exploredBy)) {
+    if (cells.length) exploredByRuns[playerId] = encodeExploredCells(cells);
+  }
+  return { ...scene, fog: { ...fog, exploredRuns: encodeExploredCells(explored), exploredByRuns } };
 }
 
 /** Desfaz `sceneForStorage`, aceitando tambem cenas gravadas antes dele. */
@@ -408,15 +427,20 @@ function sceneFromStorage(raw: string): Partial<Scene> {
   const fog = parsed.fog as Record<string, unknown> | undefined;
   if (!fog) return parsed as Partial<Scene>;
 
+  const { exploredRuns, exploredByRuns, ...rest } = fog;
+  const decoded: Record<string, unknown> = { ...rest };
   // Cenas anteriores ao codec ainda trazem `explored` como lista de chaves.
-  if (fog.exploredRuns) {
-    const { exploredRuns, ...rest } = fog;
-    return {
-      ...parsed,
-      fog: { ...rest, explored: decodeExploredCells(exploredRuns as never) },
-    } as Partial<Scene>;
+  if (exploredRuns) decoded.explored = decodeExploredCells(exploredRuns as never);
+  // Cenas anteriores a exploracao individual nao tem `exploredByRuns`: tudo o
+  // que o grupo explorou fica na base comum, e ninguem perde o que ja mapeou.
+  if (exploredByRuns && typeof exploredByRuns === 'object') {
+    const exploredBy: Record<string, string[]> = {};
+    for (const [playerId, runs] of Object.entries(exploredByRuns as Record<string, unknown>)) {
+      exploredBy[playerId] = decodeExploredCells(runs as never);
+    }
+    decoded.exploredBy = exploredBy;
   }
-  return parsed as Partial<Scene>;
+  return { ...parsed, fog: decoded } as unknown as Partial<Scene>;
 }
 
 class RoomManager {
@@ -649,6 +673,16 @@ class RoomManager {
 
     const match = pending.find((t) => normalizeTableCode(t.code) === normalized);
     return match ? this.load(match.id) : null;
+  }
+
+  /**
+   * Esquece as sessoes em cache de um jogador. Usado quando o token dele e
+   * trocado: sem isto, o token antigo seguia valendo pelo tempo do cache.
+   */
+  forgetPlayerSessions(playerId: string): void {
+    for (const [hash, entry] of this.sessionCache) {
+      if (entry.playerId === playerId) this.sessionCache.delete(hash);
+    }
   }
 
   /** Resolve um token de sessao para a mesa e o jogador correspondentes. */

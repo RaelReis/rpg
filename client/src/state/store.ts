@@ -85,10 +85,24 @@ export interface UndoEntry {
   label: string;
   undo: () => void | Promise<void>;
   redo: () => void | Promise<void>;
+  /**
+   * Motivo para nao desfazer (ou refazer) agora, ou `null` se pode.
+   *
+   * O historico e local, mas a mesa nao: desfazer um movimento depois que um
+   * jogador moveu o mesmo token o teletransportava de volta — atravessando
+   * paredes, por cima do movimento dele. Quem monta a entrada diz como
+   * conferir que o objeto ainda esta como a acao o deixou.
+   */
+  blocked?: (direction: 'undo' | 'redo') => string | null;
 }
 
 /** O que a ferramenta de parede desenha a cada clique. */
-export type WallKind = 'wall' | 'door' | 'window';
+/**
+ * `secret` e a parede com `hidden`: barra visao e passagem como a comum, mas
+ * nunca vai ao jogador (nem sem a visao estrita). Revela-se transformando em
+ * porta. Antes nao havia como cria-la pela interface, so pelo socket.
+ */
+export type WallKind = 'wall' | 'door' | 'window' | 'secret';
 
 /** Forma da proxima area de gatilho. */
 export type TriggerShapeKind = 'rect' | 'circle' | 'polygon';
@@ -139,10 +153,13 @@ interface AppState {
 
   // --- interface
   tool: Tool;
+  /** Ferramenta em uso antes do ping: o ping e de uso unico e volta a ela. */
+  toolBeforePing: Tool;
   /** Selecao de tokens; multipla, para mover ou apagar um grupo de uma vez. */
   selectedTokenIds: string[];
   selectedTileId: string | null;
-  selectedWallId: string | null;
+  /** Paredes selecionadas; o retangulo de selecao pega varias para apagar juntas. */
+  selectedWallIds: string[];
   selectedSheetId: string | null;
   selectedAssetId: string | null;
   /**
@@ -151,6 +168,11 @@ interface AppState {
    * Sem isso, preparar uma cena nova obrigava a ativa-la so para editar.
    */
   editingSceneId: string | null;
+  /**
+   * Cena fora do ar aberta no mapa do mestre para ser montada. Nulo = o mapa
+   * mostra a cena no ar. Ver `activeScene`.
+   */
+  mapSceneId: string | null;
   sideTab: SideTab;
   sideOpen: boolean;
   camera: Camera;
@@ -204,6 +226,8 @@ interface AppState {
   notices: Notice[];
   pings: ActivePing[];
   templateEditorOpen: boolean;
+  /** Cena esperando a confirmacao de ativacao (com a escolha de levar o grupo). */
+  sceneActivationId: string | null;
   sheetModalId: string | null;
   /** Material aberto na tela, por escolha propria ou apresentado pelo mestre. */
   openHandoutId: string | null;
@@ -271,7 +295,11 @@ interface AppState {
   selectTokens(ids: string[]): void;
   selectTile(id: string | null): void;
   selectWall(id: string | null): void;
+  /** Resultado do retangulo de selecao: tokens e paredes de uma vez. */
+  selectArea(tokenIds: string[], wallIds: string[]): void;
   setEditingScene(id: string | null): void;
+  /** Abre (ou fecha, com null) uma cena fora do ar no mapa do mestre. */
+  setMapScene(id: string | null): void;
   setFogBrush(radius: number): void;
   setWallDraft(points: Point[]): void;
   setWallKind(kind: WallKind): void;
@@ -295,6 +323,7 @@ interface AppState {
   addPing(ping: MapPing): void;
   prunePings(): void;
   openTemplateEditor(open: boolean): void;
+  askSceneActivation(sceneId: string | null): void;
   openSheetModal(sheetId: string | null): void;
   openHandout(handoutId: string | null): void;
   showScreenMessage(message: ScreenMessage): void;
@@ -324,6 +353,15 @@ let noticeSeq = 0;
 let pingSeq = 0;
 
 /** Muta a cena e devolve `true` se ela existe — evita repetir a busca. */
+/** Mesma largura do bloco de celular em styles.css. */
+function narrowScreen(): boolean {
+  try {
+    return window.matchMedia('(max-width: 700px)').matches;
+  } catch {
+    return false;
+  }
+}
+
 function withScene(table: TableState | null, sceneId: string, fn: (scene: Scene) => void): boolean {
   const scene = table?.scenes.find((s) => s.id === sceneId);
   if (!scene) return false;
@@ -346,14 +384,18 @@ export const useStore = create<AppState>((set, get) => ({
   rev: 0,
 
   tool: 'select',
+  toolBeforePing: 'select',
   selectedTokenIds: [],
   selectedTileId: null,
-  selectedWallId: null,
+  selectedWallIds: [],
   selectedSheetId: null,
   selectedAssetId: null,
   editingSceneId: null,
+  mapSceneId: null,
   sideTab: 'chat',
-  sideOpen: true,
+  // No celular o painel cobre o mapa inteiro: aberto de saida, quem entrava
+  // pelo convite via a ficha e nenhum mapa, sem saber que ele estava ali atras.
+  sideOpen: !narrowScreen(),
   camera: { x: 0, y: 0, zoom: 1 },
   hiddenLayers: [],
   showPartyVision: false,
@@ -370,6 +412,7 @@ export const useStore = create<AppState>((set, get) => ({
   notices: [],
   pings: [],
   templateEditorOpen: false,
+  sceneActivationId: null,
   sheetModalId: null,
   openHandoutId: null,
   unreadChat: 0,
@@ -419,7 +462,7 @@ export const useStore = create<AppState>((set, get) => ({
       rev: 0,
       selectedTokenIds: [],
       selectedTileId: null,
-      selectedWallId: null,
+      selectedWallIds: [],
       pings: [],
       undoStack: [],
       redoStack: [],
@@ -449,6 +492,7 @@ export const useStore = create<AppState>((set, get) => ({
       if (!s.table) return {};
       return {
         table: { ...s.table, scenes: s.table.scenes.filter((sc) => sc.id !== sceneId) },
+        mapSceneId: s.mapSceneId === sceneId ? null : s.mapSceneId,
         rev: s.rev + 1,
       };
     }),
@@ -461,13 +505,16 @@ export const useStore = create<AppState>((set, get) => ({
       const changed = s.table.activeSceneId !== sceneId;
       return {
         table: { ...s.table, activeSceneId: sceneId },
+        // A cena que estava sendo montada fora do ar entrou no ar: o mapa ja
+        // e ela, e a faixa de "editando fora do ar" deixa de valer.
+        mapSceneId: s.mapSceneId === sceneId ? null : s.mapSceneId,
         rev: s.rev + 1,
         undoStack: changed ? [] : s.undoStack,
         redoStack: changed ? [] : s.redoStack,
         wallDraft: changed ? [] : s.wallDraft,
         selectedTokenIds: changed ? [] : s.selectedTokenIds,
         selectedTileId: changed ? null : s.selectedTileId,
-        selectedWallId: changed ? null : s.selectedWallId,
+        selectedWallIds: changed ? [] : s.selectedWallIds,
         selectedTriggerId: changed ? null : s.selectedTriggerId,
         triggerDraft: changed ? [] : s.triggerDraft,
       };
@@ -539,13 +586,21 @@ export const useStore = create<AppState>((set, get) => ({
         // vazias no cliente, exatamente como o estado completo as entrega.
         if (patch.computed) {
           scene.fog.computedVisible = patch.computed.visible;
-          scene.fog.computedExplored = patch.computed.explored;
+          // O explorado chega como diferenca; a lista inteira so vem quando
+          // ele encolheu. Sem celula nova a lista fica a mesma, e o cache de
+          // visao do renderizador (que compara a referencia) nao e refeito.
+          if (patch.computed.explored) {
+            scene.fog.computedExplored = patch.computed.explored;
+          } else if (patch.computed.exploredAdd?.length) {
+            scene.fog.computedExplored = [...(scene.fog.computedExplored ?? []), ...patch.computed.exploredAdd];
+          }
           return;
         }
 
         // Reset das listas cruas, feito pelo mestre: substitui, nao acumula.
         if (patch.reset) {
           if (patch.reset.explored) scene.fog.explored = patch.reset.explored;
+          if (patch.reset.exploredBy) scene.fog.exploredBy = patch.reset.exploredBy;
           if (patch.reset.revealed) scene.fog.revealed = patch.reset.revealed;
           if (patch.reset.hidden) scene.fog.hidden = patch.reset.hidden;
           return;
@@ -563,6 +618,15 @@ export const useStore = create<AppState>((set, get) => ({
         };
 
         scene.fog.explored = apply(scene.fog.explored, patch.explored);
+        // Exploracao por jogador: so o mestre recebe, para a previa "ver pelos
+        // olhos" mostrar a memoria daquele jogador, e nao a do grupo.
+        if (patch.exploredBy) {
+          const next = { ...(scene.fog.exploredBy ?? {}) };
+          for (const [playerId, delta] of Object.entries(patch.exploredBy)) {
+            next[playerId] = apply(next[playerId] ?? [], delta);
+          }
+          scene.fog.exploredBy = next;
+        }
         scene.fog.revealed = apply(scene.fog.revealed, patch.revealed);
         scene.fog.hidden = apply(scene.fog.hidden, patch.hidden);
       });
@@ -626,9 +690,10 @@ export const useStore = create<AppState>((set, get) => ({
       };
     }),
 
-  setTool: (tool) => set({ tool }),
+  setTool: (tool) =>
+    set((s) => ({ tool, toolBeforePing: tool === 'ping' && s.tool !== 'ping' ? s.tool : s.toolBeforePing })),
   selectToken: (id) =>
-    set({ selectedTokenIds: id ? [id] : [], selectedTileId: null, selectedWallId: null }),
+    set({ selectedTokenIds: id ? [id] : [], selectedTileId: null, selectedWallIds: [] }),
 
   toggleTokenSelection: (id) =>
     set((s) => ({
@@ -636,15 +701,32 @@ export const useStore = create<AppState>((set, get) => ({
         ? s.selectedTokenIds.filter((t) => t !== id)
         : [...s.selectedTokenIds, id],
       selectedTileId: null,
-      selectedWallId: null,
+      selectedWallIds: [],
     })),
 
-  selectTokens: (ids) => set({ selectedTokenIds: ids, selectedTileId: null, selectedWallId: null }),
+  selectTokens: (ids) => set({ selectedTokenIds: ids, selectedTileId: null, selectedWallIds: [] }),
   selectTile: (selectedTileId) =>
-    set({ selectedTileId, selectedTokenIds: [], selectedWallId: null }),
-  selectWall: (selectedWallId) =>
-    set({ selectedWallId, selectedTokenIds: [], selectedTileId: null }),
+    set({ selectedTileId, selectedTokenIds: [], selectedWallIds: [] }),
+  selectWall: (id) => set({ selectedWallIds: id ? [id] : [], selectedTokenIds: [], selectedTileId: null }),
+  selectArea: (selectedTokenIds, selectedWallIds) =>
+    set({ selectedTokenIds, selectedWallIds, selectedTileId: null }),
   setEditingScene: (editingSceneId) => set({ editingSceneId }),
+  // Trocar a cena do mapa e como trocar de cena: o historico e as selecoes sao
+  // da cena anterior, e desfazer ali agiria fora da vista.
+  setMapScene: (mapSceneId) =>
+    set((s) => ({
+      mapSceneId,
+      editingSceneId: mapSceneId ?? s.editingSceneId,
+      rev: s.rev + 1,
+      undoStack: [],
+      redoStack: [],
+      wallDraft: [],
+      selectedTokenIds: [],
+      selectedTileId: null,
+      selectedWallIds: [],
+      selectedTriggerId: null,
+      triggerDraft: [],
+    })),
   setFogBrush: (radius) => set({ fogBrush: Math.min(8, Math.max(0, Math.round(radius))) }),
   setFogShape: (fogShape) => set({ fogShape }),
   setFogSeal: (fogSeal) => set({ fogSeal }),
@@ -663,6 +745,12 @@ export const useStore = create<AppState>((set, get) => ({
       get().notify('info', 'Nada para desfazer.');
       return;
     }
+    const reason = entry.blocked?.('undo');
+    if (reason) {
+      set({ undoStack: stack.slice(0, -1) });
+      get().notify('info', `Desfazer ignorado (${entry.label}): ${reason}.`);
+      return;
+    }
     set((s) => ({ undoStack: stack.slice(0, -1), redoStack: [...s.redoStack, entry].slice(-50) }));
     void Promise.resolve(entry.undo()).then(() => get().notify('info', `Desfeito: ${entry.label}`));
   },
@@ -672,6 +760,12 @@ export const useStore = create<AppState>((set, get) => ({
     const entry = stack[stack.length - 1];
     if (!entry) {
       get().notify('info', 'Nada para refazer.');
+      return;
+    }
+    const reason = entry.blocked?.('redo');
+    if (reason) {
+      set({ redoStack: stack.slice(0, -1) });
+      get().notify('info', `Refazer ignorado (${entry.label}): ${reason}.`);
       return;
     }
     set((s) => ({ redoStack: stack.slice(0, -1), undoStack: [...s.undoStack, entry].slice(-50) }));
@@ -697,7 +791,7 @@ export const useStore = create<AppState>((set, get) => ({
   setPreviewPlayer: (previewPlayerId) =>
     // A previa e so de leitura: manter uma selecao ativa convidaria a editar
     // o mapa enquanto se olha pela perspectiva de outra pessoa.
-    set({ previewPlayerId, selectedTokenIds: [], selectedTileId: null, selectedWallId: null }),
+    set({ previewPlayerId, selectedTokenIds: [], selectedTileId: null, selectedWallIds: [] }),
 
   notify: (level, message) => {
     const id = ++noticeSeq;
@@ -718,6 +812,7 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
   openTemplateEditor: (templateEditorOpen) => set({ templateEditorOpen }),
+  askSceneActivation: (sceneActivationId) => set({ sceneActivationId }),
   openSheetModal: (sheetModalId) => set({ sheetModalId }),
   openHandout: (openHandoutId) => set({ openHandoutId }),
 
@@ -813,7 +908,25 @@ export const useStore = create<AppState>((set, get) => ({
 // Seletores
 // ---------------------------------------------------------------------------
 
+/**
+ * A cena do mapa: a que esta no ar, ou — so para o mestre — a cena fora do ar
+ * que ele abriu para montar (`mapSceneId`). Todas as acoes de mapa (parede,
+ * tile, token, efeito, gatilho, neblina) seguem esta cena, e o servidor so
+ * repassa aos jogadores o que e da cena no ar. Na previa "ver pelos olhos" vale
+ * a cena no ar, porque e ela que o jogador ve.
+ */
 export function activeScene(state: AppState = useStore.getState()): Scene | null {
+  const table = state.table;
+  if (!table) return null;
+  if (state.mapSceneId && state.session?.role === 'GM' && !state.previewPlayerId) {
+    const editing = table.scenes.find((s) => s.id === state.mapSceneId);
+    if (editing) return editing;
+  }
+  return table.scenes.find((s) => s.id === table.activeSceneId) ?? table.scenes[0] ?? null;
+}
+
+/** A cena no ar, independente do que o mestre abriu no mapa. */
+export function liveScene(state: AppState = useStore.getState()): Scene | null {
   const table = state.table;
   if (!table) return null;
   return table.scenes.find((s) => s.id === table.activeSceneId) ?? table.scenes[0] ?? null;
@@ -841,10 +954,18 @@ export function editingScene(state: AppState = useStore.getState()): Scene | nul
  * preparando a mesa sozinho, antes de qualquer jogador entrar, o freio so
  * atrapalharia sem proteger ninguem.
  */
-export function confirmSceneActivation(table: TableState | null, sceneName: string): boolean {
-  const someoneWatching = table?.players.some((p) => p.role === 'PLAYER' && p.connected) ?? false;
-  if (!someoneWatching) return true;
-  return window.confirm(`Ativar "${sceneName}" para todos os jogadores conectados agora?`);
+
+/*
+ * Centro do mapa que esta na tela, atualizado a cada quadro desenhado. Fica
+ * fora do estado do React de proposito: a camera muda a cada quadro de pan, e
+ * so quem cria algo "aqui" (os presets de efeito) precisa ler.
+ */
+let viewCenter: { x: number; y: number } | null = null;
+export function setMapViewCenter(point: { x: number; y: number }): void {
+  viewCenter = point;
+}
+export function mapViewCenter(): { x: number; y: number } | null {
+  return viewCenter;
 }
 
 export function isGm(state: AppState = useStore.getState()): boolean {

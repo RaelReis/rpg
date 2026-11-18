@@ -18,6 +18,7 @@ import { SceneStrip } from './ui/SceneStrip';
 import { Side } from './ui/Side';
 import { SheetModal } from './ui/SheetModal';
 import { TemplateEditor } from './ui/TemplateEditor';
+import { SceneActivationDialog } from './ui/SceneActivation';
 import { Topbar } from './ui/Topbar';
 
 export function App(): JSX.Element {
@@ -88,6 +89,7 @@ export function App(): JSX.Element {
 
       <CharacterSetup key={`${session.tableId}:${session.playerId}`} />
       {templateEditorOpen && <TemplateEditor />}
+      <SceneActivationDialog />
       {sheetModalId && <SheetModal sheetId={sheetModalId} />}
       {openHandoutId && <HandoutModal handoutId={openHandoutId} />}
       {/* A chave recomeca o formulario a cada abertura, com os destinatarios pedidos. */}

@@ -132,7 +132,10 @@ export function updateBoardItem(
   const p = payload.patch ?? {};
   if (p.x !== undefined) item.x = clampNumber(p.x, -COORD, COORD, item.x);
   if (p.y !== undefined) item.y = clampNumber(p.y, -COORD, COORD, item.y);
-  if (p.text !== undefined) item.text = safeString(p.text, MAX_TEXT, item.text);
+  // Quem nao ve o material recebe o cartao sem legenda; deixar que a
+  // reescrevesse seria apagar, as cegas, o que o mestre escreveu.
+  const blind = item.kind === 'handout' && boardItemFor(ctx.room, item, ctx.viewer).unavailable;
+  if (p.text !== undefined && !blind) item.text = safeString(p.text, MAX_TEXT, item.text);
   if (p.color !== undefined) item.color = color(p.color, item.color);
   // O tipo e o conteudo de referencia (imagem, material) nao mudam depois de
   // pregado: trocar o material de um cartao e pregar outro cartao.

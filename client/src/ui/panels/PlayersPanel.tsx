@@ -136,7 +136,12 @@ export function PlayersPanel(): JSX.Element {
                       className="btn ghost sm danger"
                       title="Remover da mesa"
                       onClick={() => {
-                        if (window.confirm(`Remover ${player.name} da mesa?`)) {
+                        if (
+                          window.confirm(
+                            `Remover ${player.name} da mesa?\n\nA ficha, o token e a vez dele saem junto. ` +
+                              'Para manter o personagem como NPC, troque o dono da ficha antes (aba Fichas).',
+                          )
+                        ) {
                           void act('player:kick', { playerId: player.id });
                         }
                       }}
@@ -162,8 +167,8 @@ export function PlayersPanel(): JSX.Element {
           />
 
           <Toggle
-            label="Mostrar barras de recurso no mapa"
-            hint="Vale para os tokens que voce configurou com barras."
+            label="Barras e retratos do grupo"
+            hint="Os jogadores veem o PV e o PD dos colegas nos retratos, e as barras dos tokens a vista no mapa."
             checked={settings.showPartyBars}
             onChange={(v) => void act('settings:update', { showPartyBars: v })}
           />
@@ -193,6 +198,13 @@ export function PlayersPanel(): JSX.Element {
             label="Rolagem de dados no chat"
             checked={settings.diceEnabled}
             onChange={(v) => void act('settings:update', { diceEnabled: v })}
+          />
+
+          <Toggle
+            label="Jogadores passam a propria vez"
+            hint="Quem esta com a vez ganha o botao Passar. Desligado, so voce avanca a ordem."
+            checked={settings.playersPassTurn}
+            onChange={(v) => void act('settings:update', { playersPassTurn: v })}
           />
         </Section>
       )}
@@ -270,18 +282,18 @@ function BackupSection({ tableId }: { tableId: string }): JSX.Element {
           Baixar com imagens
         </button>
         <button className="btn sm" disabled={busy} onClick={() => void download(false)}>
-          Só a estrutura
+          So a estrutura
         </button>
       </div>
       <span className="hint">
-        Cenas, fichas, materiais, paredes e neblina num arquivo. Com imagens ele fica grande, mas é
+        Cenas, fichas, materiais, paredes e neblina num arquivo. Com imagens ele fica grande, mas e
         um backup completo; sem elas, serve para versionar ou compartilhar a montagem da campanha.
         Para restaurar, use <strong>Importar mesa</strong> na tela de entrada — ela sempre cria uma
         mesa nova, e nunca sobrescreve esta.
       </span>
       <span className="hint">
-        O arquivo não inclui a senha de mestre nem as sessões dos jogadores: eles entram de novo
-        pelo código da mesa restaurada.
+        O arquivo nao inclui a senha de mestre nem as sessoes dos jogadores: eles entram de novo
+        pelo codigo da mesa restaurada.
       </span>
     </Section>
   );

@@ -4,7 +4,8 @@ import type { Scene } from '@rpg/shared';
 import type { TableState } from '@rpg/shared';
 
 import { act } from '../net/socket';
-import { confirmSceneActivation, findAsset, isGm, useStore } from '../state/store';
+import { findAsset, isGm, useStore } from '../state/store';
+import { requestSceneActivation } from './SceneActivation';
 import { Icon } from './icons';
 
 /**
@@ -41,6 +42,7 @@ export function SceneStrip(): JSX.Element | null {
   const gm = useStore(isGm);
   const setSideTab = useStore((s) => s.setSideTab);
   const setEditingScene = useStore((s) => s.setEditingScene);
+  const mapSceneId = useStore((s) => s.mapSceneId);
   const [open, setOpen] = useState(readOpen);
 
   void rev;
@@ -68,7 +70,13 @@ export function SceneStrip(): JSX.Element | null {
       <button type="button" className="scene-strip-toggle" onClick={toggle} aria-expanded={open}>
         <Icon name={open ? 'expand' : 'collapsed'} size="sm" />
         Cenas
-        {!open && active && <span className="scene-strip-current">· {active.name}</span>}
+        {!open && active && (
+          // Com o mestre montando outra cena no mapa, o nome sozinho parecia
+          // dizer que o mapa mostrava esta; o "no ar" desfaz a ambiguidade.
+          <span className="scene-strip-current">
+            · {mapSceneId && mapSceneId !== active.id ? `no ar: ${active.name}` : active.name}
+          </span>
+        )}
       </button>
 
       {open && (
@@ -127,7 +135,7 @@ function SceneCard({
       className={`scene-strip-item${active ? ' active' : ''}`}
       onClick={() => {
         if (active) return;
-        if (confirmSceneActivation(table, scene.name)) void act('scene:activate', { sceneId: scene.id });
+        requestSceneActivation(scene.id);
       }}
       title={active ? `${scene.name} — no ar` : `Ativar "${scene.name}" para todos`}
       aria-pressed={active}
